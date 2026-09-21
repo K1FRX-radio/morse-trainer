@@ -73,3 +73,47 @@ export const DEFAULT_CURRICULUM_CONFIG: CurriculumConfig = {
   minNewCharObservations: 20,
   reviewDecayAccuracy: 0.7,
 };
+
+export type ReadinessConfig = {
+  /** Clean practice observations of the newest char before a checkpoint. */
+  minNewestObservations: number;
+  /** Minimum recent practice accuracy on the newest char. */
+  minNewestAccuracy: number;
+  /** Older chars with at least this many recent observations can veto. */
+  vetoMinObservations: number;
+  /** Recent accuracy below this on a well-sampled older char requires review. */
+  vetoAccuracy: number;
+};
+
+export const DEFAULT_READINESS_CONFIG: ReadinessConfig = {
+  minNewestObservations: 10,
+  minNewestAccuracy: 0.8,
+  vetoMinObservations: 8,
+  vetoAccuracy: 0.7,
+};
+
+export type CheckpointConfig = {
+  /** Overall accuracy required across the active set. */
+  overallAccuracy: number;
+  /** Accuracy required on the newest character. */
+  newestAccuracy: number;
+  /** Newest-character items required in the checkpoint (coverage). */
+  minNewestObservations: number;
+  /** Fraction of the checkpoint devoted to the newest character. */
+  newestShare: number;
+  /** Checkpoint length grows with the active set, within these bounds. */
+  minLength: number;
+  maxLength: number;
+  /** Target items per active character before clamping to the length bounds. */
+  itemsPerActive: number;
+};
+
+export const DEFAULT_CHECKPOINT_CONFIG: CheckpointConfig = {
+  overallAccuracy: 0.9,
+  newestAccuracy: 0.85,
+  minNewestObservations: 8,
+  newestShare: 0.35,
+  minLength: 24,
+  maxLength: 50,
+  itemsPerActive: 6,
+};
