@@ -1,13 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_CURRICULUM_CONFIG } from "../../content/curriculum-data.ts";
 import {
+  checkpointReadiness,
   createInitialState,
   newestCharacter,
+  unlockedCharacters,
   type CurriculumState,
+  type Readiness,
 } from "../../core/curriculum.ts";
 import { encodeText } from "../../core/morse.ts";
 import { createRng } from "../../core/rng.ts";
 import type { CharacterProgress } from "../../core/types.ts";
+import {
+  applyCheckpoint,
+  CheckpointSession,
+  type CheckpointApplied,
+} from "../../training/checkpoint.ts";
 import {
   LearnSession,
   type SessionSummary,
@@ -24,7 +32,12 @@ const ADVANCE_AFTER_CORRECT = 500;
 const ADVANCE_AFTER_MISS = 1500;
 const INTRO_GAP = 400;
 
-export type LearnPhase = "onboarding" | "exercise" | "summary";
+export type LearnPhase =
+  | "onboarding"
+  | "exercise"
+  | "summary"
+  | "checkpoint"
+  | "checkpoint-result";
 
 export type Feedback = {
   correct: boolean;
@@ -261,6 +274,47 @@ export function useLearnSession() {
     else advance();
   }, [exercise, completeIntro, advance]);
 
+  // --- Checkpoint mode -----------------------------------------------------
+  const checkpointRef = useRef<CheckpointSession | undefined>(undefined);
+  const [checkpointResult, setCheckpointResult] = useState<
+    CheckpointApplied | undefined
+  >(undefined);
+
+  const presentCheckpoint = useCallback(() => {
+    const target = checkpointRef.current?.current();
+    if (target) void play(target);
+  }, [play]);
+
+  const startCheckpoint = useCallback(async () => {
+    await unlock();
+    checkpointRef.current = new CheckpointSession({
+      active: unlockedCharacters(stateRef.current),
+      newest: newestCharacter(stateRef.current)?.character ?? "",
+      rng: createRng(Date.now() >>> 0),
+    });
+    setCheckpointResult(undefined);
+    setPhase("checkpoint");
+    presentCheckpoint();
+  }, [unlock, presentCheckpoint]);
+
+  const checkpointAnswer = useCallback(
+    (input: string) => {
+      const cp = checkpointRef.current;
+      if (!cp) return;
+      cp.answer(input);
+      forceTick((n) => n + 1);
+      if (cp.isComplete()) {
+        const applied = applyCheckpoint(stateRef.current, cp.grade());
+        saveCurriculum(stateRef.current);
+        setCheckpointResult(applied);
+        setPhase("checkpoint-result");
+      } else {
+        presentCheckpoint();
+      }
+    },
+    [presentCheckpoint],
+  );
+
   useEffect(() => {
     const onVisibility = () => {
       const session = sessionRef.current;
@@ -278,6 +332,8 @@ export function useLearnSession() {
     stateRef.current,
   );
   const session = sessionRef.current;
+  const checkpoint = checkpointRef.current;
+  const readiness: Readiness = checkpointReadiness(stateRef.current);
 
   return {
     phase,
@@ -286,6 +342,12 @@ export function useLearnSession() {
     awaitingContinue,
     summary,
     auto,
+    readiness,
+    checkpointResult,
+    checkpoint: {
+      position: checkpoint?.position ?? 0,
+      length: checkpoint?.length ?? 0,
+    },
     completed: session?.completedCards ?? 0,
     total: session?.totalCards ?? 0,
     progress: {
@@ -293,6 +355,14 @@ export function useLearnSession() {
       total: stateRef.current.config.order.length,
       current: current?.character,
     },
-    actions: { begin, record, replay, continueNow, endSession },
+    actions: {
+      begin,
+      record,
+      replay,
+      continueNow,
+      endSession,
+      startCheckpoint,
+      checkpointAnswer,
+    },
   };
 }

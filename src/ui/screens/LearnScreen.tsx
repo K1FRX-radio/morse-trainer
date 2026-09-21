@@ -24,7 +24,8 @@ function sanitize(value: string): string {
 export function LearnScreen() {
   const learn = useLearnSession();
   const { exercise, feedback, awaitingContinue } = learn;
-  const { record, replay, continueNow, begin, endSession } = learn.actions;
+  const { record, replay, continueNow, begin, endSession, startCheckpoint, checkpointAnswer } =
+    learn.actions;
 
   const [value, setValue] = useState("");
   const [decoded, setDecoded] = useState("");
@@ -54,6 +55,20 @@ export function LearnScreen() {
       record(true);
     }
   }, [decoded, exercise, feedback, record]);
+
+  // Checkpoint: refocus and clear the input for each new item.
+  useEffect(() => {
+    if (learn.phase === "checkpoint") {
+      setValue("");
+      inputRef.current?.focus();
+    }
+  }, [learn.phase, learn.checkpoint.position]);
+
+  function onCheckpointChange(event: ChangeEvent<HTMLInputElement>) {
+    const first = sanitize(event.target.value).slice(0, 1);
+    setValue("");
+    if (first) checkpointAnswer(first);
+  }
 
   function onInputChange(event: ChangeEvent<HTMLInputElement>) {
     if (!exercise || feedback) return;
@@ -95,6 +110,7 @@ export function LearnScreen() {
 
   if (learn.phase === "summary" && learn.summary) {
     const s = learn.summary;
+    const { reason, weakCharacter } = learn.readiness;
     return (
       <section>
         <h2>Session complete</h2>
@@ -109,8 +125,105 @@ export function LearnScreen() {
           </li>
           <li>Characters practiced: {s.charactersPracticed.join(" ") || "—"}</li>
         </ul>
+
+        {reason === "READY" && (
+          <p className="feedback feedback--ok">
+            You’re ready for a checkpoint to unlock the next character.
+          </p>
+        )}
+        {reason === "NEEDS_REVIEW" && (
+          <p className="feedback feedback--neutral">
+            Review {weakCharacter} a little more before the next checkpoint.
+          </p>
+        )}
+        {reason === "NEEDS_PRACTICE" && (
+          <p className="field__label">
+            Keep practicing the newest character to get checkpoint-ready.
+          </p>
+        )}
+        {reason === "COMPLETE" && (
+          <p className="feedback feedback--ok">
+            You’ve unlocked every character. Keep practicing to stay sharp.
+          </p>
+        )}
+
+        <div className="practice__controls">
+          <button type="button" onClick={() => void begin()}>
+            Practice again
+          </button>
+          {reason !== "COMPLETE" && (
+            <button
+              type="button"
+              className={reason === "READY" ? "" : "tab"}
+              onClick={() => void startCheckpoint()}
+            >
+              {reason === "READY" ? "Start checkpoint" : "Try a checkpoint"}
+            </button>
+          )}
+        </div>
+      </section>
+    );
+  }
+
+  if (learn.phase === "checkpoint") {
+    const pct = learn.checkpoint.length
+      ? Math.round((learn.checkpoint.position / learn.checkpoint.length) * 100)
+      : 0;
+    return (
+      <section>
+        <div className="learn__top">
+          <span className="field__label">Checkpoint</span>
+          <div className="learn__bar" aria-hidden>
+            <span style={{ width: `${pct}%` }} />
+          </div>
+          <span className="field__label">
+            {learn.checkpoint.position}/{learn.checkpoint.length}
+          </span>
+        </div>
+        <p className="field__label">
+          Copy each character you hear. No replay or hints during the checkpoint.
+        </p>
+        <input
+          ref={inputRef}
+          className="learn__answer"
+          type="text"
+          inputMode="text"
+          autoComplete="off"
+          autoCapitalize="characters"
+          spellCheck={false}
+          maxLength={1}
+          placeholder="listen…"
+          value={value}
+          onChange={onCheckpointChange}
+          aria-label="Checkpoint answer"
+        />
+      </section>
+    );
+  }
+
+  if (learn.phase === "checkpoint-result" && learn.checkpointResult) {
+    const { result, unlockedCharacter } = learn.checkpointResult;
+    return (
+      <section>
+        <h2>{result.pass ? "Checkpoint passed" : "Not yet"}</h2>
+        {result.pass && unlockedCharacter && (
+          <p className="feedback feedback--ok">
+            New character unlocked: {unlockedCharacter}
+          </p>
+        )}
+        <ul className="summary">
+          <li>Overall: {Math.round(result.overallAccuracy * 100)}%</li>
+          <li>Newest character: {Math.round(result.newestAccuracy * 100)}%</li>
+        </ul>
+        {!result.pass && (
+          <p className="feedback feedback--neutral">
+            {result.missedCharacters.length
+              ? `A little more practice on ${result.missedCharacters.join(" ")}.`
+              : "Close. A little more practice and try again."}
+          </p>
+        )}
         <button type="button" onClick={() => void begin()}>
-          Practice again
+          {result.pass ? "Keep going" : "Back to practice"}
         </button>
       </section>
     );
