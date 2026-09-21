@@ -5,7 +5,6 @@ import {
   newestCharacter,
   type CurriculumState,
 } from "../../core/curriculum.ts";
-import type { LearnExercise } from "../../core/exercises.ts";
 import { encodeText } from "../../core/morse.ts";
 import { createRng } from "../../core/rng.ts";
 import type { CharacterProgress } from "../../core/types.ts";
@@ -13,11 +12,12 @@ import {
   LearnSession,
   type SessionSummary,
 } from "../../training/learn-session.ts";
+import type { PlannedExercise } from "../../training/lesson-plan.ts";
 import { useSettings } from "../settings-context.ts";
 import { useAudioEngine } from "./useAudioEngine.ts";
 
-const CURRICULUM_STORAGE_KEY = "k1frx.curriculum.v1";
-const SESSION_LENGTH = 12;
+const CURRICULUM_STORAGE_KEY = "k1frx.curriculum.v2";
+const INTRODUCED_STORAGE_KEY = "k1frx.introduced.v1";
 
 export type LearnPhase = "onboarding" | "exercise" | "summary";
 
@@ -53,6 +53,30 @@ function saveCurriculum(state: CurriculumState): void {
   }
 }
 
+function loadIntroduced(): string[] {
+  try {
+    const raw = localStorage.getItem(INTRODUCED_STORAGE_KEY);
+    if (raw) {
+      const chars = JSON.parse(raw) as string[];
+      if (Array.isArray(chars)) return chars;
+    }
+  } catch {
+    // Ignore malformed storage.
+  }
+  return [];
+}
+
+function saveIntroduced(chars: string[]): void {
+  try {
+    localStorage.setItem(
+      INTRODUCED_STORAGE_KEY,
+      JSON.stringify([...new Set(chars)]),
+    );
+  } catch {
+    // Best-effort.
+  }
+}
+
 /** Renders a target as spaced dit/dah notation for hints. */
 function toMorse(target: string): string {
   return encodeText(target)
@@ -64,18 +88,21 @@ export function useLearnSession() {
   const { settings } = useSettings();
   const { engine, unlock } = useAudioEngine();
 
-  const stateRef = useRef<CurriculumState>(undefined as unknown as CurriculumState);
+  const stateRef = useRef<CurriculumState>(
+    undefined as unknown as CurriculumState,
+  );
   if (!stateRef.current) {
     stateRef.current = loadCurriculum();
   }
   const sessionRef = useRef<LearnSession | undefined>(undefined);
 
   const [phase, setPhase] = useState<LearnPhase>("onboarding");
-  const [exercise, setExercise] = useState<LearnExercise | undefined>(undefined);
+  const [exercise, setExercise] = useState<PlannedExercise | undefined>(
+    undefined,
+  );
   const [feedback, setFeedback] = useState<Feedback | undefined>(undefined);
   const [summary, setSummary] = useState<SessionSummary | undefined>(undefined);
-  const [lastUnlock, setLastUnlock] = useState<string | undefined>(undefined);
-  const [completed, setCompleted] = useState(0);
+  const [, forceTick] = useState(0);
 
   const timing = useMemo(
     () => ({ charWpm: settings.charWpm, effectiveWpm: settings.effectiveWpm }),
@@ -90,7 +117,7 @@ export function useLearnSession() {
   );
 
   const showExercise = useCallback(
-    (next: LearnExercise) => {
+    (next: PlannedExercise) => {
       setExercise(next);
       setFeedback(undefined);
       if (next.type !== "send-character") {
@@ -100,65 +127,65 @@ export function useLearnSession() {
     [play],
   );
 
-  const begin = useCallback(async () => {
-    await unlock();
-    const session = new LearnSession({
-      state: stateRef.current,
-      rng: createRng(Date.now() >>> 0),
-    });
-    session.start();
-    sessionRef.current = session;
-    setCompleted(0);
-    setSummary(undefined);
-    setLastUnlock(undefined);
-    setPhase("exercise");
-    showExercise(session.next());
-  }, [unlock, showExercise]);
-
   const endSession = useCallback(() => {
     const session = sessionRef.current;
-    if (!session) {
-      return;
-    }
+    if (!session) return;
     setSummary(session.end());
+    saveIntroduced([...loadIntroduced(), ...session.newlyIntroduced]);
     saveCurriculum(stateRef.current);
     setPhase("summary");
   }, []);
 
   const advance = useCallback(() => {
     const session = sessionRef.current;
-    if (!session) {
-      return;
-    }
-    if (completed >= SESSION_LENGTH) {
+    if (!session) return;
+    const next = session.next();
+    if (!next) {
       endSession();
       return;
     }
-    showExercise(session.next());
-  }, [completed, endSession, showExercise]);
+    showExercise(next);
+  }, [endSession, showExercise]);
+
+  const begin = useCallback(async () => {
+    await unlock();
+    const session = new LearnSession({
+      state: stateRef.current,
+      rng: createRng(Date.now() >>> 0),
+      introduced: loadIntroduced(),
+    });
+    session.start();
+    sessionRef.current = session;
+    setSummary(undefined);
+    setPhase("exercise");
+    const first = session.next();
+    if (first) showExercise(first);
+    else endSession();
+  }, [unlock, showExercise, endSession]);
 
   const record = useCallback(
     (input: string | boolean) => {
       const session = sessionRef.current;
-      if (!session || !exercise) {
-        return;
-      }
+      if (!session || !exercise) return;
       const outcome = session.submit(input);
       saveCurriculum(stateRef.current);
-      setCompleted((count) => count + 1);
-      setLastUnlock(outcome.unlockedCharacter);
+      forceTick((n) => n + 1);
 
-      if (exercise.type !== "introduce") {
-        setFeedback({
-          correct: outcome.correct,
-          expected: exercise.target,
-          morse: toMorse(exercise.target),
-        });
-      } else {
+      if (exercise.type === "introduce") {
         advance();
+        return;
+      }
+      setFeedback({
+        correct: outcome.correct,
+        expected: exercise.target,
+        morse: toMorse(exercise.target),
+      });
+      // Replay the correct sound after a miss so the ear, not the eye, corrects.
+      if (!outcome.correct) {
+        play(exercise.target);
       }
     },
-    [exercise, advance],
+    [exercise, advance, play],
   );
 
   const replay = useCallback(() => {
@@ -167,7 +194,6 @@ export function useLearnSession() {
     }
   }, [exercise, play]);
 
-  // Pause active-time accrual while the tab is hidden.
   useEffect(() => {
     const onVisibility = () => {
       const session = sessionRef.current;
@@ -182,22 +208,20 @@ export function useLearnSession() {
   const current: CharacterProgress | undefined = newestCharacter(
     stateRef.current,
   );
+  const session = sessionRef.current;
 
   return {
     phase,
     exercise,
     feedback,
     summary,
-    lastUnlock,
-    completed,
-    sessionLength: SESSION_LENGTH,
+    completed: session?.completedCards ?? 0,
+    total: session?.totalCards ?? 0,
     progress: {
       unlocked: stateRef.current.characters.length,
       total: stateRef.current.config.order.length,
       current: current?.character,
     },
-    toneHz: settings.toneHz,
-    charWpm: settings.charWpm,
     actions: { begin, record, replay, advance, endSession },
   };
 }

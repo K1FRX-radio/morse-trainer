@@ -29,9 +29,9 @@ export function LearnScreen() {
       <section>
         <h2>Learn</h2>
         <p>
-          Short adaptive sessions teach Morse by ear. You will hear characters
-          and copy them, and send a few yourself. Progress unlocks new
-          characters as your copy improves.
+          Short lessons teach Morse by ear: each new character is introduced by
+          sound, drilled on its own, then mixed with the ones you know. You will
+          copy characters and send a few yourself.
         </p>
         <button type="button" onClick={() => void actions.begin()}>
           Start learning
@@ -51,15 +51,10 @@ export function LearnScreen() {
             {s.valid ? "" : " (too short to count)"}
           </li>
           <li>
-            Attempts: {s.attempts} ({Math.round(s.accuracy * 100)}% correct)
+            Cards: {s.cards} · scored attempts: {s.attempts} (
+            {Math.round(s.accuracy * 100)}% correct)
           </li>
           <li>Characters practiced: {s.charactersPracticed.join(" ") || "—"}</li>
-          <li>
-            Unlocked:{" "}
-            {s.unlockedCharacters.length
-              ? s.unlockedCharacters.join(" ")
-              : "none this session"}
-          </li>
         </ul>
         <button type="button" onClick={() => void actions.begin()}>
           Practice again
@@ -92,15 +87,9 @@ export function LearnScreen() {
           <span style={{ width: `${progressPct}%` }} />
         </div>
         <span className="field__label">
-          {learn.completed}/{learn.sessionLength}
+          {learn.completed}/{learn.total}
         </span>
       </div>
-
-      {learn.lastUnlock && (
-        <p className="feedback feedback--ok" role="status">
-          New character unlocked: {learn.lastUnlock}
-        </p>
-      )}
 
       {exercise.type === "introduce" ? (
         <div className="learn__intro">
@@ -183,8 +172,14 @@ export function LearnScreen() {
                 }
                 role="status"
               >
-                {feedback.correct ? "Correct" : "Not quite"} — {feedback.expected}
-                <code className="learn__morse"> {feedback.morse}</code>
+                {feedback.correct ? (
+                  "Correct"
+                ) : (
+                  <>
+                    Not quite — {feedback.expected}
+                    <code className="learn__morse"> {feedback.morse}</code>
+                  </>
+                )}
               </p>
               <div className="practice__controls">
                 <button type="button" onClick={actions.advance} autoFocus>
