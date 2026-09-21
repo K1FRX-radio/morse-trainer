@@ -1,26 +1,23 @@
-// Learn-mode session orchestrator. Generates exercises, records results into
-// the curriculum, detects unlocks, and tracks active practice time excluding
-// idle and paused spans. Pure application service: no DOM or storage. The UI
-// drives it and reacts to the returned outcomes.
+// Learn-mode practice session. Drives a phase-based LessonPlan, records practice
+// results into the curriculum for scheduling and review, and tracks active
+// practice time excluding idle and paused spans. Practice does NOT advance the
+// curriculum; a separate checkpoint (later stage) drives unlocks. Pure
+// application service: no DOM or storage.
 
-import { selectEligibleWord } from "../content/words.ts";
 import {
+  newestCharacter,
   recordAttempt,
-  unlockNext,
   unlockedCharacters,
   type CurriculumState,
 } from "../core/curriculum.ts";
-import {
-  nextExercise,
-  type ExerciseOptions,
-  type LearnExercise,
-} from "../core/exercises.ts";
 import type { Rng } from "../core/rng.ts";
 import { gradeCopy } from "../core/scoring.ts";
-
-// selectEligibleWord is re-exported so the UI can preview words without
-// reaching into the content layer directly.
-export { selectEligibleWord };
+import {
+  DEFAULT_LESSON_CONFIG,
+  LessonPlan,
+  type LessonConfig,
+  type PlannedExercise,
+} from "./lesson-plan.ts";
 
 export type SessionConfig = {
   /** Gaps longer than this (ms) between activity are treated as idle. */
@@ -35,21 +32,21 @@ export const DEFAULT_SESSION_CONFIG: SessionConfig = {
 };
 
 export type AttemptOutcome = {
-  exercise: LearnExercise;
+  exercise: PlannedExercise;
   correct: boolean;
-  /** Newly unlocked character, if this attempt crossed the threshold. */
-  unlockedCharacter?: string;
 };
 
 export type SessionSummary = {
   activeMs: number;
+  /** Cards completed, including introductions. */
+  cards: number;
+  /** Scored attempts (excludes introductions). */
   attempts: number;
   correct: number;
   accuracy: number;
   rxAttempts: number;
   txAttempts: number;
   charactersPracticed: string[];
-  unlockedCharacters: string[];
   /** True when the session meets the minimum active time and attempt count. */
   valid: boolean;
 };
@@ -57,65 +54,66 @@ export type SessionSummary = {
 type SessionOptions = {
   state: CurriculumState;
   rng: Rng;
+  /** Characters already introduced in earlier sessions. */
+  introduced?: Iterable<string>;
   now?: () => number;
-  exerciseOptions?: Omit<ExerciseOptions, "introduced">;
+  lessonConfig?: LessonConfig;
   sessionConfig?: SessionConfig;
 };
 
 export class LearnSession {
   private readonly state: CurriculumState;
-  private readonly rng: Rng;
   private readonly now: () => number;
-  private readonly exerciseOptions: Omit<ExerciseOptions, "introduced">;
   private readonly config: SessionConfig;
-  private readonly introduced = new Set<string>();
+  private readonly plan: LessonPlan;
 
-  private current: LearnExercise | undefined;
+  private current: PlannedExercise | undefined;
   private lastActivityAt: number | undefined;
   private paused = false;
   private activeMs = 0;
 
+  private cards = 0;
   private attempts = 0;
   private correctCount = 0;
   private rxAttempts = 0;
   private txAttempts = 0;
   private readonly practiced = new Set<string>();
-  private readonly unlocked: string[] = [];
 
   constructor(options: SessionOptions) {
     this.state = options.state;
-    this.rng = options.rng;
     this.now =
       options.now ??
       (() =>
         typeof performance !== "undefined" ? performance.now() : Date.now());
-    this.exerciseOptions = options.exerciseOptions ?? {};
     this.config = options.sessionConfig ?? DEFAULT_SESSION_CONFIG;
+    this.plan = new LessonPlan({
+      active: unlockedCharacters(options.state),
+      introduced: options.introduced ?? [],
+      newest: newestCharacter(options.state)?.character ?? "",
+      rng: options.rng,
+      config: options.lessonConfig ?? DEFAULT_LESSON_CONFIG,
+    });
   }
 
   start(time = this.now()): void {
     this.lastActivityAt = time;
   }
 
-  /** Generates and stores the next exercise. */
-  next(): LearnExercise {
+  /** The next planned card, or undefined when the lesson is complete. */
+  next(): PlannedExercise | undefined {
     this.accrue(this.now());
-    const exercise = nextExercise(this.state, this.rng, {
-      ...this.exerciseOptions,
-      introduced: this.introduced,
-    });
-    this.current = exercise;
-    return exercise;
+    this.current = this.plan.next();
+    return this.current;
   }
 
-  get currentExercise(): LearnExercise | undefined {
+  get currentExercise(): PlannedExercise | undefined {
     return this.current;
   }
 
   /**
-   * Records the result for the current exercise. Pass the typed answer for copy
-   * exercises, or a boolean for sending drills. Introductions take any input and
-   * record no attempt.
+   * Records the result for the current card. Pass the typed answer for copy
+   * cards, or a boolean for sending drills. Introductions take any input and
+   * record no attempt. Practice never unlocks characters.
    */
   submit(input: string | boolean): AttemptOutcome {
     const exercise = this.current;
@@ -123,9 +121,9 @@ export class LearnSession {
       throw new Error("submit called before next");
     }
     this.accrue(this.now());
+    this.cards += 1;
 
     if (exercise.type === "introduce") {
-      this.introduced.add(exercise.target);
       return { exercise, correct: true };
     }
 
@@ -139,8 +137,7 @@ export class LearnSession {
       const answer = typeof input === "string" ? input : "";
       const grade = gradeCopy(exercise.target, answer);
       correct = grade.correct;
-      const chars = [...exercise.target.toUpperCase()];
-      chars.forEach((char, index) => {
+      [...exercise.target.toUpperCase()].forEach((char, index) => {
         recordAttempt(this.state, char, "rx", grade.perChar[index] ?? false);
         this.rxAttempts += 1;
         this.practiced.add(char);
@@ -151,14 +148,8 @@ export class LearnSession {
     if (correct) {
       this.correctCount += 1;
     }
-
-    const outcome: AttemptOutcome = { exercise, correct };
-    const unlockedChar = unlockNext(this.state);
-    if (unlockedChar) {
-      this.unlocked.push(unlockedChar);
-      outcome.unlockedCharacter = unlockedChar;
-    }
-    return outcome;
+    this.plan.reportResult(correct);
+    return { exercise, correct };
   }
 
   pause(time = this.now()): void {
@@ -184,22 +175,35 @@ export class LearnSession {
     return this.activeMs;
   }
 
+  get totalCards(): number {
+    return this.plan.length;
+  }
+
+  get completedCards(): number {
+    return this.cards;
+  }
+
+  /** Characters newly introduced by this session's lesson. */
+  get newlyIntroduced(): string[] {
+    return this.plan.newlyIntroduced;
+  }
+
+  get unlockedNow(): string[] {
+    return unlockedCharacters(this.state);
+  }
+
   summary(): SessionSummary {
     return {
       activeMs: this.activeMs,
+      cards: this.cards,
       attempts: this.attempts,
       correct: this.correctCount,
       accuracy: this.attempts === 0 ? 0 : this.correctCount / this.attempts,
       rxAttempts: this.rxAttempts,
       txAttempts: this.txAttempts,
       charactersPracticed: [...this.practiced],
-      unlockedCharacters: [...this.unlocked],
       valid: this.activeMs >= this.config.minActiveMs && this.attempts > 0,
     };
-  }
-
-  get unlockedNow(): string[] {
-    return unlockedCharacters(this.state);
   }
 
   private accrue(time: number): void {

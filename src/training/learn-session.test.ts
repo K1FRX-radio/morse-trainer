@@ -14,98 +14,119 @@ function freshSession(overrides = {}) {
     now,
     ...overrides,
   });
-  return { session, state, advance: (ms: number) => (t += ms), at: () => t };
+  return { session, state, advance: (ms: number) => (t += ms) };
+}
+
+/** Plays a full lesson submitting the correct answer to every card. */
+function playPerfect(session: LearnSession, advance: (ms: number) => void) {
+  advance(1000);
+  let card = session.next();
+  while (card) {
+    if (card.type === "introduce") {
+      session.submit("");
+    } else if (card.type === "send-character") {
+      session.submit(true);
+    } else {
+      session.submit(card.target);
+    }
+    advance(1000);
+    card = session.next();
+  }
 }
 
 describe("LearnSession active time", () => {
   it("accrues elapsed active time between events", () => {
     const { session } = freshSession();
     session.start(0);
-    const summary = session.end(10000);
-    expect(summary.activeMs).toBe(10000);
+    expect(session.end(10000).activeMs).toBe(10000);
   });
 
   it("clamps idle gaps to the idle threshold", () => {
     const { session } = freshSession();
     session.start(0);
-    // A 200 s gap counts only up to the 60 s idle threshold.
-    const summary = session.end(200000);
-    expect(summary.activeMs).toBe(60000);
+    expect(session.end(200000).activeMs).toBe(60000);
   });
 
   it("excludes paused spans", () => {
     const { session } = freshSession();
     session.start(0);
-    session.pause(30000); // 30 s active so far
-    session.resume(80000); // 50 s paused, excluded
-    const summary = session.end(85000); // 5 s more active
-    expect(summary.activeMs).toBe(35000);
+    session.pause(30000);
+    session.resume(80000);
+    expect(session.end(85000).activeMs).toBe(35000);
   });
 
   it("marks a session invalid below the minimum active time", () => {
     const { session } = freshSession();
     session.start(0);
-    const summary = session.end(10000);
-    expect(summary.valid).toBe(false);
+    expect(session.end(10000).valid).toBe(false);
   });
 });
 
-describe("LearnSession progression", () => {
-  it("unlocks the next character from correct RX copy", () => {
-    const { session, advance } = freshSession({
-      // Force single-character RX copy so RX observations accumulate.
-      exerciseOptions: { txShare: 0, wordShare: 0, groupShare: 0 },
-    });
+describe("LearnSession practice", () => {
+  it("does not unlock characters from practice, even when perfect", () => {
+    const { session, state, advance } = freshSession();
     session.start(0);
-
-    let unlocked: string | undefined;
-    for (let i = 0; i < 400 && !unlocked; i++) {
-      advance(2000);
-      const exercise = session.next();
-      const outcome = session.submit(
-        exercise.type === "introduce" ? "" : exercise.target,
-      );
-      unlocked = outcome.unlockedCharacter;
-    }
-
-    expect(unlocked).toBe("U"); // K, M unlocked at start; U is next.
-    expect(session.unlockedNow).toContain("U");
+    playPerfect(session, advance);
+    expect(session.unlockedNow).toEqual(["K", "M"]);
+    expect(state.characters).toHaveLength(2);
   });
 
-  it("does not let TX failures block RX-driven unlocks", () => {
-    const { session, advance } = freshSession({
-      exerciseOptions: { txShare: 0.5, wordShare: 0, groupShare: 0 },
-    });
+  it("introduces both starting characters and records no attempt for intros", () => {
+    const { session, advance } = freshSession();
     session.start(0);
 
-    let unlocked: string | undefined;
-    for (let i = 0; i < 800 && !unlocked; i++) {
-      advance(1000);
-      const exercise = session.next();
-      if (exercise.type === "send-character") {
-        session.submit(false); // always fail sending
-      } else if (exercise.type === "introduce") {
+    let intros = 0;
+    let card = session.next();
+    while (card) {
+      const before = session.summary().attempts;
+      if (card.type === "introduce") {
+        intros += 1;
         session.submit("");
+        expect(session.summary().attempts).toBe(before); // no scored attempt
+      } else if (card.type === "send-character") {
+        session.submit(true);
       } else {
-        const outcome = session.submit(exercise.target); // correct copy
-        unlocked = outcome.unlockedCharacter;
+        session.submit(card.target);
       }
+      advance(500);
+      card = session.next();
     }
-
-    expect(unlocked).toBe("U");
+    expect(intros).toBe(2);
+    expect(session.newlyIntroduced).toEqual(["K", "M"]);
   });
 
-  it("records no attempt for an introduction", () => {
-    const { session } = freshSession();
+  it("counts cards and scored attempts separately", () => {
+    const { session, advance } = freshSession();
     session.start(0);
-    // The first featured newest character is an introduction.
-    let exercise = session.next();
-    while (exercise.type !== "introduce") {
-      session.submit(exercise.target);
-      exercise = session.next();
+    playPerfect(session, advance);
+    const summary = session.summary();
+    // Two introductions are cards but not scored attempts.
+    expect(summary.cards).toBe(summary.attempts + 2);
+  });
+
+  it("inserts an immediate repeat after a missed isolated card", () => {
+    const { session, advance } = freshSession();
+    session.start(0);
+    advance(1000);
+    let card = session.next();
+    while (card && card.phase !== "acquire") {
+      session.submit("");
+      advance(500);
+      card = session.next();
     }
-    const before = session.summary().attempts;
-    session.submit("");
-    expect(session.summary().attempts).toBe(before);
+    expect(card?.type).toBe("copy-character");
+    const before = session.totalCards;
+    session.submit(""); // wrong answer
+    expect(session.totalCards).toBe(before + 1);
+  });
+
+  it("does not re-introduce characters from earlier sessions", () => {
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    const session = new LearnSession({
+      state,
+      rng: createRng(1),
+      introduced: ["K", "M"],
+    });
+    expect(session.newlyIntroduced).toEqual([]);
   });
 });
