@@ -1,4 +1,5 @@
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
+import { LearnScreen } from "./ui/screens/LearnScreen.tsx";
 import { PracticeScreen } from "./ui/screens/PracticeScreen.tsx";
 import { SettingsScreen } from "./ui/screens/SettingsScreen.tsx";
 
@@ -32,7 +33,7 @@ export function App() {
       <main className="app__main">
         <Routes>
           <Route path="/" element={<Navigate to="/learn" replace />} />
-          <Route path="/learn" element={<Placeholder title="Learn" />} />
+          <Route path="/learn" element={<LearnScreen />} />
           <Route path="/practice" element={<PracticeScreen />} />
           <Route path="/progress" element={<Placeholder title="Progress" />} />
           <Route path="/settings" element={<SettingsScreen />} />
