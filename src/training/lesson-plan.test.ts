@@ -107,6 +107,20 @@ describe("LessonPlan misses", () => {
     plan.reportResult(true);
     expect(plan.length).toBe(before);
   });
+
+  it("does not insert a second repeat after a missed assisted card", () => {
+    const plan = firstLesson();
+    let card = plan.next();
+    while (card && card.phase !== "acquire") {
+      card = plan.next();
+    }
+    plan.reportResult(false); // inserts an assisted repeat
+    const assisted = plan.next();
+    expect(assisted?.assisted).toBe(true);
+    const before = plan.length;
+    plan.reportResult(false); // miss on the assisted card must not recurse
+    expect(plan.length).toBe(before);
+  });
 });
 
 describe("LessonPlan later stage", () => {

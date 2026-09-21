@@ -130,3 +130,82 @@ describe("LearnSession practice", () => {
     expect(session.newlyIntroduced).toEqual([]);
   });
 });
+
+describe("LearnSession Stage A fixes", () => {
+  function advanceToPhase(session: LearnSession, phase: string) {
+    let card = session.next();
+    while (card && card.phase !== phase) {
+      session.submit(
+        card.type === "introduce"
+          ? ""
+          : card.type === "send-character"
+            ? true
+            : card.target,
+      );
+      card = session.next();
+    }
+    return card;
+  }
+
+  it("persists only introductions actually completed", () => {
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    const session = new LearnSession({ state, rng: createRng(1) });
+    session.start(0);
+    const first = session.next();
+    expect(first?.type).toBe("introduce");
+    session.submit(""); // complete only the K introduction
+    expect(session.completedIntroductions).toEqual(["K"]);
+    expect(session.newlyIntroduced).toEqual(["K", "M"]); // planned, not completed
+  });
+
+  it("does not update per-character mastery from group answers", () => {
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    const session = new LearnSession({ state, rng: createRng(5) });
+    session.start(0);
+    const group = advanceToPhase(session, "groups");
+    expect(group?.type).toBe("copy-group");
+    const before = state.characters.map((c) => c.rx.recentResults.length);
+    session.submit(group?.target ?? "");
+    const after = state.characters.map((c) => c.rx.recentResults.length);
+    expect(after).toEqual(before);
+  });
+
+  it("excludes assisted reinforcement cards from mastery and scoring", () => {
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    const session = new LearnSession({ state, rng: createRng(1) });
+    session.start(0);
+    const acquire = advanceToPhase(session, "acquire");
+    expect(acquire?.type).toBe("copy-character");
+    session.submit(""); // miss -> inserts an assisted repeat
+    const attemptsBefore = session.summary().attempts;
+    const assisted = session.next();
+    expect(assisted?.assisted).toBe(true);
+    const focus = assisted?.focus ?? "";
+    const rxBefore =
+      state.characters.find((c) => c.character === focus)?.rx.recentResults
+        .length ?? 0;
+    session.submit(assisted?.target ?? ""); // correct, but assisted
+    const rxAfter =
+      state.characters.find((c) => c.character === focus)?.rx.recentResults
+        .length ?? 0;
+    expect(rxAfter).toBe(rxBefore);
+    expect(session.summary().attempts).toBe(attemptsBefore);
+  });
+
+  it("excludes a replayed answer from mastery", () => {
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    const session = new LearnSession({ state, rng: createRng(1) });
+    session.start(0);
+    const acquire = advanceToPhase(session, "acquire");
+    const focus = acquire?.focus ?? "";
+    const rxBefore =
+      state.characters.find((c) => c.character === focus)?.rx.recentResults
+        .length ?? 0;
+    session.markReplayed();
+    session.submit(acquire?.target ?? ""); // correct, but replayed
+    const rxAfter =
+      state.characters.find((c) => c.character === focus)?.rx.recentResults
+        .length ?? 0;
+    expect(rxAfter).toBe(rxBefore);
+  });
+});

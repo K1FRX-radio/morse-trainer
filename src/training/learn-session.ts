@@ -77,7 +77,9 @@ export class LearnSession {
   private correctCount = 0;
   private rxAttempts = 0;
   private txAttempts = 0;
+  private replayedThisCard = false;
   private readonly practiced = new Set<string>();
+  private readonly introducedCompleted = new Set<string>();
 
   constructor(options: SessionOptions) {
     this.state = options.state;
@@ -102,12 +104,18 @@ export class LearnSession {
   /** The next planned card, or undefined when the lesson is complete. */
   next(): PlannedExercise | undefined {
     this.accrue(this.now());
+    this.replayedThisCard = false;
     this.current = this.plan.next();
     return this.current;
   }
 
   get currentExercise(): PlannedExercise | undefined {
     return this.current;
+  }
+
+  /** Marks the current card as replayed, so its result does not feed mastery. */
+  markReplayed(): void {
+    this.replayedThisCard = true;
   }
 
   /**
@@ -124,29 +132,43 @@ export class LearnSession {
     this.cards += 1;
 
     if (exercise.type === "introduce") {
+      this.introducedCompleted.add(exercise.target);
       return { exercise, correct: true };
     }
+
+    // Assisted or replayed cards reveal or repeat the answer, so they are
+    // teaching moments and must not feed the curriculum or scored accuracy.
+    const assisted = exercise.assisted || this.replayedThisCard;
 
     let correct: boolean;
     if (exercise.type === "send-character") {
       correct = input === true;
-      recordAttempt(this.state, exercise.target, "tx", correct);
-      this.txAttempts += 1;
+      if (!assisted) {
+        recordAttempt(this.state, exercise.target, "tx", correct);
+        this.txAttempts += 1;
+      }
+      this.practiced.add(exercise.target);
+    } else if (exercise.type === "copy-character") {
+      const answer = typeof input === "string" ? input : "";
+      correct = gradeCopy(exercise.target, answer).correct;
+      if (!assisted) {
+        recordAttempt(this.state, exercise.target, "rx", correct);
+        this.rxAttempts += 1;
+      }
       this.practiced.add(exercise.target);
     } else {
+      // Groups and words: grade the whole answer for feedback only. Positional
+      // per-character mastery is unsafe until sequence alignment exists.
       const answer = typeof input === "string" ? input : "";
-      const grade = gradeCopy(exercise.target, answer);
-      correct = grade.correct;
-      [...exercise.target.toUpperCase()].forEach((char, index) => {
-        recordAttempt(this.state, char, "rx", grade.perChar[index] ?? false);
-        this.rxAttempts += 1;
-        this.practiced.add(char);
-      });
+      correct = gradeCopy(exercise.target, answer).correct;
+      this.practiced.add(exercise.focus);
     }
 
-    this.attempts += 1;
-    if (correct) {
-      this.correctCount += 1;
+    if (!assisted) {
+      this.attempts += 1;
+      if (correct) {
+        this.correctCount += 1;
+      }
     }
     this.plan.reportResult(correct);
     return { exercise, correct };
@@ -186,6 +208,11 @@ export class LearnSession {
   /** Characters newly introduced by this session's lesson. */
   get newlyIntroduced(): string[] {
     return this.plan.newlyIntroduced;
+  }
+
+  /** Characters whose introduction card was actually completed this session. */
+  get completedIntroductions(): string[] {
+    return [...this.introducedCompleted];
   }
 
   get unlockedNow(): string[] {

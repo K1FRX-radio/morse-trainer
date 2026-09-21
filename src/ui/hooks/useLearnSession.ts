@@ -19,11 +19,10 @@ import { useAudioEngine } from "./useAudioEngine.ts";
 const CURRICULUM_STORAGE_KEY = "k1frx.curriculum.v2";
 const INTRODUCED_STORAGE_KEY = "k1frx.introduced.v1";
 
-// Auto-flow timings (ms).
-const INTRO_REPLAY_DELAY = 1300;
-const INTRO_ADVANCE_DELAY = 2700;
+// Brief holds after grading an answer (ms); introductions are paced by audio.
 const ADVANCE_AFTER_CORRECT = 500;
 const ADVANCE_AFTER_MISS = 1500;
+const INTRO_GAP = 400;
 
 export type LearnPhase = "onboarding" | "exercise" | "summary";
 
@@ -89,6 +88,10 @@ function toMorse(target: string): string {
     .join(" ");
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 export function useLearnSession() {
   const { settings } = useSettings();
   const { engine, unlock } = useAudioEngine();
@@ -102,6 +105,8 @@ export function useLearnSession() {
   }
   const sessionRef = useRef<LearnSession | undefined>(undefined);
   const timers = useRef<number[]>([]);
+  const flowToken = useRef(0);
+  const introDoneToken = useRef<number | null>(null);
 
   const [phase, setPhase] = useState<LearnPhase>("onboarding");
   const [exercise, setExercise] = useState<PlannedExercise | undefined>(
@@ -122,48 +127,65 @@ export function useLearnSession() {
     timers.current = [];
   }, []);
 
-  const schedule = useCallback((fn: () => void, ms: number) => {
-    const id = window.setTimeout(fn, ms);
-    timers.current.push(id);
-  }, []);
-
+  // Resolves when playback finishes so introductions pace to real audio length.
   const play = useCallback(
-    (text: string) => {
-      void engine.playText(text, timing, { toneHz: settings.toneHz });
-    },
+    (text: string): Promise<void> =>
+      engine.playText(text, timing, { toneHz: settings.toneHz }),
     [engine, timing, settings.toneHz],
   );
 
+  const advanceRef = useRef<() => void>(() => {});
+
   const endSession = useCallback(() => {
     clearTimers();
+    flowToken.current += 1;
     const session = sessionRef.current;
     if (!session) return;
     setSummary(session.end());
-    saveIntroduced([...loadIntroduced(), ...session.newlyIntroduced]);
+    saveIntroduced([...loadIntroduced(), ...session.completedIntroductions]);
     saveCurriculum(stateRef.current);
     setPhase("summary");
   }, [clearTimers]);
 
+  // Records the current introduction exactly once, then advances.
+  const completeIntro = useCallback(() => {
+    const token = flowToken.current;
+    if (introDoneToken.current === token) return;
+    introDoneToken.current = token;
+    sessionRef.current?.submit("");
+    saveCurriculum(stateRef.current);
+    advanceRef.current();
+  }, []);
+
+  const runIntro = useCallback(
+    async (card: PlannedExercise, token: number) => {
+      await play(card.target);
+      if (token !== flowToken.current) return;
+      await delay(INTRO_GAP);
+      if (token !== flowToken.current) return;
+      await play(card.target);
+      if (token !== flowToken.current) return;
+      if (auto) completeIntro();
+      else setAwaitingContinue(true);
+    },
+    [auto, play, completeIntro],
+  );
+
   const showExercise = useCallback(
     (next: PlannedExercise) => {
       clearTimers();
+      const token = (flowToken.current += 1);
       setExercise(next);
       setFeedback(undefined);
       setAwaitingContinue(false);
 
       if (next.type === "introduce") {
-        play(next.target);
-        schedule(() => play(next.target), INTRO_REPLAY_DELAY);
-        if (auto) {
-          schedule(() => advanceRef.current(), INTRO_ADVANCE_DELAY);
-        } else {
-          setAwaitingContinue(true);
-        }
+        void runIntro(next, token);
       } else if (next.type !== "send-character") {
-        play(next.target);
+        void play(next.target);
       }
     },
-    [auto, clearTimers, play, schedule],
+    [clearTimers, play, runIntro],
   );
 
   const advance = useCallback(() => {
@@ -177,9 +199,6 @@ export function useLearnSession() {
     }
     showExercise(next);
   }, [clearTimers, endSession, showExercise]);
-
-  // Stable ref so timers scheduled inside showExercise can call the latest advance.
-  const advanceRef = useRef(advance);
   advanceRef.current = advance;
 
   const begin = useCallback(async () => {
@@ -191,6 +210,7 @@ export function useLearnSession() {
     });
     session.start();
     sessionRef.current = session;
+    introDoneToken.current = null;
     setSummary(undefined);
     setPhase("exercise");
     const first = session.next();
@@ -212,27 +232,34 @@ export function useLearnSession() {
         morse: toMorse(exercise.target),
       });
       if (!outcome.correct) {
-        play(exercise.target);
+        void play(exercise.target);
       }
       if (auto) {
-        schedule(
+        const id = window.setTimeout(
           () => advanceRef.current(),
           outcome.correct ? ADVANCE_AFTER_CORRECT : ADVANCE_AFTER_MISS,
         );
+        timers.current.push(id);
       } else {
         setAwaitingContinue(true);
       }
     },
-    [auto, exercise, feedback, play, schedule],
+    [auto, exercise, feedback, play],
   );
 
   const replay = useCallback(() => {
-    if (exercise && exercise.type !== "send-character") {
-      play(exercise.target);
+    if (!exercise || exercise.type === "send-character") return;
+    if (exercise.type !== "introduce") {
+      // Replaying an answer card is an assist, so exclude it from mastery.
+      sessionRef.current?.markReplayed();
     }
+    void play(exercise.target);
   }, [exercise, play]);
 
-  const continueNow = useCallback(() => advance(), [advance]);
+  const continueNow = useCallback(() => {
+    if (exercise?.type === "introduce") completeIntro();
+    else advance();
+  }, [exercise, completeIntro, advance]);
 
   useEffect(() => {
     const onVisibility = () => {

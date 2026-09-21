@@ -192,6 +192,7 @@ export class LessonPlan {
       justDone &&
       justDone.type === "copy-character" &&
       (justDone.phase === "acquire" || justDone.phase === "contrast") &&
+      !justDone.assisted &&
       this.insertedRepeats < this.config.maxMissRepeats
     ) {
       this.queue.splice(

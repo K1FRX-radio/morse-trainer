@@ -5,7 +5,7 @@ import {
   type ChangeEvent,
   type KeyboardEvent,
 } from "react";
-import { encodeCharacter } from "../../core/morse.ts";
+import { encodeCharacter, isSupportedCharacter } from "../../core/morse.ts";
 import { useLearnSession } from "../hooks/useLearnSession.ts";
 import { SendPad } from "../components/SendPad.tsx";
 
@@ -17,7 +17,8 @@ const PROMPTS: Record<string, string> = {
 };
 
 function sanitize(value: string): string {
-  return value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  // Keep every supported Morse character, including punctuation like . , = / ?
+  return [...value.toUpperCase()].filter(isSupportedCharacter).join("");
 }
 
 export function LearnScreen() {
