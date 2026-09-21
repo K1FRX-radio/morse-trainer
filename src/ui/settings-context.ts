@@ -6,10 +6,14 @@ import {
 } from "../core/settings.ts";
 
 export const SETTINGS_STORAGE_KEY = "k1frx.settings.v1";
+export const OUTPUT_DEVICE_STORAGE_KEY = "k1frx.audioOutput.v1";
 
 export type SettingsContextValue = {
   settings: PracticeSettings;
   update: (patch: Partial<PracticeSettings>) => void;
+  /** Selected audio output device id ("" = system default). */
+  outputDeviceId: string;
+  setOutputDeviceId: (deviceId: string) => void;
 };
 
 export const SettingsContext = createContext<SettingsContextValue | undefined>(
@@ -26,6 +30,14 @@ export function loadSettings(): PracticeSettings {
     // Ignore malformed or unavailable storage; fall back to defaults.
   }
   return DEFAULT_SETTINGS;
+}
+
+export function loadOutputDeviceId(): string {
+  try {
+    return localStorage.getItem(OUTPUT_DEVICE_STORAGE_KEY) ?? "";
+  } catch {
+    return "";
+  }
 }
 
 export function useSettings(): SettingsContextValue {

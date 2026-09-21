@@ -17,12 +17,13 @@ export type AudioEngine = {
  * volume in sync with settings and tears everything down on unmount.
  */
 export function useAudioEngine(): AudioEngine {
-  const { settings } = useSettings();
+  const { settings, outputDeviceId } = useSettings();
   const ref = useRef<AudioEngine | undefined>(undefined);
 
   if (!ref.current) {
     const session = new AudioSession();
     session.setVolume(settings.volume);
+    session.setPreferredSinkId(outputDeviceId);
     ref.current = {
       session,
       engine: new CwEngine(session),
@@ -34,6 +35,10 @@ export function useAudioEngine(): AudioEngine {
   useEffect(() => {
     ref.current?.session.setVolume(settings.volume);
   }, [settings.volume]);
+
+  useEffect(() => {
+    ref.current?.session.setPreferredSinkId(outputDeviceId);
+  }, [outputDeviceId]);
 
   useEffect(() => {
     const current = ref.current;

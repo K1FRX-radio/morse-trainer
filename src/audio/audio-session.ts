@@ -8,6 +8,7 @@ export class AudioSession {
   private master: GainNode | undefined;
   private unlocked = false;
   private volume = 0.7;
+  private preferredSinkId = "";
 
   /** Lazily creates the AudioContext and master gain on first use. */
   ensureContext(): AudioContext {
@@ -63,6 +64,38 @@ export class AudioSession {
     this.volume = Math.min(1, Math.max(0, volume));
     if (this.master && this.ctx) {
       this.master.gain.setValueAtTime(this.volume, this.ctx.currentTime);
+    }
+  }
+
+  /**
+   * Selects the output device by id ("" = system default). Applied immediately
+   * if a context exists and reapplied whenever applyPreferredSink runs before
+   * playback. No-op where AudioContext.setSinkId is unsupported.
+   */
+  setPreferredSinkId(deviceId: string): void {
+    this.preferredSinkId = deviceId;
+    void this.applyPreferredSink();
+  }
+
+  get sinkId(): string {
+    return this.preferredSinkId;
+  }
+
+  async applyPreferredSink(): Promise<void> {
+    const ctx = this.ctx as (AudioContext & {
+      setSinkId?: (id: string) => Promise<void>;
+      sinkId?: string;
+    }) | undefined;
+    if (!ctx || typeof ctx.setSinkId !== "function") {
+      return;
+    }
+    if (ctx.sinkId === this.preferredSinkId) {
+      return;
+    }
+    try {
+      await ctx.setSinkId(this.preferredSinkId);
+    } catch {
+      // Fall back to the default sink if the device is unavailable.
     }
   }
 

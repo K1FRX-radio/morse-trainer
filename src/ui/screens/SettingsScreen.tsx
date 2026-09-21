@@ -1,4 +1,11 @@
+import { useState } from "react";
 import { SETTING_RANGES, type PracticeSettings } from "../../core/settings.ts";
+import {
+  canSelectOutput,
+  listOutputDevices,
+  requestOutputAccess,
+  type OutputDevice,
+} from "../../audio/output-devices.ts";
 import { useSettings } from "../settings-context.ts";
 
 type NumericField = "charWpm" | "effectiveWpm" | "toneHz";
@@ -34,7 +41,20 @@ function RangeField({
 }
 
 export function SettingsScreen() {
-  const { settings, update } = useSettings();
+  const { settings, update, outputDeviceId, setOutputDeviceId } = useSettings();
+  const [devices, setDevices] = useState<OutputDevice[]>([]);
+  const [access, setAccess] = useState<"idle" | "denied" | "ready">("idle");
+  const outputSupported = canSelectOutput();
+
+  async function enableOutputSelection(): Promise<void> {
+    const granted = await requestOutputAccess();
+    if (!granted) {
+      setAccess("denied");
+      return;
+    }
+    setDevices(await listOutputDevices());
+    setAccess("ready");
+  }
 
   const numberField = (
     field: NumericField,
@@ -88,6 +108,42 @@ export function SettingsScreen() {
       <p className="settings__note">
         Effective speed is capped at the character speed (Farnsworth spacing).
       </p>
+
+      <h3>Audio output</h3>
+      {!outputSupported && (
+        <p className="settings__note">
+          This browser cannot choose an output device; audio follows the system
+          default.
+        </p>
+      )}
+      {outputSupported && access !== "ready" && (
+        <div className="field">
+          <button type="button" onClick={() => void enableOutputSelection()}>
+            Choose output device
+          </button>
+          <span className="field__label">
+            {access === "denied"
+              ? "Access denied. Grant permission to list your headphones."
+              : "Grants a one-time permission so your devices become selectable."}
+          </span>
+        </div>
+      )}
+      {outputSupported && access === "ready" && (
+        <label className="field">
+          <span className="field__label">Output device</span>
+          <select
+            value={outputDeviceId}
+            onChange={(event) => setOutputDeviceId(event.target.value)}
+          >
+            <option value="">System default</option>
+            {devices.map((device) => (
+              <option key={device.deviceId} value={device.deviceId}>
+                {device.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
     </section>
   );
 }

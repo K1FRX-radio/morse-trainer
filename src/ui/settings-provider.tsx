@@ -4,13 +4,17 @@ import {
   type PracticeSettings,
 } from "../core/settings.ts";
 import {
+  OUTPUT_DEVICE_STORAGE_KEY,
   SETTINGS_STORAGE_KEY,
   SettingsContext,
+  loadOutputDeviceId,
   loadSettings,
 } from "./settings-context.ts";
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<PracticeSettings>(loadSettings);
+  const [outputDeviceId, setOutputDeviceIdState] =
+    useState<string>(loadOutputDeviceId);
 
   const update = useCallback((patch: Partial<PracticeSettings>) => {
     setSettings((current) => {
@@ -24,7 +28,19 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const value = useMemo(() => ({ settings, update }), [settings, update]);
+  const setOutputDeviceId = useCallback((deviceId: string) => {
+    setOutputDeviceIdState(deviceId);
+    try {
+      localStorage.setItem(OUTPUT_DEVICE_STORAGE_KEY, deviceId);
+    } catch {
+      // Persisting the device choice is best-effort.
+    }
+  }, []);
+
+  const value = useMemo(
+    () => ({ settings, update, outputDeviceId, setOutputDeviceId }),
+    [settings, update, outputDeviceId, setOutputDeviceId],
+  );
 
   return (
     <SettingsContext.Provider value={value}>

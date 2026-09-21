@@ -49,6 +49,7 @@ export class CwEngine {
     this.cancel();
     const ctx = this.session.ensureContext();
     await this.session.resume();
+    await this.session.applyPreferredSink();
 
     const { events, durationSec } = scheduleToGainEvents(schedule, {
       peak: options.peak ?? 1,
@@ -100,6 +101,7 @@ export class CwEngine {
   startTone(toneHz: number, peak = 1): void {
     const ctx = this.session.ensureContext();
     void this.session.resume();
+    void this.session.applyPreferredSink();
     this.stopTone();
 
     const osc = ctx.createOscillator();
