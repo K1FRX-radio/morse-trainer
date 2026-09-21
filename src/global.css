@@ -1,0 +1,93 @@
+:root {
+  --k1frx-bg: #0f1720;
+  --k1frx-surface: #16212c;
+  --k1frx-accent: #2a6f97;
+  --k1frx-accent-warm: #b5480a;
+  --k1frx-text: #e8eef3;
+  --k1frx-muted: #9fb2c0;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+  background: var(--k1frx-bg);
+  color: var(--k1frx-text);
+}
+
+.app {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.app__header {
+  padding: 1rem 1.25rem 0.5rem;
+}
+
+.app__title {
+  margin: 0;
+  font-size: 1.25rem;
+  letter-spacing: 0.02em;
+}
+
+.app__tagline {
+  margin: 0.25rem 0 0;
+  color: var(--k1frx-muted);
+  font-size: 0.85rem;
+}
+
+.app__main {
+  flex: 1;
+  padding: 1rem 1.25rem;
+}
+
+.app__nav {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.5rem 1.25rem calc(0.5rem + env(safe-area-inset-bottom));
+  position: sticky;
+  bottom: 0;
+  background: var(--k1frx-surface);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.app__nav a {
+  flex: 1;
+  text-align: center;
+  padding: 0.75rem 0.5rem;
+  min-height: 2.75rem;
+  border-radius: 8px;
+  color: var(--k1frx-muted);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.app__nav a.is-active {
+  color: #fff;
+  background: var(--k1frx-accent);
+}
+
+@media (min-width: 640px) {
+  .app__nav {
+    position: static;
+  }
+}
