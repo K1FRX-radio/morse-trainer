@@ -2,6 +2,8 @@
 // Framework- and DOM-free; adapters and UI read these values to configure
 // audio and timing.
 
+export type PacingMode = "auto" | "manual";
+
 export type PracticeSettings = {
   /** Character speed in WPM; sets element and intra-character timing. */
   charWpm: number;
@@ -13,6 +15,8 @@ export type PracticeSettings = {
   volume: number;
   /** Band-noise level in [0, 1]; 0 disables noise. */
   noiseLevel: number;
+  /** Learn-mode flow: auto-advance, or wait for Enter between cards. */
+  pacing: PacingMode;
 };
 
 export type SettingRange = {
@@ -21,14 +25,17 @@ export type SettingRange = {
   default: number;
 };
 
-/** Inclusive ranges and defaults for each setting. Tunable configuration. */
+/** Inclusive ranges and defaults for each numeric setting. Tunable config. */
 export const SETTING_RANGES = {
   charWpm: { min: 5, max: 40, default: 20 },
   effectiveWpm: { min: 5, max: 40, default: 12 },
   toneHz: { min: 300, max: 1000, default: 600 },
   volume: { min: 0, max: 1, default: 0.7 },
   noiseLevel: { min: 0, max: 1, default: 0 },
-} as const satisfies Record<keyof PracticeSettings, SettingRange>;
+} as const satisfies Record<
+  "charWpm" | "effectiveWpm" | "toneHz" | "volume" | "noiseLevel",
+  SettingRange
+>;
 
 export const DEFAULT_SETTINGS: PracticeSettings = {
   charWpm: SETTING_RANGES.charWpm.default,
@@ -36,6 +43,7 @@ export const DEFAULT_SETTINGS: PracticeSettings = {
   toneHz: SETTING_RANGES.toneHz.default,
   volume: SETTING_RANGES.volume.default,
   noiseLevel: SETTING_RANGES.noiseLevel.default,
+  pacing: "auto",
 };
 
 function clamp(value: number, range: SettingRange): number {
@@ -72,5 +80,6 @@ export function normalizeSettings(
       settings.noiseLevel ?? DEFAULT_SETTINGS.noiseLevel,
       SETTING_RANGES.noiseLevel,
     ),
+    pacing: settings.pacing === "manual" ? "manual" : "auto",
   };
 }

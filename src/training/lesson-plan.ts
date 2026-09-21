@@ -23,8 +23,10 @@ export type PlannedExercise = {
   /** The character this card focuses on. */
   focus: string;
   newestCharacter: boolean;
-  /** True when inserted as an immediate repeat after a miss. */
-  repeat: boolean;
+  /** True when this card is an assisted reinforcement after a miss (shows the
+   * character + Morse). Assisted cards must not count toward checkpoint
+   * readiness. */
+  assisted: boolean;
 };
 
 export type LessonConfig = {
@@ -108,7 +110,7 @@ export class LessonPlan {
     direction: Direction,
     phase: LessonPhase,
     focus: string,
-    repeat = false,
+    assisted = false,
   ): PlannedExercise {
     return {
       type,
@@ -117,7 +119,7 @@ export class LessonPlan {
       phase,
       focus,
       newestCharacter: focus === this.newest,
-      repeat,
+      assisted,
     };
   }
 

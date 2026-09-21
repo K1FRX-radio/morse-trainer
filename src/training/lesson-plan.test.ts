@@ -96,7 +96,7 @@ describe("LessonPlan misses", () => {
     plan.reportResult(false);
     expect(plan.length).toBe(before + 1);
     const repeat = plan.next();
-    expect(repeat?.repeat).toBe(true);
+    expect(repeat?.assisted).toBe(true);
     expect(repeat?.focus).toBe(card?.focus);
   });
 
