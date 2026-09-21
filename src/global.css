@@ -277,6 +277,64 @@ input[type="text"] {
   color: var(--k1frx-accent-warm);
 }
 
+.learn__answer {
+  display: block;
+  width: 100%;
+  text-align: center;
+  text-transform: uppercase;
+  font-size: 1.5rem;
+  letter-spacing: 0.15em;
+  margin: 0.75rem 0;
+}
+
+.learn__assist {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.75rem;
+  margin: 0.5rem 0;
+  border-radius: 10px;
+  background: rgba(181, 72, 10, 0.12);
+  border: 1px solid rgba(181, 72, 10, 0.35);
+}
+
+.learn__assist-char {
+  font-size: 2.5rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.learn__feedback {
+  min-height: 2.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0.5rem 0;
+}
+
+.learn__mark {
+  font-size: 2rem;
+  color: #6ee7a8;
+  animation: k1frx-pop 0.3s ease;
+}
+
+@keyframes k1frx-pop {
+  from {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.feedback--neutral {
+  color: #e6c07a;
+  font-weight: 600;
+}
+
 .learn__end {
   margin-top: 1.5rem;
   justify-content: flex-end;

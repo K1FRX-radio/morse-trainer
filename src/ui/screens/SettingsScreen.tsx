@@ -105,6 +105,19 @@ export function SettingsScreen() {
         onChange={(value) => update({ noiseLevel: value / 100 })}
       />
 
+      <label className="field">
+        <span className="field__label">Learn pacing</span>
+        <select
+          value={settings.pacing}
+          onChange={(event) =>
+            update({ pacing: event.target.value === "manual" ? "manual" : "auto" })
+          }
+        >
+          <option value="auto">Automatic (recommended)</option>
+          <option value="manual">Press Continue between cards</option>
+        </select>
+      </label>
+
       <p className="settings__note">
         Effective speed is capped at the character speed (Farnsworth spacing).
       </p>

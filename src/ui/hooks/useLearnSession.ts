@@ -19,6 +19,12 @@ import { useAudioEngine } from "./useAudioEngine.ts";
 const CURRICULUM_STORAGE_KEY = "k1frx.curriculum.v2";
 const INTRODUCED_STORAGE_KEY = "k1frx.introduced.v1";
 
+// Auto-flow timings (ms).
+const INTRO_REPLAY_DELAY = 1300;
+const INTRO_ADVANCE_DELAY = 2700;
+const ADVANCE_AFTER_CORRECT = 500;
+const ADVANCE_AFTER_MISS = 1500;
+
 export type LearnPhase = "onboarding" | "exercise" | "summary";
 
 export type Feedback = {
@@ -49,7 +55,7 @@ function saveCurriculum(state: CurriculumState): void {
       JSON.stringify(state.characters),
     );
   } catch {
-    // Persisting progress is best-effort until the storage milestone.
+    // Best-effort until the storage milestone.
   }
 }
 
@@ -77,7 +83,6 @@ function saveIntroduced(chars: string[]): void {
   }
 }
 
-/** Renders a target as spaced dit/dah notation for hints. */
 function toMorse(target: string): string {
   return encodeText(target)
     .map((entry) => entry.pattern)
@@ -87,6 +92,7 @@ function toMorse(target: string): string {
 export function useLearnSession() {
   const { settings } = useSettings();
   const { engine, unlock } = useAudioEngine();
+  const auto = settings.pacing === "auto";
 
   const stateRef = useRef<CurriculumState>(
     undefined as unknown as CurriculumState,
@@ -95,12 +101,14 @@ export function useLearnSession() {
     stateRef.current = loadCurriculum();
   }
   const sessionRef = useRef<LearnSession | undefined>(undefined);
+  const timers = useRef<number[]>([]);
 
   const [phase, setPhase] = useState<LearnPhase>("onboarding");
   const [exercise, setExercise] = useState<PlannedExercise | undefined>(
     undefined,
   );
   const [feedback, setFeedback] = useState<Feedback | undefined>(undefined);
+  const [awaitingContinue, setAwaitingContinue] = useState(false);
   const [summary, setSummary] = useState<SessionSummary | undefined>(undefined);
   const [, forceTick] = useState(0);
 
@@ -109,6 +117,16 @@ export function useLearnSession() {
     [settings.charWpm, settings.effectiveWpm],
   );
 
+  const clearTimers = useCallback(() => {
+    for (const id of timers.current) window.clearTimeout(id);
+    timers.current = [];
+  }, []);
+
+  const schedule = useCallback((fn: () => void, ms: number) => {
+    const id = window.setTimeout(fn, ms);
+    timers.current.push(id);
+  }, []);
+
   const play = useCallback(
     (text: string) => {
       void engine.playText(text, timing, { toneHz: settings.toneHz });
@@ -116,27 +134,40 @@ export function useLearnSession() {
     [engine, timing, settings.toneHz],
   );
 
-  const showExercise = useCallback(
-    (next: PlannedExercise) => {
-      setExercise(next);
-      setFeedback(undefined);
-      if (next.type !== "send-character") {
-        play(next.target);
-      }
-    },
-    [play],
-  );
-
   const endSession = useCallback(() => {
+    clearTimers();
     const session = sessionRef.current;
     if (!session) return;
     setSummary(session.end());
     saveIntroduced([...loadIntroduced(), ...session.newlyIntroduced]);
     saveCurriculum(stateRef.current);
     setPhase("summary");
-  }, []);
+  }, [clearTimers]);
+
+  const showExercise = useCallback(
+    (next: PlannedExercise) => {
+      clearTimers();
+      setExercise(next);
+      setFeedback(undefined);
+      setAwaitingContinue(false);
+
+      if (next.type === "introduce") {
+        play(next.target);
+        schedule(() => play(next.target), INTRO_REPLAY_DELAY);
+        if (auto) {
+          schedule(() => advanceRef.current(), INTRO_ADVANCE_DELAY);
+        } else {
+          setAwaitingContinue(true);
+        }
+      } else if (next.type !== "send-character") {
+        play(next.target);
+      }
+    },
+    [auto, clearTimers, play, schedule],
+  );
 
   const advance = useCallback(() => {
+    clearTimers();
     const session = sessionRef.current;
     if (!session) return;
     const next = session.next();
@@ -145,7 +176,11 @@ export function useLearnSession() {
       return;
     }
     showExercise(next);
-  }, [endSession, showExercise]);
+  }, [clearTimers, endSession, showExercise]);
+
+  // Stable ref so timers scheduled inside showExercise can call the latest advance.
+  const advanceRef = useRef(advance);
+  advanceRef.current = advance;
 
   const begin = useCallback(async () => {
     await unlock();
@@ -166,26 +201,29 @@ export function useLearnSession() {
   const record = useCallback(
     (input: string | boolean) => {
       const session = sessionRef.current;
-      if (!session || !exercise) return;
+      if (!session || !exercise || feedback) return;
       const outcome = session.submit(input);
       saveCurriculum(stateRef.current);
       forceTick((n) => n + 1);
 
-      if (exercise.type === "introduce") {
-        advance();
-        return;
-      }
       setFeedback({
         correct: outcome.correct,
         expected: exercise.target,
         morse: toMorse(exercise.target),
       });
-      // Replay the correct sound after a miss so the ear, not the eye, corrects.
       if (!outcome.correct) {
         play(exercise.target);
       }
+      if (auto) {
+        schedule(
+          () => advanceRef.current(),
+          outcome.correct ? ADVANCE_AFTER_CORRECT : ADVANCE_AFTER_MISS,
+        );
+      } else {
+        setAwaitingContinue(true);
+      }
     },
-    [exercise, advance, play],
+    [auto, exercise, feedback, play, schedule],
   );
 
   const replay = useCallback(() => {
@@ -193,6 +231,8 @@ export function useLearnSession() {
       play(exercise.target);
     }
   }, [exercise, play]);
+
+  const continueNow = useCallback(() => advance(), [advance]);
 
   useEffect(() => {
     const onVisibility = () => {
@@ -205,6 +245,8 @@ export function useLearnSession() {
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, []);
 
+  useEffect(() => clearTimers, [clearTimers]);
+
   const current: CharacterProgress | undefined = newestCharacter(
     stateRef.current,
   );
@@ -214,7 +256,9 @@ export function useLearnSession() {
     phase,
     exercise,
     feedback,
+    awaitingContinue,
     summary,
+    auto,
     completed: session?.completedCards ?? 0,
     total: session?.totalCards ?? 0,
     progress: {
@@ -222,6 +266,6 @@ export function useLearnSession() {
       total: stateRef.current.config.order.length,
       current: current?.character,
     },
-    actions: { begin, record, replay, advance, endSession },
+    actions: { begin, record, replay, continueNow, endSession },
   };
 }

@@ -1,4 +1,10 @@
-import { useEffect, useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type KeyboardEvent,
+} from "react";
 import { encodeCharacter } from "../../core/morse.ts";
 import { useLearnSession } from "../hooks/useLearnSession.ts";
 import { SendPad } from "../components/SendPad.tsx";
@@ -10,19 +16,65 @@ const PROMPTS: Record<string, string> = {
   "send-character": "Send this character",
 };
 
+function sanitize(value: string): string {
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
 export function LearnScreen() {
   const learn = useLearnSession();
-  const { exercise, feedback, actions } = learn;
+  const { exercise, feedback, awaitingContinue } = learn;
+  const { record, replay, continueNow, begin, endSession } = learn.actions;
 
-  const [answer, setAnswer] = useState("");
+  const [value, setValue] = useState("");
   const [decoded, setDecoded] = useState("");
   const [sendReset, setSendReset] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const isCopy =
+    exercise?.direction === "rx" && exercise.type !== "introduce";
 
   useEffect(() => {
-    setAnswer("");
+    setValue("");
     setDecoded("");
     setSendReset((n) => n + 1);
-  }, [exercise]);
+    if (isCopy) {
+      // Focus so physical and on-screen keyboards go straight to the answer.
+      inputRef.current?.focus();
+    }
+  }, [exercise, isCopy]);
+
+  // Sending auto-submits as correct as soon as the decode matches the target.
+  useEffect(() => {
+    if (
+      exercise?.type === "send-character" &&
+      !feedback &&
+      decoded.trim().toUpperCase() === exercise.target
+    ) {
+      record(true);
+    }
+  }, [decoded, exercise, feedback, record]);
+
+  function onInputChange(event: ChangeEvent<HTMLInputElement>) {
+    if (!exercise || feedback) return;
+    const next = sanitize(event.target.value);
+    if (exercise.type === "copy-character") {
+      const first = next.slice(0, 1);
+      setValue(first);
+      if (first) record(first);
+      return;
+    }
+    setValue(next);
+    if (exercise.type === "copy-group" && next.length >= exercise.target.length) {
+      record(next);
+    }
+  }
+
+  function onInputKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== "Enter" || !exercise || feedback) return;
+    if (exercise.type === "copy-word" || exercise.type === "copy-group") {
+      record(value);
+    }
+  }
 
   if (learn.phase === "onboarding") {
     return (
@@ -30,10 +82,10 @@ export function LearnScreen() {
         <h2>Learn</h2>
         <p>
           Short lessons teach Morse by ear: each new character is introduced by
-          sound, drilled on its own, then mixed with the ones you know. You will
-          copy characters and send a few yourself.
+          sound, drilled on its own, then mixed with the ones you know. Just
+          listen and type. One tap to begin, then let it flow.
         </p>
-        <button type="button" onClick={() => void actions.begin()}>
+        <button type="button" onClick={() => void begin()}>
           Start learning
         </button>
       </section>
@@ -56,7 +108,7 @@ export function LearnScreen() {
           </li>
           <li>Characters practiced: {s.charactersPracticed.join(" ") || "—"}</li>
         </ul>
-        <button type="button" onClick={() => void actions.begin()}>
+        <button type="button" onClick={() => void begin()}>
           Practice again
         </button>
       </section>
@@ -70,11 +122,7 @@ export function LearnScreen() {
   const progressPct = Math.round(
     (learn.progress.unlocked / learn.progress.total) * 100,
   );
-
-  function submitCopy(event: FormEvent) {
-    event.preventDefault();
-    actions.record(answer);
-  }
+  const assisted = exercise.assisted && exercise.type === "copy-character";
 
   return (
     <section>
@@ -98,12 +146,13 @@ export function LearnScreen() {
           <code className="learn__morse">
             {encodeCharacter(exercise.target) ?? ""}
           </code>
+          <p className="field__label">Listen…</p>
           <div className="practice__controls">
-            <button type="button" onClick={actions.replay}>
-              Play
+            <button type="button" className="tab" onClick={replay}>
+              Replay
             </button>
-            <button type="button" onClick={() => actions.record("")}>
-              Got it
+            <button type="button" onClick={continueNow}>
+              Continue
             </button>
           </div>
         </div>
@@ -112,31 +161,56 @@ export function LearnScreen() {
           <p className="field__label">
             {PROMPTS[exercise.type]}
             {exercise.type === "send-character" ? `: ${exercise.target}` : ""}
+            {exercise.type === "copy-group"
+              ? ` · ${exercise.target.length} characters`
+              : ""}
           </p>
 
-          {exercise.direction === "rx" ? (
+          {assisted && (
+            <div className="learn__assist" role="note">
+              <span className="learn__assist-char">{exercise.target}</span>
+              <code className="learn__morse">
+                {encodeCharacter(exercise.target) ?? ""}
+              </code>
+              <span className="field__label">Listen and type it.</span>
+            </div>
+          )}
+
+          {isCopy ? (
             <>
+              <input
+                ref={inputRef}
+                className="learn__answer"
+                type="text"
+                inputMode="text"
+                autoComplete="off"
+                autoCapitalize="characters"
+                spellCheck={false}
+                maxLength={
+                  exercise.type === "copy-character"
+                    ? 1
+                    : exercise.type === "copy-group"
+                      ? exercise.target.length
+                      : undefined
+                }
+                placeholder={
+                  exercise.type === "copy-character"
+                    ? "type the letter"
+                    : exercise.type === "copy-group"
+                      ? `type ${exercise.target.length} characters`
+                      : "type the word, then Enter"
+                }
+                value={value}
+                onChange={onInputChange}
+                onKeyDown={onInputKeyDown}
+                disabled={!!feedback}
+                aria-label="Your copy"
+              />
               <div className="practice__controls">
-                <button type="button" onClick={actions.replay}>
+                <button type="button" className="tab" onClick={replay}>
                   Replay
                 </button>
               </div>
-              {!feedback && (
-                <form className="practice__answer" onSubmit={submitCopy}>
-                  <input
-                    type="text"
-                    autoComplete="off"
-                    autoCapitalize="characters"
-                    spellCheck={false}
-                    placeholder="Type what you hear"
-                    value={answer}
-                    onChange={(e) => setAnswer(e.target.value)}
-                    aria-label="Your copy"
-                    autoFocus
-                  />
-                  <button type="submit">Check</button>
-                </form>
-              )}
             </>
           ) : (
             <>
@@ -149,13 +223,12 @@ export function LearnScreen() {
                 <div className="practice__controls">
                   <button
                     type="button"
+                    className="tab"
                     onClick={() =>
-                      actions.record(
-                        decoded.trim().toUpperCase() === exercise.target,
-                      )
+                      record(decoded.trim().toUpperCase() === exercise.target)
                     }
                   >
-                    Check
+                    Submit
                   </button>
                 </div>
               )}
@@ -163,36 +236,33 @@ export function LearnScreen() {
           )}
 
           {feedback && (
-            <>
-              <p
-                className={
-                  feedback.correct
-                    ? "feedback feedback--ok"
-                    : "feedback feedback--bad"
-                }
-                role="status"
-              >
-                {feedback.correct ? (
-                  "Correct"
-                ) : (
-                  <>
-                    Not quite — {feedback.expected}
-                    <code className="learn__morse"> {feedback.morse}</code>
-                  </>
-                )}
-              </p>
-              <div className="practice__controls">
-                <button type="button" onClick={actions.advance} autoFocus>
-                  Next
-                </button>
-              </div>
-            </>
+            <div className="learn__feedback" role="status">
+              {feedback.correct ? (
+                <span className="learn__mark">✓</span>
+              ) : exercise.type === "copy-character" ? (
+                <span className="feedback feedback--neutral">
+                  Let’s hear that one again
+                </span>
+              ) : (
+                <span className="feedback feedback--neutral">
+                  Expected {feedback.expected}
+                </span>
+              )}
+            </div>
+          )}
+
+          {awaitingContinue && (
+            <div className="practice__controls">
+              <button type="button" onClick={continueNow} autoFocus>
+                Continue
+              </button>
+            </div>
           )}
         </div>
       )}
 
       <div className="practice__controls learn__end">
-        <button type="button" className="tab" onClick={actions.endSession}>
+        <button type="button" className="tab" onClick={endSession}>
           End session
         </button>
       </div>
