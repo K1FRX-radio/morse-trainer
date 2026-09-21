@@ -126,8 +126,8 @@ export function SettingsScreen() {
           </button>
           <span className="field__label">
             {access === "denied"
-              ? "Access denied. Grant permission to list your headphones."
-              : "Grants a one-time permission so your devices become selectable."}
+              ? "Permission denied. Reset this site's microphone permission in Chrome, then try again."
+              : "Chrome asks for microphone permission; it is only used to reveal device names, and no audio is recorded."}
           </span>
         </div>
       )}
