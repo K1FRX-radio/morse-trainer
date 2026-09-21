@@ -1,7 +1,20 @@
 // Web Audio session: owns a single AudioContext and master gain, performs the
 // one-time silent unlock required by iOS/Safari, and exposes resume/volume.
 // This is the only place that constructs the AudioContext so lifecycle stays
-// centralized.
+// centralized. Output routing uses AudioContext.setSinkId on Chromium and a
+// MediaStream + <audio> element on Firefox.
+
+import { detectOutputMethod, type OutputMethod } from "./output-devices.ts";
+
+type SinkAudioElement = HTMLAudioElement & {
+  setSinkId?: (id: string) => Promise<void>;
+  sinkId?: string;
+};
+
+type SinkAudioContext = AudioContext & {
+  setSinkId?: (id: string) => Promise<void>;
+  sinkId?: string;
+};
 
 export class AudioSession {
   private ctx: AudioContext | undefined;
@@ -9,6 +22,9 @@ export class AudioSession {
   private unlocked = false;
   private volume = 0.7;
   private preferredSinkId = "";
+  private readonly method: OutputMethod = detectOutputMethod();
+  private streamNode: MediaStreamAudioDestinationNode | undefined;
+  private sinkElement: SinkAudioElement | undefined;
 
   /** Lazily creates the AudioContext and master gain on first use. */
   ensureContext(): AudioContext {
@@ -20,7 +36,20 @@ export class AudioSession {
       this.ctx = new Ctor();
       this.master = this.ctx.createGain();
       this.master.gain.value = this.volume;
-      this.master.connect(this.ctx.destination);
+
+      if (this.method === "media-element") {
+        // Firefox cannot retarget an AudioContext, so capture its output into a
+        // MediaStream played by an <audio> element that supports setSinkId.
+        this.streamNode = this.ctx.createMediaStreamDestination();
+        this.master.connect(this.streamNode);
+        const element = new Audio() as SinkAudioElement;
+        element.srcObject = this.streamNode.stream;
+        element.autoplay = true;
+        element.volume = 1;
+        this.sinkElement = element;
+      } else {
+        this.master.connect(this.ctx.destination);
+      }
     }
     return this.ctx;
   }
@@ -40,6 +69,7 @@ export class AudioSession {
     if (ctx.state === "suspended") {
       await ctx.resume();
     }
+    await this.ensureSinkPlaying();
   }
 
   /**
@@ -70,7 +100,7 @@ export class AudioSession {
   /**
    * Selects the output device by id ("" = system default). Applied immediately
    * if a context exists and reapplied whenever applyPreferredSink runs before
-   * playback. No-op where AudioContext.setSinkId is unsupported.
+   * playback. No-op where output redirection is unsupported.
    */
   setPreferredSinkId(deviceId: string): void {
     this.preferredSinkId = deviceId;
@@ -82,24 +112,55 @@ export class AudioSession {
   }
 
   async applyPreferredSink(): Promise<void> {
-    const ctx = this.ctx as (AudioContext & {
-      setSinkId?: (id: string) => Promise<void>;
-      sinkId?: string;
-    }) | undefined;
-    if (!ctx || typeof ctx.setSinkId !== "function") {
-      return;
+    if (this.method === "audiocontext") {
+      const ctx = this.ctx as SinkAudioContext | undefined;
+      if (typeof ctx?.setSinkId !== "function" || ctx.sinkId === this.preferredSinkId) {
+        return;
+      }
+      try {
+        await ctx.setSinkId(this.preferredSinkId);
+      } catch {
+        // Fall back to the default sink if the device is unavailable.
+      }
+    } else if (this.method === "media-element") {
+      const element = this.sinkElement;
+      if (typeof element?.setSinkId !== "function" || element.sinkId === this.preferredSinkId) {
+        return;
+      }
+      // setSinkId on a media element requires it to be playing.
+      await this.ensureSinkPlaying();
+      try {
+        await element.setSinkId(this.preferredSinkId);
+      } catch {
+        // Fall back to the default sink if the device is unavailable.
+      }
     }
-    if (ctx.sinkId === this.preferredSinkId) {
-      return;
-    }
-    try {
-      await ctx.setSinkId(this.preferredSinkId);
-    } catch {
-      // Fall back to the default sink if the device is unavailable.
+  }
+
+  private async ensureSinkPlaying(): Promise<void> {
+    if (this.method === "media-element" && this.sinkElement?.paused) {
+      try {
+        await this.sinkElement.play();
+      } catch {
+        // Autoplay may need a user gesture; retried on the next resume.
+      }
     }
   }
 
   async close(): Promise<void> {
+    if (this.sinkElement) {
+      this.sinkElement.pause();
+      this.sinkElement.srcObject = null;
+      this.sinkElement = undefined;
+    }
+    if (this.streamNode) {
+      try {
+        this.streamNode.disconnect();
+      } catch {
+        // Already disconnected.
+      }
+      this.streamNode = undefined;
+    }
     if (this.ctx) {
       await this.ctx.close();
       this.ctx = undefined;

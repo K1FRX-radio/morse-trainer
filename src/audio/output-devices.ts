@@ -16,9 +16,34 @@ export type OutputSupport =
     };
 
 /**
+ * How this browser can redirect Web Audio output:
+ * - "audiocontext": Chromium's AudioContext.setSinkId (direct, low latency).
+ * - "media-element": Firefox route via a MediaStream and HTMLMediaElement.setSinkId.
+ * - "none": no redirection available; output follows the system default.
+ */
+export type OutputMethod = "audiocontext" | "media-element" | "none";
+
+export function detectOutputMethod(): OutputMethod {
+  if (
+    typeof AudioContext !== "undefined" &&
+    typeof (AudioContext.prototype as { setSinkId?: unknown }).setSinkId ===
+      "function"
+  ) {
+    return "audiocontext";
+  }
+  if (
+    typeof HTMLMediaElement !== "undefined" &&
+    typeof (HTMLMediaElement.prototype as { setSinkId?: unknown }).setSinkId ===
+      "function"
+  ) {
+    return "media-element";
+  }
+  return "none";
+}
+
+/**
  * Reports whether this browser can route Web Audio to a chosen output device,
- * and if not, why. `setSinkId` on AudioContext only exists in Chromium, and
- * media APIs require a secure context (localhost or HTTPS).
+ * and if not, why. Media APIs require a secure context (localhost or HTTPS).
  */
 export function getOutputSupport(): OutputSupport {
   if (typeof window !== "undefined" && window.isSecureContext === false) {
@@ -30,11 +55,7 @@ export function getOutputSupport(): OutputSupport {
   ) {
     return { supported: false, reason: "no-media-devices" };
   }
-  const hasSetSinkId =
-    typeof AudioContext !== "undefined" &&
-    typeof (AudioContext.prototype as { setSinkId?: unknown }).setSinkId ===
-      "function";
-  if (!hasSetSinkId) {
+  if (detectOutputMethod() === "none") {
     return { supported: false, reason: "no-setsinkid" };
   }
   return { supported: true };
