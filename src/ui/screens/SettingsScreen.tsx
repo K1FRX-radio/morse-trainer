@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { SETTING_RANGES, type PracticeSettings } from "../../core/settings.ts";
 import {
-  canSelectOutput,
+  getOutputSupport,
   listOutputDevices,
   requestOutputAccess,
   type OutputDevice,
@@ -44,7 +44,7 @@ export function SettingsScreen() {
   const { settings, update, outputDeviceId, setOutputDeviceId } = useSettings();
   const [devices, setDevices] = useState<OutputDevice[]>([]);
   const [access, setAccess] = useState<"idle" | "denied" | "ready">("idle");
-  const outputSupported = canSelectOutput();
+  const outputSupport = getOutputSupport();
 
   async function enableOutputSelection(): Promise<void> {
     const granted = await requestOutputAccess();
@@ -110,13 +110,16 @@ export function SettingsScreen() {
       </p>
 
       <h3>Audio output</h3>
-      {!outputSupported && (
+      {!outputSupport.supported && (
         <p className="settings__note">
-          This browser cannot choose an output device; audio follows the system
-          default.
+          {outputSupport.reason === "insecure-context"
+            ? "Device selection needs a secure context. Open the app at http://localhost (not a LAN IP) or over HTTPS."
+            : outputSupport.reason === "no-setsinkid"
+              ? "This browser cannot redirect Web Audio output. Use a Chromium browser (Chrome or Edge); audio otherwise follows the system default."
+              : "Media devices are unavailable here, so audio follows the system default."}
         </p>
       )}
-      {outputSupported && access !== "ready" && (
+      {outputSupport.supported && access !== "ready" && (
         <div className="field">
           <button type="button" onClick={() => void enableOutputSelection()}>
             Choose output device
@@ -128,7 +131,7 @@ export function SettingsScreen() {
           </span>
         </div>
       )}
-      {outputSupported && access === "ready" && (
+      {outputSupport.supported && access === "ready" && (
         <label className="field">
           <span className="field__label">Output device</span>
           <select

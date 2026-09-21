@@ -8,14 +8,36 @@ export type OutputDevice = {
   label: string;
 };
 
-/** True when this browser can redirect Web Audio to a chosen output device. */
-export function canSelectOutput(): boolean {
-  return (
+export type OutputSupport =
+  | { supported: true }
+  | {
+      supported: false;
+      reason: "insecure-context" | "no-media-devices" | "no-setsinkid";
+    };
+
+/**
+ * Reports whether this browser can route Web Audio to a chosen output device,
+ * and if not, why. `setSinkId` on AudioContext only exists in Chromium, and
+ * media APIs require a secure context (localhost or HTTPS).
+ */
+export function getOutputSupport(): OutputSupport {
+  if (typeof window !== "undefined" && window.isSecureContext === false) {
+    return { supported: false, reason: "insecure-context" };
+  }
+  if (
+    !navigator.mediaDevices?.enumerateDevices ||
+    !navigator.mediaDevices?.getUserMedia
+  ) {
+    return { supported: false, reason: "no-media-devices" };
+  }
+  const hasSetSinkId =
     typeof AudioContext !== "undefined" &&
     typeof (AudioContext.prototype as { setSinkId?: unknown }).setSinkId ===
-      "function" &&
-    !!navigator.mediaDevices?.enumerateDevices
-  );
+      "function";
+  if (!hasSetSinkId) {
+    return { supported: false, reason: "no-setsinkid" };
+  }
+  return { supported: true };
 }
 
 /**
