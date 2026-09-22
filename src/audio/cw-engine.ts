@@ -95,9 +95,26 @@ export class CwEngine {
 
   /** Stops any current playback immediately without leaving a tone sounding. */
   cancel(): void {
-    if (this.playback) {
-      this.stopVoice(this.playback);
-      this.playback = undefined;
+    const voice = this.playback;
+    if (!voice) {
+      return;
+    }
+    this.playback = undefined;
+    const ctx = this.session.context;
+    if (!ctx) {
+      this.disposeVoice(voice);
+      return;
+    }
+    // Reschedule the stop to now; the oscillator's onended then resolves the
+    // pending play promise and disposes the voice (no leak, no stuck tone).
+    const now = ctx.currentTime;
+    voice.gain.gain.cancelScheduledValues(now);
+    voice.gain.gain.setValueAtTime(voice.gain.gain.value, now);
+    voice.gain.gain.linearRampToValueAtTime(0, now + CANCEL_RAMP_SEC);
+    try {
+      voice.osc.stop(now + CANCEL_RAMP_SEC);
+    } catch {
+      // Already stopped; onended will still fire.
     }
   }
 

@@ -24,6 +24,7 @@ function makeFakeAudio() {
     cancel: () => {
       while (pending.length) pending.shift()?.resolve();
     },
+    suspend: () => {},
   };
   return {
     audio,

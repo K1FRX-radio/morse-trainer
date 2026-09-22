@@ -208,6 +208,7 @@ export function useLearnSession() {
 
   const endSession = useCallback(() => {
     audio.cancel();
+    window.setTimeout(() => audio.suspend(), 60);
     flowToken.current += 1;
     const session = sessionRef.current;
     if (!session) return;
@@ -350,11 +351,13 @@ export function useLearnSession() {
   const finishCheckpoint = useCallback(() => {
     const cp = checkpointRef.current;
     if (!cp) return;
+    audio.cancel();
+    window.setTimeout(() => audio.suspend(), 60);
     const applied = applyCheckpoint(stateRef.current, cp.grade());
     saveCurriculum(stateRef.current);
     setCheckpointResult(applied);
     setPhase("checkpoint-result");
-  }, []);
+  }, [audio]);
 
   const startCheckpoint = useCallback(async () => {
     audio.cancel();
@@ -412,6 +415,7 @@ export function useLearnSession() {
     () => () => {
       flowToken.current += 1;
       audio.cancel();
+      audio.suspend();
     },
     [audio],
   );

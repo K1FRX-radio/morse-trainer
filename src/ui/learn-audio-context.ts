@@ -11,6 +11,8 @@ export type LearnAudio = {
   ) => Promise<void>;
   /** Stops any current playback (used when leaving a flow). */
   cancel: () => void;
+  /** Suspends the audio context to release the device when idle. */
+  suspend: () => void;
 };
 
 export const LearnAudioContext = createContext<LearnAudio | undefined>(

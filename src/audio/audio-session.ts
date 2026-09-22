@@ -72,6 +72,18 @@ export class AudioSession {
     await this.ensureSinkPlaying();
   }
 
+  /** Suspends the context to release the audio device when nothing is playing. */
+  async suspend(): Promise<void> {
+    const ctx = this.ctx;
+    if (ctx && ctx.state === "running") {
+      try {
+        await ctx.suspend();
+      } catch {
+        // Suspension is best-effort.
+      }
+    }
+  }
+
   /**
    * One-time silent unlock on a user gesture: resume the context and play a
    * zero-gain, single-sample buffer so mobile browsers reliably start the clock.
