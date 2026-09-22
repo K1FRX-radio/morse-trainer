@@ -3,6 +3,7 @@ import { createRng } from "../core/rng.ts";
 import {
   DEFAULT_LESSON_CONFIG,
   LessonPlan,
+  buildWordCopyExercises,
   type PlannedExercise,
 } from "./lesson-plan.ts";
 
@@ -387,6 +388,75 @@ describe("LessonPlan later stage", () => {
         (totals.get("R") ?? 0) +
         (totals.get("E") ?? 0)) /
       3;
+    expect(emphasized).toBeGreaterThan(ordinary);
+  });
+});
+
+describe("buildWordCopyExercises", () => {
+  const active = "KMURESNAPT".split("");
+
+  it("omits word copy until the useful-pool threshold is met", () => {
+    expect(
+      buildWordCopyExercises({
+        active: ["K", "M"],
+        newest: "M",
+        rng: createRng(1),
+      }),
+    ).toEqual([]);
+  });
+
+  it("builds short, active-only, nonrepeating RX words", () => {
+    const exercises = buildWordCopyExercises({
+      active,
+      newest: "T",
+      review: ["K"],
+      weak: ["M"],
+      rng: createRng(4),
+    });
+    expect(exercises).toHaveLength(DEFAULT_LESSON_CONFIG.wordCopyCount);
+    expect(new Set(exercises.map((exercise) => exercise.target))).toHaveLength(
+      exercises.length,
+    );
+    for (const exercise of exercises) {
+      expect(exercise.type).toBe("copy-word");
+      expect(exercise.direction).toBe("rx");
+      expect(exercise.phase).toBe("words");
+      expect(exercise.target.length).toBeGreaterThanOrEqual(2);
+      expect(exercise.target.length).toBeLessThanOrEqual(4);
+      expect(
+        [...exercise.target].every((character) => active.includes(character)),
+      ).toBe(true);
+    }
+  });
+
+  it("is deterministic for the same seed", () => {
+    const build = () =>
+      buildWordCopyExercises({
+        active,
+        newest: "T",
+        review: ["K"],
+        weak: ["M"],
+        rng: createRng(17),
+      });
+    expect(build()).toEqual(build());
+  });
+
+  it("favors words containing newest, review, and weak characters", () => {
+    let emphasized = 0;
+    let ordinary = 0;
+    for (let seed = 1; seed <= 100; seed++) {
+      const exercises = buildWordCopyExercises({
+        active,
+        newest: "T",
+        review: ["K"],
+        weak: ["M"],
+        rng: createRng(seed),
+      });
+      for (const exercise of exercises) {
+        if (/[TKM]/.test(exercise.target)) emphasized += 1;
+        else ordinary += 1;
+      }
+    }
     expect(emphasized).toBeGreaterThan(ordinary);
   });
 });

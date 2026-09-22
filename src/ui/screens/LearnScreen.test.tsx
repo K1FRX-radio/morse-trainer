@@ -7,7 +7,7 @@ import {
   screen,
 } from "@testing-library/react";
 import { DEFAULT_CURRICULUM_CONFIG } from "../../content/curriculum-data.ts";
-import { createInitialState } from "../../core/curriculum.ts";
+import { createInitialState, forceUnlockNext } from "../../core/curriculum.ts";
 import type { Schedule } from "../../core/timing.ts";
 import { LearnAudioContext, type LearnAudio } from "../learn-audio-context.ts";
 import { SettingsProvider } from "../settings-provider.tsx";
@@ -95,12 +95,14 @@ async function toFirstCopy(fake: ReturnType<typeof makeFakeAudio>) {
 async function toMultiCharacterTransition(
   fake: ReturnType<typeof makeFakeAudio>,
 ) {
-  localStorage.setItem("k1frx.introduced.v1", JSON.stringify(["K", "M"]));
+  if (!localStorage.getItem("k1frx.introduced.v1")) {
+    localStorage.setItem("k1frx.introduced.v1", JSON.stringify(["K", "M"]));
+  }
   fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
   await flush();
   for (let attempt = 0; attempt < 16; attempt++) {
     const target = fake.pending[0]?.text;
-    expect(target).toMatch(/^[KM]$/);
+    expect(target).toHaveLength(1);
     await resolvePlay(fake);
     fireEvent.change(screen.getByLabelText("Your copy"), {
       target: { value: target },
@@ -568,6 +570,47 @@ describe("LearnScreen audio sequencing", () => {
       screen.getByText(/ended early and was not counted/),
     ).toBeInTheDocument();
     expect(fake.playCount()).toBe(0);
+  });
+
+  it("gates eligible word copy behind Go and submits words on Enter", async () => {
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    while (state.characters.length < 10) forceUnlockNext(state);
+    const active = state.characters.map((character) => character.character);
+    localStorage.setItem(
+      "k1frx.curriculum.v2",
+      JSON.stringify(state.characters),
+    );
+    localStorage.setItem("k1frx.introduced.v1", JSON.stringify(active));
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+    await toContinuousCopyTransition(fake);
+    fireEvent.click(screen.getByRole("button", { name: "Go" }));
+    await flush();
+    await resolvePlay(fake);
+    await tick(2000);
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await flush();
+
+    expect(
+      screen.getByRole("heading", { name: "Ready to copy words?" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/complete word rhythms/)).toBeInTheDocument();
+    expect(fake.playCount()).toBe(0);
+    fireEvent.click(screen.getByRole("button", { name: "Go" }));
+    await flush();
+    const target = fake.pending[0]?.text ?? "";
+    expect(target.length).toBeGreaterThanOrEqual(2);
+    expect([...target].every((character) => active.includes(character))).toBe(
+      true,
+    );
+    expect(screen.queryByText(/characters/)).not.toBeInTheDocument();
+    await resolvePlay(fake);
+
+    const input = screen.getByLabelText("Your copy");
+    fireEvent.change(input, { target: { value: target } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await flush();
+    expect(screen.getByRole("status")).toBeInTheDocument();
   });
 });
 

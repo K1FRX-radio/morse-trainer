@@ -3,7 +3,11 @@ import { DEFAULT_CURRICULUM_CONFIG } from "../content/curriculum-data.ts";
 import { createInitialState, forceUnlockNext } from "../core/curriculum.ts";
 import { createRng } from "../core/rng.ts";
 import { LearnSession, type LessonEvent } from "./learn-session.ts";
-import type { LessonPhase, PlannedExercise } from "./lesson-plan.ts";
+import {
+  DEFAULT_LESSON_CONFIG,
+  type LessonPhase,
+  type PlannedExercise,
+} from "./lesson-plan.ts";
 
 function isExercise(event: LessonEvent): event is PlannedExercise {
   return (
@@ -605,5 +609,117 @@ describe("LearnSession transitions", () => {
       state.characters.map((character) => character.rx.totalAttempts),
     ).toEqual(attemptsBefore);
     expect(session.summary().continuousCopyResult).toBe(result);
+  });
+
+  it("omits word copy when the active vocabulary pool is too small", () => {
+    const { session } = freshSession({
+      introduced: ["K", "M"],
+      continuousCopyDurationMs: 1000,
+    });
+    session.start(0);
+    let event = session.next();
+    while (event) {
+      completeCorrect(session, event);
+      event = session.next();
+    }
+    expect(session.currentEvent).toBeUndefined();
+  });
+
+  it("gates eligible words behind a transition after continuous copy", () => {
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    while (state.characters.length < 10) forceUnlockNext(state);
+    const active = state.characters.map((character) => character.character);
+    const session = new LearnSession({
+      state,
+      rng: createRng(8),
+      introduced: active,
+      continuousCopyDurationMs: 1000,
+    });
+    session.start(0);
+
+    let event = session.next();
+    while (event?.type !== "continuous-copy") {
+      if (!event) throw new Error("expected continuous copy");
+      completeCorrect(session, event);
+      event = session.next();
+    }
+    session.completeContinuousCopy(
+      event.plan.target,
+      event.plan.scheduledDurationMs,
+    );
+
+    const transition = session.next();
+    expect(transition).toEqual({
+      type: "transition",
+      id: "word-copy",
+      title: "Ready to copy words?",
+      text: "Now listen for complete word rhythms instead of separate characters.",
+      destinationPhase: "words",
+      actionLabel: "Go",
+    });
+    expect(session.phaseLabel).toBe("Continuous copy");
+    expect(session.next()).toBe(transition);
+    expect(session.continueTransition()).toBe(true);
+
+    const words: string[] = [];
+    event = session.next();
+    while (event) {
+      expect(isExercise(event)).toBe(true);
+      if (!isExercise(event)) throw new Error("expected word exercise");
+      expect(event.type).toBe("copy-word");
+      expect(event.phase).toBe("words");
+      expect(
+        [...event.target].every((character) => active.includes(character)),
+      ).toBe(true);
+      words.push(event.target);
+      session.submit(event.target);
+      event = session.next();
+    }
+    expect(words).toHaveLength(DEFAULT_LESSON_CONFIG.wordCopyCount);
+    expect(new Set(words)).toHaveLength(words.length);
+  });
+
+  it("excludes replayed word copy from mastery and remediation", () => {
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    while (state.characters.length < 10) forceUnlockNext(state);
+    const active = state.characters.map((character) => character.character);
+    const session = new LearnSession({
+      state,
+      rng: createRng(9),
+      introduced: active,
+      continuousCopyDurationMs: 1000,
+    });
+    session.start(0);
+
+    let event = session.next();
+    while (event?.type !== "continuous-copy") {
+      if (!event) throw new Error("expected continuous copy");
+      completeCorrect(session, event);
+      event = session.next();
+    }
+    session.completeContinuousCopy(
+      event.plan.target,
+      event.plan.scheduledDurationMs,
+    );
+    session.next();
+    session.continueTransition();
+    const word = session.next();
+    if (!word || !isExercise(word)) throw new Error("expected word exercise");
+    const observations = state.characters.map(
+      (character) => character.rx.totalAttempts,
+    );
+    const reviewed = state.characters.find((character) =>
+      word.target.includes(character.character),
+    )!;
+    reviewed.needsReview = true;
+    reviewed.reviewStreak = 2;
+    session.markReplayed();
+    session.submit(word.target);
+
+    expect(
+      state.characters.map((character) => character.rx.totalAttempts),
+    ).toEqual(observations);
+    expect(reviewed.needsReview).toBe(true);
+    expect(reviewed.reviewStreak).toBe(2);
   });
 });

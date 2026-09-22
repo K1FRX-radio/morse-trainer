@@ -26,6 +26,7 @@ import {
 import {
   DEFAULT_LESSON_CONFIG,
   LessonPlan,
+  buildWordCopyExercises,
   type LessonConfig,
   type PlannedExercise,
 } from "./lesson-plan.ts";
@@ -49,10 +50,10 @@ export type AttemptOutcome = {
 
 export type LessonTransition = {
   type: "transition";
-  id: "multi-character-copy" | "continuous-copy";
+  id: "multi-character-copy" | "continuous-copy" | "word-copy";
   title: string;
   text: string;
-  destinationPhase: "groups-2" | "continuous-copy";
+  destinationPhase: "groups-2" | "continuous-copy" | "words";
   actionLabel: "Go";
 };
 
@@ -89,6 +90,15 @@ const CONTINUOUS_COPY_TRANSITION: LessonTransition = {
   title: "Ready for continuous copy?",
   text: "Type continuously while you listen. Keep going if you miss a character; the sound will not pause.",
   destinationPhase: "continuous-copy",
+  actionLabel: "Go",
+};
+
+const WORD_COPY_TRANSITION: LessonTransition = {
+  type: "transition",
+  id: "word-copy",
+  title: "Ready to copy words?",
+  text: "Now listen for complete word rhythms instead of separate characters.",
+  destinationPhase: "words",
   actionLabel: "Go",
 };
 
@@ -138,6 +148,7 @@ export class LearnSession {
   private readonly contrastMinAccuracy: number;
   private readonly continuousCopyDurationMs: number;
   private readonly continuousCopyTiming: TimingOptions;
+  private readonly lessonConfig: LessonConfig;
 
   private current: LessonEvent | undefined;
   private pendingExercise: PlannedExercise | undefined;
@@ -147,6 +158,9 @@ export class LearnSession {
   private startedContinuousCopy = false;
   private completedContinuousCopy = false;
   private lastContinuousCopyResult: ContinuousCopyResult | undefined;
+  private wordExercises: PlannedExercise[] = [];
+  private wordCursor = 0;
+  private showedWordTransition = false;
   private lastActivityAt: number | undefined;
   private paused = false;
   private activeMs = 0;
@@ -169,6 +183,7 @@ export class LearnSession {
     this.config = options.sessionConfig ?? DEFAULT_SESSION_CONFIG;
     this.rng = options.rng;
     const lessonConfig = options.lessonConfig ?? DEFAULT_LESSON_CONFIG;
+    this.lessonConfig = lessonConfig;
     this.groupLengthNoticeMs = lessonConfig.groupLengthNoticeMs;
     this.contrastMinAccuracy = lessonConfig.contrastMinAccuracy;
     this.continuousCopyDurationMs =
@@ -207,7 +222,12 @@ export class LearnSession {
       return this.current;
     }
     this.replayedThisCard = false;
-    const exercise = this.pendingExercise ?? this.plan.next();
+    const exercise =
+      this.pendingExercise ??
+      this.plan.next() ??
+      (this.completedContinuousCopy
+        ? this.wordExercises[this.wordCursor++]
+        : undefined);
     this.pendingExercise = undefined;
     if (
       exercise?.phase === "groups-2" &&
@@ -266,6 +286,12 @@ export class LearnSession {
       };
       return this.current;
     }
+    if (exercise?.phase === "words" && !this.showedWordTransition) {
+      this.showedWordTransition = true;
+      this.pendingExercise = exercise;
+      this.current = WORD_COPY_TRANSITION;
+      return this.current;
+    }
     this.current = exercise;
     return this.current;
   }
@@ -286,9 +312,11 @@ export class LearnSession {
     const event = this.current;
     if (!event) return undefined;
     if (event.type === "transition") {
-      return event.destinationPhase === "continuous-copy"
-        ? "3-character groups"
-        : "Single-character copy";
+      if (event.destinationPhase === "continuous-copy") {
+        return "3-character groups";
+      }
+      if (event.destinationPhase === "words") return "Continuous copy";
+      return "Single-character copy";
     }
     if (event.type === "notification") return "3-character groups";
     if (event.type === "continuous-copy") return "Continuous copy";
@@ -297,6 +325,7 @@ export class LearnSession {
     }
     if (event.phase === "remediate") return `Reviewing ${event.focus}`;
     if (event.phase === "contrast") return "Single-character copy";
+    if (event.phase === "words") return "Word copy";
     return `${event.target.length}-character groups`;
   }
 
@@ -338,6 +367,22 @@ export class LearnSession {
     }
     this.lastContinuousCopyResult = result;
     this.completedContinuousCopy = true;
+    if (!abandoned) {
+      this.wordExercises = buildWordCopyExercises({
+        active: unlockedCharacters(this.state),
+        newest: newestCharacter(this.state)?.character ?? "",
+        review: reviewCharacters(this.state),
+        weak: this.state.characters
+          .filter(
+            (character) =>
+              character.rx.recentResults.length > 0 &&
+              recentAccuracy(character.rx) < this.contrastMinAccuracy,
+          )
+          .map((character) => character.character),
+        rng: this.rng,
+        config: this.lessonConfig,
+      });
+    }
     this.current = undefined;
     return result;
   }
@@ -416,7 +461,10 @@ export class LearnSession {
         this.correctCount += 1;
       }
     }
-    const update = this.plan.reportResult(correct, !assisted);
+    const update =
+      exercise.phase === "words"
+        ? {}
+        : this.plan.reportResult(correct, !assisted);
     if (update.acquisitionCapped) {
       const progress = this.state.characters.find(
         (character) => character.character === update.acquisitionCapped,
@@ -453,7 +501,7 @@ export class LearnSession {
   }
 
   get totalCards(): number {
-    return this.plan.length;
+    return this.plan.length + this.wordExercises.length;
   }
 
   get completedCards(): number {

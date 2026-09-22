@@ -5,11 +5,18 @@
 // NOT decided here; a separate checkpoint (later stage) drives unlocks.
 
 import type { LearnExerciseType } from "../core/exercises.ts";
-import type { Rng } from "../core/rng.ts";
+import { weightedIndex, type Rng } from "../core/rng.ts";
 import type { Direction } from "../core/types.ts";
+import { eligibleWords } from "../content/words.ts";
 
 export type LessonPhase =
-  "introduce" | "acquire" | "remediate" | "contrast" | "groups-2" | "groups-3";
+  | "introduce"
+  | "acquire"
+  | "remediate"
+  | "contrast"
+  | "groups-2"
+  | "groups-3"
+  | "words";
 
 export type PlannedExercise = {
   type: LearnExerciseType;
@@ -37,6 +44,10 @@ export type LessonConfig = {
   twoCharacterGroupCount: number;
   threeCharacterGroupCount: number;
   groupLengthNoticeMs: number;
+  minimumEligibleWordCount: number;
+  initialWordMinLength: number;
+  initialWordMaxLength: number;
+  wordCopyCount: number;
   /** Isolated unassisted prompts each pending review character receives. */
   remediationPrompts: number;
 };
@@ -53,8 +64,67 @@ export const DEFAULT_LESSON_CONFIG: LessonConfig = {
   twoCharacterGroupCount: 8,
   threeCharacterGroupCount: 8,
   groupLengthNoticeMs: 1800,
+  minimumEligibleWordCount: 10,
+  initialWordMinLength: 2,
+  initialWordMaxLength: 4,
+  wordCopyCount: 8,
   remediationPrompts: 3,
 };
+
+type WordExerciseOptions = {
+  active: readonly string[];
+  newest: string;
+  review?: Iterable<string>;
+  weak?: Iterable<string>;
+  rng: Rng;
+  config?: LessonConfig;
+};
+
+export function buildWordCopyExercises(
+  options: WordExerciseOptions,
+): PlannedExercise[] {
+  const config = options.config ?? DEFAULT_LESSON_CONFIG;
+  const candidates = eligibleWords(options.active).filter(
+    (word) =>
+      word.text.length >= config.initialWordMinLength &&
+      word.text.length <= config.initialWordMaxLength,
+  );
+  if (candidates.length < config.minimumEligibleWordCount) return [];
+
+  const review = new Set(options.review ?? []);
+  const weak = new Set(options.weak ?? []);
+  const remaining = [...candidates];
+  const exercises: PlannedExercise[] = [];
+  const count = Math.min(config.wordCopyCount, remaining.length);
+  for (let index = 0; index < count; index++) {
+    const weights = remaining.map(
+      (word) =>
+        1 +
+        (word.text.includes(options.newest) ? 2 : 0) +
+        ([...review].some((character) => word.text.includes(character))
+          ? 3
+          : 0) +
+        ([...weak].some((character) => word.text.includes(character)) ? 2 : 0),
+    );
+    const selectedIndex = weightedIndex(weights, options.rng);
+    const [selected] = remaining.splice(selectedIndex, 1);
+    const focus =
+      (selected.text.includes(options.newest) && options.newest) ||
+      [...review].find((character) => selected.text.includes(character)) ||
+      [...weak].find((character) => selected.text.includes(character)) ||
+      selected.text[0];
+    exercises.push({
+      type: "copy-word",
+      target: selected.text,
+      direction: "rx",
+      phase: "words",
+      focus,
+      newestCharacter: selected.text.includes(options.newest),
+      assisted: false,
+    });
+  }
+  return exercises;
+}
 
 type LessonOptions = {
   /** Unlocked characters in curriculum order. */
