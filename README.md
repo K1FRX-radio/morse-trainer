@@ -1,8 +1,9 @@
 # K1FRX Morse Trainer
 
-Web-first CW learning app: Koch-style progression, Farnsworth timing, adaptive
-review, and separate RX/TX mastery. See the project plan for full product and
-architecture context.
+Web-first CW learning app with Koch-style progression, Farnsworth timing,
+adaptive review, RX-only lessons, and checkpoint-gated unlocking. Lessons
+progress from isolated recognition through type-behind groups and words into
+timed continuous copy with audible token boundaries.
 
 ## Requirements
 
@@ -37,8 +38,11 @@ import React, the DOM, storage, or UI code. ESLint enforces this boundary.
 
 ```
 src/
-  core/       morse map, timing schedule, curriculum, scheduler, rng, types
-  content/    curriculum data (Koch order + thresholds)
+  audio/      Web Audio session and CW schedule playback
+  core/       Morse map, timing, scoring, curriculum, scheduler, rng, types
+  content/    curriculum data and eligible word corpus
+  training/   pure lesson, checkpoint, and continuous-copy domain logic
+  ui/         React contexts, hooks, and screens
   test/       test setup
   App.tsx     responsive shell + navigation
   main.tsx    entry
@@ -53,6 +57,9 @@ under a GitHub Pages subpath or a custom-domain root:
 VITE_BASE=/morse-trainer/ npm run build
 ```
 
-## Status
+## Progression guarantees
 
-See [STATUS.md](STATUS.md).
+- Learn contains receive-copy exercises only.
+- Practice and continuous copy cannot unlock characters.
+- Checkpoints are isolated, unassisted, and are the only unlock path.
+- Spaces in continuous-copy input are optional and excluded from grading.
