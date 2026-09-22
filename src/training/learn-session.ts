@@ -11,7 +11,7 @@ import {
   type CurriculumState,
 } from "../core/curriculum.ts";
 import type { Rng } from "../core/rng.ts";
-import { gradeCopy } from "../core/scoring.ts";
+import { gradeCopy, gradeCopyAligned, normalizeCopy } from "../core/scoring.ts";
 import {
   DEFAULT_LESSON_CONFIG,
   LessonPlan,
@@ -157,11 +157,20 @@ export class LearnSession {
       }
       this.practiced.add(exercise.target);
     } else {
-      // Groups and words: grade the whole answer for feedback only. Positional
-      // per-character mastery is unsafe until sequence alignment exists.
+      // Groups and words: sequence-aligned grading credits target positions even
+      // when characters are inserted or dropped, so per-character mastery is safe.
       const answer = typeof input === "string" ? input : "";
-      correct = gradeCopy(exercise.target, answer).correct;
-      this.practiced.add(exercise.focus);
+      const grade = gradeCopyAligned(exercise.target, answer);
+      correct = grade.correct;
+      if (!assisted) {
+        [...normalizeCopy(exercise.target)].forEach((char, index) => {
+          recordAttempt(this.state, char, "rx", grade.perChar[index] ?? false);
+          this.rxAttempts += 1;
+          this.practiced.add(char);
+        });
+      } else {
+        this.practiced.add(exercise.focus);
+      }
     }
 
     if (!assisted) {

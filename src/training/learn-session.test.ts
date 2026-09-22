@@ -158,16 +158,21 @@ describe("LearnSession Stage A fixes", () => {
     expect(session.newlyIntroduced).toEqual(["K", "M"]); // planned, not completed
   });
 
-  it("does not update per-character mastery from group answers", () => {
+  it("updates per-character mastery from group answers via alignment", () => {
     const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
     const session = new LearnSession({ state, rng: createRng(5) });
     session.start(0);
     const group = advanceToPhase(session, "groups");
     expect(group?.type).toBe("copy-group");
-    const before = state.characters.map((c) => c.rx.recentResults.length);
-    session.submit(group?.target ?? "");
-    const after = state.characters.map((c) => c.rx.recentResults.length);
-    expect(after).toEqual(before);
+    const focus = group?.focus ?? "";
+    const before =
+      state.characters.find((c) => c.character === focus)?.rx.recentResults
+        .length ?? 0;
+    session.submit(group?.target ?? ""); // correct group
+    const after =
+      state.characters.find((c) => c.character === focus)?.rx.recentResults
+        .length ?? 0;
+    expect(after).toBeGreaterThan(before);
   });
 
   it("excludes assisted reinforcement cards from mastery and scoring", () => {
