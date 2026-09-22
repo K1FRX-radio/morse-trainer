@@ -8,8 +8,10 @@ import {
   createInitialState,
   newestCharacter,
   recordAttempt,
+  recordReviewOutcome,
   unlockNext,
   unlockedCharacters,
+  DEFAULT_REMEDIATION_STREAK,
   type CurriculumState,
 } from "./curriculum.ts";
 import type { Direction } from "./types.ts";
@@ -98,5 +100,40 @@ describe("curriculum unlocks", () => {
       config.windowSize,
     );
     expect(newestCharacter(state)?.rx.totalAttempts).toBe(20);
+  });
+});
+
+describe("recordReviewOutcome", () => {
+  function flagged(): CurriculumState {
+    const state = createInitialState(config);
+    state.characters[0].needsReview = true;
+    state.characters[0].reviewStreak = 0;
+    return state;
+  }
+
+  it("does not clear a review flag from a single correct response", () => {
+    const state = flagged();
+    recordReviewOutcome(state, "K", true);
+    expect(state.characters[0].needsReview).toBe(true);
+    expect(state.characters[0].reviewStreak).toBe(1);
+  });
+
+  it("clears the flag after the configured clean streak", () => {
+    const state = flagged();
+    for (let i = 0; i < DEFAULT_REMEDIATION_STREAK; i++) {
+      recordReviewOutcome(state, "K", true);
+    }
+    expect(state.characters[0].needsReview).toBe(false);
+    expect(state.characters[0].reviewStreak).toBe(0);
+  });
+
+  it("resets the streak on a miss", () => {
+    const state = flagged();
+    recordReviewOutcome(state, "K", true);
+    recordReviewOutcome(state, "K", true);
+    recordReviewOutcome(state, "K", false);
+    expect(state.characters[0].reviewStreak).toBe(0);
+    recordReviewOutcome(state, "K", true);
+    expect(state.characters[0].needsReview).toBe(true);
   });
 });

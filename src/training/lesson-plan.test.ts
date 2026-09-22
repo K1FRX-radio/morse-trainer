@@ -137,3 +137,42 @@ describe("LessonPlan later stage", () => {
     expect(intros).toEqual(["U"]);
   });
 });
+
+describe("LessonPlan remediation", () => {
+  function reviewLesson(review: string[], seed = 1): LessonPlan {
+    return new LessonPlan({
+      active: ["K", "M", "U"],
+      introduced: ["K", "M", "U"],
+      newest: "U",
+      review,
+      rng: createRng(seed),
+    });
+  }
+
+  it("gives a review character the configured remediation prompts", () => {
+    const cards = drain(reviewLesson(["K"]));
+    const remediate = cards.filter(
+      (c) => c.phase === "remediate" && c.target === "K",
+    );
+    expect(remediate.length).toBe(DEFAULT_LESSON_CONFIG.remediationPrompts);
+    for (const card of remediate) {
+      expect(card.assisted).toBe(false);
+      expect(card.direction).toBe("rx");
+    }
+  });
+
+  it("remediates every pending review character", () => {
+    const cards = drain(reviewLesson(["K", "M"]));
+    const perChar = (ch: string) =>
+      cards.filter((c) => c.phase === "remediate" && c.target === ch).length;
+    expect(perChar("K")).toBe(DEFAULT_LESSON_CONFIG.remediationPrompts);
+    expect(perChar("M")).toBe(DEFAULT_LESSON_CONFIG.remediationPrompts);
+  });
+
+  it("keeps remediation RX-only", () => {
+    const cards = drain(reviewLesson(["K", "M"]));
+    for (const card of cards) {
+      expect(card.direction).toBe("rx");
+    }
+  });
+});

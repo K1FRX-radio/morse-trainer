@@ -239,6 +239,7 @@ export function applyCheckpoint(
     const progress = state.characters.find((c) => c.character === character);
     if (progress) {
       progress.needsReview = true;
+      progress.reviewStreak = 0; // require a fresh clean streak to clear
     }
   }
   if (!result.pass) {

@@ -8,7 +8,12 @@ import type { LearnExerciseType } from "../core/exercises.ts";
 import type { Rng } from "../core/rng.ts";
 import type { Direction } from "../core/types.ts";
 
-export type LessonPhase = "introduce" | "acquire" | "contrast" | "groups";
+export type LessonPhase =
+  | "introduce"
+  | "acquire"
+  | "remediate"
+  | "contrast"
+  | "groups";
 
 export type PlannedExercise = {
   type: LearnExerciseType;
@@ -33,6 +38,8 @@ export type LessonConfig = {
   groupCount: number;
   groupMinLen: number;
   groupMaxLen: number;
+  /** Isolated unassisted prompts each pending review character receives. */
+  remediationPrompts: number;
   /** Cap on immediate repeat cards inserted after misses. */
   maxMissRepeats: number;
 };
@@ -43,6 +50,7 @@ export const DEFAULT_LESSON_CONFIG: LessonConfig = {
   groupCount: 4,
   groupMinLen: 2,
   groupMaxLen: 3,
+  remediationPrompts: 3,
   maxMissRepeats: 6,
 };
 
@@ -53,6 +61,8 @@ type LessonOptions = {
   introduced: Iterable<string>;
   /** Newest unlocked character. */
   newest: string;
+  /** Active characters flagged for review (targeted remediation). */
+  review?: Iterable<string>;
   rng: Rng;
   config?: LessonConfig;
 };
@@ -81,6 +91,7 @@ export class LessonPlan {
   private readonly queue: PlannedExercise[];
   private readonly config: LessonConfig;
   private readonly newest: string;
+  private readonly reviewChars: string[];
   private cursor = 0;
   private insertedRepeats = 0;
 
@@ -92,6 +103,10 @@ export class LessonPlan {
     const introduced = new Set(options.introduced);
     const active = options.active;
     const newChars = active.filter((char) => !introduced.has(char));
+    const reviewSet = new Set(options.review ?? []);
+    this.reviewChars = active.filter(
+      (char) => reviewSet.has(char) && !newChars.includes(char),
+    );
     this.newlyIntroduced = newChars;
     this.queue = this.build(active, newChars, options.rng);
   }
@@ -121,13 +136,21 @@ export class LessonPlan {
     rng: Rng,
   ): PlannedExercise[] {
     const q: PlannedExercise[] = [];
-    const focusPool = newChars.length > 0 ? newChars : active;
+    const emphasis = [...new Set([...newChars, ...this.reviewChars])];
+    const focusPool = emphasis.length > 0 ? emphasis : active;
 
     // Introduce each new character, then drill it in isolation.
     for (const char of newChars) {
       q.push(this.card("introduce", char, "rx", "introduce", char));
       for (let i = 0; i < this.config.acquirePerNewChar; i++) {
         q.push(this.card("copy-character", char, "rx", "acquire", char));
+      }
+    }
+
+    // Targeted remediation: guaranteed isolated prompts for review characters.
+    for (const char of this.reviewChars) {
+      for (let i = 0; i < this.config.remediationPrompts; i++) {
+        q.push(this.card("copy-character", char, "rx", "remediate", char));
       }
     }
 
@@ -177,7 +200,9 @@ export class LessonPlan {
       !correct &&
       justDone &&
       justDone.type === "copy-character" &&
-      (justDone.phase === "acquire" || justDone.phase === "contrast") &&
+      (justDone.phase === "acquire" ||
+        justDone.phase === "contrast" ||
+        justDone.phase === "remediate") &&
       !justDone.assisted &&
       this.insertedRepeats < this.config.maxMissRepeats
     ) {

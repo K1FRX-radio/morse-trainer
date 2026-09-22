@@ -23,6 +23,7 @@ function unlockedProgress(character: string, at?: string): CharacterProgress {
     character,
     state: "learning",
     needsReview: false,
+    reviewStreak: 0,
     rx: emptySkill(),
     tx: emptySkill(),
     ...(at !== undefined ? { unlockedAt: at } : {}),
@@ -93,17 +94,14 @@ export function recordAttempt(
   }
 
   // A previously strong character whose recent RX accuracy decays is flagged.
+  // needsReview is only cleared by remediation (see recordReviewOutcome), never
+  // by a high rolling average alone.
   if (
     direction === "rx" &&
     skill.recentResults.length >= state.config.minNewCharObservations &&
     recentAccuracy(skill) < state.config.reviewDecayAccuracy
   ) {
     progress.needsReview = true;
-  } else if (
-    direction === "rx" &&
-    recentAccuracy(skill) >= state.config.unlockAccuracy
-  ) {
-    progress.needsReview = false;
   }
 
   return progress;
@@ -156,6 +154,42 @@ export function unlockNext(
 /** Characters currently unlocked, in curriculum order. */
 export function unlockedCharacters(state: CurriculumState): string[] {
   return state.characters.map((c) => c.character);
+}
+
+/** Default consecutive clean correct responses needed to clear needsReview. */
+export const DEFAULT_REMEDIATION_STREAK = 3;
+
+/**
+ * Records an isolated, unassisted RX outcome toward clearing needsReview. A miss
+ * resets the streak; needsReview clears only after streakToClear consecutive
+ * clean correct responses. Assisted and replayed responses must not call this.
+ */
+export function recordReviewOutcome(
+  state: CurriculumState,
+  character: string,
+  correct: boolean,
+  streakToClear: number = DEFAULT_REMEDIATION_STREAK,
+): void {
+  const progress = findCharacter(state, character);
+  if (!progress) {
+    return;
+  }
+  if (!correct) {
+    progress.reviewStreak = 0;
+    return;
+  }
+  progress.reviewStreak = (progress.reviewStreak ?? 0) + 1;
+  if (progress.needsReview && progress.reviewStreak >= streakToClear) {
+    progress.needsReview = false;
+    progress.reviewStreak = 0;
+  }
+}
+
+/** Characters currently flagged for review, in curriculum order. */
+export function reviewCharacters(state: CurriculumState): string[] {
+  return state.characters
+    .filter((c) => c.needsReview)
+    .map((c) => c.character);
 }
 
 /**

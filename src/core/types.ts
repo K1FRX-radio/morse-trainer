@@ -13,6 +13,9 @@ export type CharacterProgress = {
   character: string;
   state: CharacterState;
   needsReview: boolean;
+  /** Consecutive clean (unassisted, unreplayed) correct isolated responses,
+   * counted toward clearing needsReview. */
+  reviewStreak?: number;
   rx: SkillProgress;
   tx: SkillProgress;
   unlockedAt?: string;

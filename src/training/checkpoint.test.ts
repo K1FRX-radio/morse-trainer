@@ -195,6 +195,19 @@ describe("applyCheckpoint", () => {
       true,
     );
   });
+
+  it("unlocks one new character while retaining missed older characters", () => {
+    const state = makeState(3); // K, M, U -> next is R
+    const applied = applyCheckpoint(
+      state,
+      result({ pass: true, missedCharacters: ["K"] }),
+    );
+    expect(applied.unlockedCharacter).toBe("R");
+    expect(state.characters).toHaveLength(4);
+    const k = state.characters.find((c) => c.character === "K");
+    expect(k?.needsReview).toBe(true);
+    expect(k?.reviewStreak).toBe(0);
+  });
 });
 
 describe("checkpointReadiness", () => {

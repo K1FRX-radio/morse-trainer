@@ -214,3 +214,80 @@ describe("LearnSession Stage A fixes", () => {
     expect(rxAfter).toBe(rxBefore);
   });
 });
+
+describe("LearnSession remediation", () => {
+  function toAcquire(session: LearnSession) {
+    let card = session.next();
+    while (card && card.phase !== "acquire") {
+      session.submit(card.type === "introduce" ? "" : card.target);
+      card = session.next();
+    }
+    return card;
+  }
+
+  it("does not clear a review flag from a replayed correct response", () => {
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    const session = new LearnSession({ state, rng: createRng(1) });
+    session.start(0);
+    const card = toAcquire(session);
+    const focus = state.characters.find((c) => c.character === card?.focus);
+    focus!.needsReview = true;
+    focus!.reviewStreak = 2; // one clean correct away from clearing
+    session.markReplayed();
+    session.submit(card?.target ?? ""); // replayed correct must not count
+    expect(focus!.needsReview).toBe(true);
+    expect(focus!.reviewStreak).toBe(2);
+  });
+
+  it("does not clear a review flag from an assisted correct response", () => {
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    const session = new LearnSession({ state, rng: createRng(1) });
+    session.start(0);
+    const card = toAcquire(session);
+    const focus = state.characters.find((c) => c.character === card?.focus);
+    focus!.needsReview = true;
+    session.submit(""); // miss inserts an assisted repeat
+    const assisted = session.next();
+    expect(assisted?.assisted).toBe(true);
+    focus!.reviewStreak = 2;
+    session.submit(assisted?.target ?? ""); // assisted correct must not count
+    expect(focus!.needsReview).toBe(true);
+    expect(focus!.reviewStreak).toBe(2);
+  });
+
+  it("clears a review flag after a clean remediation streak", () => {
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    state.characters[0].needsReview = true; // K flagged
+    const session = new LearnSession({
+      state,
+      rng: createRng(1),
+      introduced: ["K", "M"],
+    });
+    session.start(0);
+    let card = session.next();
+    while (card) {
+      session.submit(card.type === "introduce" ? "" : card.target); // all correct
+      card = session.next();
+    }
+    expect(state.characters[0].needsReview).toBe(false);
+  });
+
+  it("leaves the review flag set when remediation is incomplete", () => {
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    state.characters[0].needsReview = true; // K flagged
+    const session = new LearnSession({
+      state,
+      rng: createRng(1),
+      introduced: ["K", "M"],
+    });
+    session.start(0);
+    // Answer only the first remediation prompt, then stop early.
+    let card = session.next();
+    while (card && card.phase !== "remediate") {
+      session.submit(card.type === "introduce" ? "" : card.target);
+      card = session.next();
+    }
+    session.submit(card?.target ?? ""); // one clean correct only
+    expect(state.characters[0].needsReview).toBe(true);
+  });
+});

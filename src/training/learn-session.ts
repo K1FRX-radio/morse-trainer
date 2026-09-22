@@ -7,6 +7,8 @@
 import {
   newestCharacter,
   recordAttempt,
+  recordReviewOutcome,
+  reviewCharacters,
   unlockedCharacters,
   type CurriculumState,
 } from "../core/curriculum.ts";
@@ -56,6 +58,8 @@ type SessionOptions = {
   rng: Rng;
   /** Characters already introduced in earlier sessions. */
   introduced?: Iterable<string>;
+  /** Active characters flagged for review; defaults to the state's flags. */
+  review?: Iterable<string>;
   now?: () => number;
   lessonConfig?: LessonConfig;
   sessionConfig?: SessionConfig;
@@ -92,6 +96,7 @@ export class LearnSession {
       active: unlockedCharacters(options.state),
       introduced: options.introduced ?? [],
       newest: newestCharacter(options.state)?.character ?? "",
+      review: options.review ?? reviewCharacters(options.state),
       rng: options.rng,
       config: options.lessonConfig ?? DEFAULT_LESSON_CONFIG,
     });
@@ -153,6 +158,7 @@ export class LearnSession {
       correct = gradeCopy(exercise.target, answer).correct;
       if (!assisted) {
         recordAttempt(this.state, exercise.target, "rx", correct);
+        recordReviewOutcome(this.state, exercise.target, correct);
         this.rxAttempts += 1;
       }
       this.practiced.add(exercise.target);
