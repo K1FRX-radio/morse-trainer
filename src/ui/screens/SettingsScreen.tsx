@@ -120,7 +120,7 @@ export function SettingsScreen() {
             })
           }
         >
-          <option value="auto">Automatic (recommended)</option>
+          <option value="auto">Automatic</option>
           <option value="manual">Press Continue between cards</option>
         </select>
       </label>
