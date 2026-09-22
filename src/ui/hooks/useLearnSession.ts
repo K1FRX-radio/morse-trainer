@@ -128,6 +128,8 @@ export function useLearnSession() {
   const lockedRef = useRef(true);
   const acceptedTokenRef = useRef<number | null>(null);
   const playingRef = useRef(false);
+  const playbackGeneration = useRef(0);
+  const heldKeysRef = useRef(new Set<string>());
   const introDoneToken = useRef<number | null>(null);
 
   const [phase, setPhase] = useState<LearnPhase>("onboarding");
@@ -154,13 +156,16 @@ export function useLearnSession() {
 
   const play = useCallback(
     async (text: string) => {
+      const generation = ++playbackGeneration.current;
       playingRef.current = true;
       setIsPlaying(true);
       try {
         await audio.play(text, timing, { toneHz: settings.toneHz });
       } finally {
-        playingRef.current = false;
-        setIsPlaying(false);
+        if (generation === playbackGeneration.current) {
+          playingRef.current = false;
+          setIsPlaying(false);
+        }
       }
     },
     [audio, timing, settings.toneHz],
@@ -190,6 +195,10 @@ export function useLearnSession() {
     advanceRef.current();
   }, []);
 
+  const clearHeldKeys = useCallback(() => {
+    heldKeysRef.current.clear();
+  }, []);
+
   const runIntro = useCallback(
     async (target: string, token: number) => {
       lockedRef.current = true;
@@ -207,16 +216,19 @@ export function useLearnSession() {
   );
 
   const endSession = useCallback(() => {
-    audio.cancel();
-    window.setTimeout(() => audio.suspend(), 60);
     flowToken.current += 1;
+    playbackGeneration.current += 1;
+    clearHeldKeys();
+    playingRef.current = false;
+    setIsPlaying(false);
+    void audio.cancelAndSuspend();
     const session = sessionRef.current;
     if (!session) return;
     setSummary(session.end());
     saveIntroduced([...loadIntroduced(), ...session.completedIntroductions]);
     saveCurriculum(stateRef.current);
     setPhase("summary");
-  }, [audio]);
+  }, [audio, clearHeldKeys]);
 
   const showExercise = useCallback(
     (card: PlannedExercise) => {
@@ -246,8 +258,12 @@ export function useLearnSession() {
   advanceRef.current = advance;
 
   const begin = useCallback(async () => {
-    audio.cancel();
+    clearHeldKeys();
+    await audio.cancel();
     flowToken.current += 1;
+    playbackGeneration.current += 1;
+    playingRef.current = false;
+    setIsPlaying(false);
     await audio.unlock();
     const session = new LearnSession({
       state: stateRef.current,
@@ -263,7 +279,7 @@ export function useLearnSession() {
     const first = session.next();
     if (first) showExercise(first);
     else endSession();
-  }, [audio, showExercise, endSession]);
+  }, [audio, showExercise, endSession, clearHeldKeys]);
 
   // Records the answer, replays on a miss, and advances only after any
   // corrective playback finishes and while this prompt is still current.
@@ -337,8 +353,15 @@ export function useLearnSession() {
       return;
     }
     if (playingRef.current) return;
+    const token = flowToken.current;
+    lockedRef.current = true;
+    setInputReady(false);
     sessionRef.current?.markReplayed();
-    void play(ex.target);
+    void play(ex.target).then(() => {
+      if (token !== flowToken.current) return;
+      lockedRef.current = false;
+      setInputReady(true);
+    });
   }, [play]);
 
   const continueNow = useCallback(() => {
@@ -351,17 +374,25 @@ export function useLearnSession() {
   const finishCheckpoint = useCallback(() => {
     const cp = checkpointRef.current;
     if (!cp) return;
-    audio.cancel();
-    window.setTimeout(() => audio.suspend(), 60);
+    flowToken.current += 1;
+    playbackGeneration.current += 1;
+    clearHeldKeys();
+    playingRef.current = false;
+    setIsPlaying(false);
+    void audio.cancelAndSuspend();
     const applied = applyCheckpoint(stateRef.current, cp.grade());
     saveCurriculum(stateRef.current);
     setCheckpointResult(applied);
     setPhase("checkpoint-result");
-  }, [audio]);
+  }, [audio, clearHeldKeys]);
 
   const startCheckpoint = useCallback(async () => {
-    audio.cancel();
+    clearHeldKeys();
+    await audio.cancel();
     flowToken.current += 1;
+    playbackGeneration.current += 1;
+    playingRef.current = false;
+    setIsPlaying(false);
     await audio.unlock();
     checkpointRef.current = new CheckpointSession({
       active: unlockedCharacters(stateRef.current),
@@ -375,7 +406,7 @@ export function useLearnSession() {
     const first = checkpointRef.current.current();
     if (first) void presentPrompt(first, token);
     else finishCheckpoint();
-  }, [audio, presentPrompt, finishCheckpoint]);
+  }, [audio, presentPrompt, finishCheckpoint, clearHeldKeys]);
 
   const acceptCheckpoint = useCallback(
     (raw: string) => {
@@ -399,6 +430,38 @@ export function useLearnSession() {
     [claimPrompt, presentPrompt, finishCheckpoint],
   );
 
+  const physicalKeyDown = useCallback(
+    (
+      key: string,
+      code: string,
+      repeat: boolean,
+      modified: boolean,
+    ): boolean => {
+      const ex = exerciseRef.current;
+      const acceptsCharacter =
+        phase === "checkpoint" ||
+        (phase === "exercise" && ex?.type === "copy-character");
+      if (!acceptsCharacter || modified) return false;
+
+      const character = key.toUpperCase();
+      if ([...character].length !== 1 || !isSupportedCharacter(character)) {
+        return false;
+      }
+      const physicalKey = code || key.toUpperCase();
+      if (repeat || heldKeysRef.current.has(physicalKey)) return true;
+
+      heldKeysRef.current.add(physicalKey);
+      if (phase === "checkpoint") acceptCheckpoint(character);
+      else acceptIsolated(character);
+      return true;
+    },
+    [phase, acceptCheckpoint, acceptIsolated],
+  );
+
+  const physicalKeyUp = useCallback((key: string, code: string) => {
+    heldKeysRef.current.delete(code || key.toUpperCase());
+  }, []);
+
   useEffect(() => {
     const onVisibility = () => {
       const session = sessionRef.current;
@@ -414,8 +477,9 @@ export function useLearnSession() {
   useEffect(
     () => () => {
       flowToken.current += 1;
-      audio.cancel();
-      audio.suspend();
+      playbackGeneration.current += 1;
+      heldKeysRef.current.clear();
+      void audio.cancelAndSuspend();
     },
     [audio],
   );
@@ -458,6 +522,9 @@ export function useLearnSession() {
       continueNow,
       endSession,
       startCheckpoint,
+      physicalKeyDown,
+      physicalKeyUp,
+      clearHeldKeys,
     },
   };
 }

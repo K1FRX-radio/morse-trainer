@@ -22,6 +22,13 @@ type Voice = {
   gain: GainNode;
 };
 
+type PlaybackVoice = Voice & {
+  completion: Promise<void>;
+  resolve: () => void;
+  settled: boolean;
+  cancelling: boolean;
+};
+
 /** Short lead so the first scheduled event is comfortably in the future. */
 const START_LEAD_SEC = 0.05;
 /** Ramp used to silence a voice on cancellation without a click. */
@@ -29,8 +36,9 @@ const CANCEL_RAMP_SEC = 0.005;
 
 export class CwEngine {
   private readonly session: AudioSession;
-  private playback: Voice | undefined;
+  private playback: PlaybackVoice | undefined;
   private sidetone: Voice | undefined;
+  private playbackGeneration = 0;
 
   constructor(session: AudioSession) {
     this.session = session;
@@ -50,10 +58,14 @@ export class CwEngine {
    * only one exercise sounds at a time.
    */
   async playSchedule(schedule: Schedule, options: PlayOptions): Promise<void> {
-    this.cancel();
+    const generation = ++this.playbackGeneration;
+    await this.cancelPlayback();
     const ctx = this.session.ensureContext();
     await this.session.resume();
     await this.session.applyPreferredSink();
+    if (generation !== this.playbackGeneration) {
+      return;
+    }
 
     const { events, durationSec } = scheduleToGainEvents(schedule, {
       peak: options.peak ?? 1,
@@ -79,31 +91,48 @@ export class CwEngine {
     osc.start(start);
     osc.stop(start + durationSec + CANCEL_RAMP_SEC);
 
-    const voice: Voice = { osc, gain };
+    let resolveCompletion = () => {};
+    const completion = new Promise<void>((resolve) => {
+      resolveCompletion = resolve;
+    });
+    const voice: PlaybackVoice = {
+      osc,
+      gain,
+      completion,
+      resolve: resolveCompletion,
+      settled: false,
+      cancelling: false,
+    };
     this.playback = voice;
 
-    return new Promise<void>((resolve) => {
-      osc.onended = () => {
-        this.disposeVoice(voice);
-        if (this.playback === voice) {
-          this.playback = undefined;
-        }
-        resolve();
-      };
-    });
+    osc.onended = () => this.finishVoice(voice);
+    return completion;
   }
 
   /** Stops any current playback immediately without leaving a tone sounding. */
-  cancel(): void {
+  cancel(): Promise<void> {
+    this.playbackGeneration += 1;
+    return this.cancelPlayback();
+  }
+
+  private cancelPlayback(): Promise<void> {
     const voice = this.playback;
     if (!voice) {
-      return;
+      return Promise.resolve();
     }
-    this.playback = undefined;
+    if (voice.cancelling) {
+      return voice.completion;
+    }
+    voice.cancelling = true;
     const ctx = this.session.context;
-    if (!ctx) {
-      this.disposeVoice(voice);
-      return;
+    if (!ctx || ctx.state !== "running") {
+      try {
+        voice.osc.stop();
+      } catch {
+        // Already stopped.
+      }
+      this.finishVoice(voice);
+      return voice.completion;
     }
     // Reschedule the stop to now; the oscillator's onended then resolves the
     // pending play promise and disposes the voice (no leak, no stuck tone).
@@ -114,8 +143,9 @@ export class CwEngine {
     try {
       voice.osc.stop(now + CANCEL_RAMP_SEC);
     } catch {
-      // Already stopped; onended will still fire.
+      this.finishVoice(voice);
     }
+    return voice.completion;
   }
 
   /** Starts a continuous sidetone for live keying. */
@@ -145,8 +175,8 @@ export class CwEngine {
   }
 
   /** Cancels playback and sidetone; call on teardown/unmount. */
-  dispose(): void {
-    this.cancel();
+  async dispose(): Promise<void> {
+    await this.cancel();
     this.stopTone();
   }
 
@@ -174,5 +204,18 @@ export class CwEngine {
     } catch {
       // Already disconnected.
     }
+  }
+
+  private finishVoice(voice: PlaybackVoice): void {
+    if (voice.settled) {
+      return;
+    }
+    voice.settled = true;
+    voice.osc.onended = null;
+    this.disposeVoice(voice);
+    if (this.playback === voice) {
+      this.playback = undefined;
+    }
+    voice.resolve();
   }
 }

@@ -43,9 +43,10 @@ export function useAudioEngine(): AudioEngine {
   useEffect(() => {
     const current = ref.current;
     return () => {
-      current?.engine.dispose();
       current?.noise.stop();
-      void current?.session.close();
+      if (current) {
+        void current.engine.dispose().finally(() => current.session.close());
+      }
     };
   }, []);
 

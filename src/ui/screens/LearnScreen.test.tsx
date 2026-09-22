@@ -6,6 +6,8 @@ import {
   render,
   screen,
 } from "@testing-library/react";
+import { DEFAULT_CURRICULUM_CONFIG } from "../../content/curriculum-data.ts";
+import { createInitialState } from "../../core/curriculum.ts";
 import { LearnAudioContext, type LearnAudio } from "../learn-audio-context.ts";
 import { SettingsProvider } from "../settings-provider.tsx";
 import { LearnScreen } from "./LearnScreen.tsx";
@@ -21,16 +23,20 @@ function makeFakeAudio() {
         pending.push({ text, resolve });
       }),
     // Cancellation resolves in-flight playback, mirroring the real engine.
-    cancel: () => {
+    cancel: async () => {
       while (pending.length) pending.shift()?.resolve();
     },
-    suspend: () => {},
+    suspend: () => Promise.resolve(),
+    cancelAndSuspend: async () => {
+      while (pending.length) pending.shift()?.resolve();
+    },
   };
   return {
     audio,
     pending,
     playCount: () => pending.length,
     resolveNext: () => pending.shift()?.resolve(),
+    resolveAt: (index: number) => pending.splice(index, 1)[0]?.resolve(),
   };
 }
 
@@ -141,6 +147,53 @@ describe("LearnScreen input gating", () => {
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
+  it("does not let a held physical key answer the next prompt", async () => {
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+    await toFirstCopy(fake);
+
+    fireEvent.keyDown(window, { key: "k", code: "KeyK" });
+    await flush();
+    await tick(450);
+    await resolvePlay(fake);
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "k", code: "KeyK", repeat: true });
+    await flush();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+    fireEvent.keyUp(window, { key: "k", code: "KeyK" });
+    fireEvent.keyDown(window, { key: "k", code: "KeyK" });
+    await flush();
+    expect(screen.getByRole("status")).toBeInTheDocument();
+  });
+
+  it("accepts mobile-style change events", async () => {
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+    await toFirstCopy(fake);
+
+    fireEvent.change(screen.getByLabelText("Your copy"), {
+      target: { value: "K" },
+    });
+    await flush();
+    expect(screen.getByRole("status")).toBeInTheDocument();
+  });
+
+  it("accepts composition input only after composition ends", async () => {
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+    await toFirstCopy(fake);
+
+    const input = screen.getByLabelText("Your copy") as HTMLInputElement;
+    fireEvent.compositionStart(input);
+    fireEvent.change(input, { target: { value: "K" } });
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    fireEvent.compositionEnd(input, { data: "K" });
+    await flush();
+    expect(screen.getByRole("status")).toBeInTheDocument();
+  });
+
   it("does not submit on a modifier-Enter", async () => {
     const fake = makeFakeAudio();
     renderLearn(fake.audio);
@@ -149,6 +202,43 @@ describe("LearnScreen input gating", () => {
     fireEvent.keyDown(input, { key: "Enter", ctrlKey: true });
     await flush();
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("does not submit printable modifier combinations", async () => {
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+    await toFirstCopy(fake);
+
+    fireEvent.keyDown(window, {
+      key: "k",
+      code: "KeyK",
+      ctrlKey: true,
+    });
+    await flush();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("does not treat browser key names as printable answers", async () => {
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+    await toFirstCopy(fake);
+
+    fireEvent.keyDown(window, { key: "Dead", code: "Quote" });
+    await flush();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("accepts at most the first supported character from a paste change", async () => {
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+    await toFirstCopy(fake);
+
+    fireEvent.change(screen.getByLabelText("Your copy"), {
+      target: { value: "KM" },
+    });
+    await flush();
+    expect(screen.getByRole("status")).toHaveTextContent("✓");
+    expect(fake.playCount()).toBe(0);
   });
 });
 
@@ -204,6 +294,57 @@ describe("LearnScreen audio sequencing", () => {
     await flush();
     expect(fake.playCount()).toBe(1);
   });
+
+  it("locks input for Replay and unlocks only after it completes", async () => {
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+    await toFirstCopy(fake);
+
+    fireEvent.click(screen.getByRole("button", { name: "Replay" }));
+    await flush();
+    expect(
+      (screen.getByLabelText("Your copy") as HTMLInputElement).disabled,
+    ).toBe(true);
+
+    await resolvePlay(fake);
+    expect(
+      (screen.getByLabelText("Your copy") as HTMLInputElement).disabled,
+    ).toBe(false);
+  });
+
+  it("does not let stale Replay completion clear newer playback state", async () => {
+    const fake = makeFakeAudio();
+    fake.audio.cancel = () => Promise.resolve();
+    fake.audio.cancelAndSuspend = () => Promise.resolve();
+    renderLearn(fake.audio);
+    await toFirstCopy(fake);
+
+    fireEvent.click(screen.getByRole("button", { name: "Replay" }));
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: "End session" }));
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: "Practice again" }));
+    await flush();
+    expect(fake.playCount()).toBe(2);
+
+    await act(async () => {
+      fake.resolveAt(0);
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+  });
+
+  it("settles active playback when the screen unmounts", async () => {
+    const fake = makeFakeAudio();
+    const view = renderLearn(fake.audio);
+    fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
+    await flush();
+    expect(fake.playCount()).toBe(1);
+
+    view.unmount();
+    await flush();
+    expect(fake.playCount()).toBe(0);
+  });
 });
 
 describe("LearnScreen checkpoint", () => {
@@ -215,6 +356,33 @@ describe("LearnScreen checkpoint", () => {
     await flush(); // startCheckpoint: unlock + present first item -> play
     await resolvePlay(fake); // first item audio done -> input enabled
   }
+
+  it("keeps manual checkpoint entry available while review is unresolved", async () => {
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    state.characters[0].needsReview = true;
+    localStorage.setItem(
+      "k1frx.curriculum.v2",
+      JSON.stringify(state.characters),
+    );
+    localStorage.setItem("k1frx.introduced.v1", JSON.stringify(["K", "M"]));
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+
+    fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
+    await flush();
+    await resolvePlay(fake);
+    fireEvent.click(screen.getByRole("button", { name: "End session" }));
+    await flush();
+
+    expect(screen.getByText(/Review K/)).toBeInTheDocument();
+    const checkpoint = screen.getByRole("button", {
+      name: "Try a checkpoint",
+    });
+    expect(checkpoint).toBeEnabled();
+    fireEvent.click(checkpoint);
+    await flush();
+    expect(screen.getByLabelText("Checkpoint answer")).toBeInTheDocument();
+  });
 
   it("accepts exactly one response per played character with no feedback", async () => {
     const fake = makeFakeAudio();
@@ -252,5 +420,25 @@ describe("LearnScreen checkpoint", () => {
     expect(
       (screen.getByLabelText("Checkpoint answer") as HTMLInputElement).disabled,
     ).toBe(false);
+  });
+
+  it("requires keyup before the same physical key answers a later item", async () => {
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+    await toCheckpoint(fake);
+
+    fireEvent.keyDown(window, { key: "k", code: "KeyK" });
+    await flush();
+    expect(screen.getByText(/^1\//)).toBeInTheDocument();
+    await resolvePlay(fake);
+
+    fireEvent.keyDown(window, { key: "k", code: "KeyK", repeat: true });
+    await flush();
+    expect(screen.getByText(/^1\//)).toBeInTheDocument();
+
+    fireEvent.keyUp(window, { key: "k", code: "KeyK" });
+    fireEvent.keyDown(window, { key: "k", code: "KeyK" });
+    await flush();
+    expect(screen.getByText(/^2\//)).toBeInTheDocument();
   });
 });

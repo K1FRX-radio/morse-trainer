@@ -290,4 +290,47 @@ describe("LearnSession remediation", () => {
     session.submit(card?.target ?? ""); // one clean correct only
     expect(state.characters[0].needsReview).toBe(true);
   });
+
+  it("preserves incomplete remediation into the next lesson", () => {
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    state.characters[0].needsReview = true;
+    const first = new LearnSession({
+      state,
+      rng: createRng(1),
+      introduced: ["K", "M"],
+    });
+    first.start(0);
+    const card = first.next();
+    first.submit(card?.target ?? "");
+    first.end(1000);
+
+    const next = new LearnSession({
+      state,
+      rng: createRng(2),
+      introduced: ["K", "M"],
+    });
+    next.start(0);
+    expect(next.next()?.phase).toBe("remediate");
+    expect(state.characters[0].needsReview).toBe(true);
+  });
+
+  it("does not clear isolated remediation from a correct group result", () => {
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    const session = new LearnSession({ state, rng: createRng(5) });
+    session.start(0);
+    let group = session.next();
+    while (group && group.phase !== "groups") {
+      session.submit(group.type === "introduce" ? "" : group.target);
+      group = session.next();
+    }
+    const progress = state.characters.find((character) =>
+      group?.target.includes(character.character),
+    );
+    progress!.needsReview = true;
+    progress!.reviewStreak = 2;
+
+    session.submit(group?.target ?? "");
+    expect(progress!.needsReview).toBe(true);
+    expect(progress!.reviewStreak).toBe(2);
+  });
 });

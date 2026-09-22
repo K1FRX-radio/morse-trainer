@@ -4,7 +4,7 @@ import {
   useState,
   type ChangeEvent,
   type CompositionEvent,
-  type KeyboardEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { encodeCharacter, isSupportedCharacter } from "../../core/morse.ts";
 import { useLearnSession } from "../hooks/useLearnSession.ts";
@@ -32,6 +32,9 @@ export function LearnScreen() {
     begin,
     endSession,
     startCheckpoint,
+    physicalKeyDown,
+    physicalKeyUp,
+    clearHeldKeys,
   } = learn.actions;
 
   const [value, setValue] = useState("");
@@ -52,6 +55,31 @@ export function LearnScreen() {
       inputRef.current?.focus();
     }
   }, [inputReady, isCopy, inCheckpoint]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const handled = physicalKeyDown(
+        event.key,
+        event.code,
+        event.repeat,
+        event.ctrlKey || event.metaKey || event.altKey,
+      );
+      if (handled) event.preventDefault();
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      physicalKeyUp(event.key, event.code);
+    };
+    const onBlur = () => clearHeldKeys();
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+      clearHeldKeys();
+    };
+  }, [physicalKeyDown, physicalKeyUp, clearHeldKeys]);
 
   function processCheckpoint(raw: string) {
     setValue("");
@@ -87,12 +115,12 @@ export function LearnScreen() {
 
   function onCompositionEnd(event: CompositionEvent<HTMLInputElement>) {
     composingRef.current = false;
-    const raw = event.currentTarget.value;
+    const raw = event.currentTarget.value || event.data;
     if (inCheckpoint) processCheckpoint(raw);
     else processCopy(raw);
   }
 
-  function onInputKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+  function onInputKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
     if (event.key !== "Enter" || event.repeat) return;
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     if (!exercise) return;

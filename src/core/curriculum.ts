@@ -101,6 +101,9 @@ export function recordAttempt(
     skill.recentResults.length >= state.config.minNewCharObservations &&
     recentAccuracy(skill) < state.config.reviewDecayAccuracy
   ) {
+    if (!progress.needsReview) {
+      progress.reviewStreak = 0;
+    }
     progress.needsReview = true;
   }
 
@@ -174,6 +177,10 @@ export function recordReviewOutcome(
   if (!progress) {
     return;
   }
+  if (!progress.needsReview) {
+    progress.reviewStreak = 0;
+    return;
+  }
   if (!correct) {
     progress.reviewStreak = 0;
     return;
@@ -231,6 +238,14 @@ export function checkpointReadiness(
   const newest = newestCharacter(state);
   if (!newest) {
     return { ready: false, reason: "NEEDS_PRACTICE" };
+  }
+  const unresolved = state.characters.find((progress) => progress.needsReview);
+  if (unresolved) {
+    return {
+      ready: false,
+      reason: "NEEDS_REVIEW",
+      weakCharacter: unresolved.character,
+    };
   }
   for (const progress of state.characters) {
     if (progress.character === newest.character) {

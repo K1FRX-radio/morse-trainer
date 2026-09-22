@@ -5,6 +5,7 @@ import {
 } from "../content/curriculum-data.ts";
 import {
   canUnlockNext,
+  checkpointReadiness,
   createInitialState,
   newestCharacter,
   recordAttempt,
@@ -135,5 +136,74 @@ describe("recordReviewOutcome", () => {
     expect(state.characters[0].reviewStreak).toBe(0);
     recordReviewOutcome(state, "K", true);
     expect(state.characters[0].needsReview).toBe(true);
+  });
+
+  it("does not pre-accumulate a streak before review is required", () => {
+    const state = createInitialState(config);
+    for (let i = 0; i < DEFAULT_REMEDIATION_STREAK; i++) {
+      recordReviewOutcome(state, "K", true);
+    }
+    expect(state.characters[0].reviewStreak).toBe(0);
+  });
+
+  it("requires a fresh streak after rolling accuracy triggers review", () => {
+    const state = createInitialState(config);
+    state.characters[0].reviewStreak = DEFAULT_REMEDIATION_STREAK - 1;
+    feed(state, "K", "rx", [false, false, false, false, false]);
+
+    expect(state.characters[0].needsReview).toBe(true);
+    expect(state.characters[0].reviewStreak).toBe(0);
+
+    recordReviewOutcome(state, "K", true);
+    recordReviewOutcome(state, "K", true);
+    expect(state.characters[0].needsReview).toBe(true);
+    recordReviewOutcome(state, "K", true);
+    expect(state.characters[0].needsReview).toBe(false);
+  });
+});
+
+describe("checkpointReadiness", () => {
+  function readyState(): CurriculumState {
+    const state = createInitialState(config);
+    feed(state, "K", "rx", new Array(10).fill(true));
+    feed(state, "M", "rx", new Array(10).fill(true));
+    return state;
+  }
+
+  it("lets an unresolved older character veto otherwise-ready statistics", () => {
+    const state = readyState();
+    state.characters[0].needsReview = true;
+
+    expect(checkpointReadiness(state)).toEqual({
+      ready: false,
+      reason: "NEEDS_REVIEW",
+      weakCharacter: "K",
+    });
+  });
+
+  it("lets an unresolved newest character veto otherwise-ready statistics", () => {
+    const state = readyState();
+    state.characters[1].needsReview = true;
+
+    expect(checkpointReadiness(state)).toEqual({
+      ready: false,
+      reason: "NEEDS_REVIEW",
+      weakCharacter: "M",
+    });
+  });
+
+  it("becomes ready only after the full remediation streak", () => {
+    const state = readyState();
+    state.characters[0].needsReview = true;
+
+    recordReviewOutcome(state, "K", true);
+    recordReviewOutcome(state, "K", true);
+    expect(checkpointReadiness(state).ready).toBe(false);
+
+    recordReviewOutcome(state, "K", true);
+    expect(checkpointReadiness(state)).toEqual({
+      ready: true,
+      reason: "READY",
+    });
   });
 });

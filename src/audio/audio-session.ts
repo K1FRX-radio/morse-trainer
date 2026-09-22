@@ -74,6 +74,9 @@ export class AudioSession {
 
   /** Suspends the context to release the audio device when nothing is playing. */
   async suspend(): Promise<void> {
+    if (this.method === "media-element" && this.sinkElement) {
+      this.sinkElement.pause();
+    }
     const ctx = this.ctx;
     if (ctx && ctx.state === "running") {
       try {

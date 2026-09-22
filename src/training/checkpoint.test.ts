@@ -202,6 +202,30 @@ describe("applyCheckpoint", () => {
     );
   });
 
+  it("makes a checkpoint-missed older character veto readiness", () => {
+    const state = makeState(3);
+    setRx(state, "U", Array(12).fill(true));
+    applyCheckpoint(state, result({ missedCharacters: ["K"] }));
+
+    expect(checkpointReadiness(state)).toEqual({
+      ready: false,
+      reason: "NEEDS_REVIEW",
+      weakCharacter: "K",
+    });
+  });
+
+  it("makes a checkpoint-missed newest character veto readiness", () => {
+    const state = makeState(3);
+    setRx(state, "U", Array(12).fill(true));
+    applyCheckpoint(state, result({ missedCharacters: ["U"] }));
+
+    expect(checkpointReadiness(state)).toEqual({
+      ready: false,
+      reason: "NEEDS_REVIEW",
+      weakCharacter: "U",
+    });
+  });
+
   it("unlocks one new character while retaining missed older characters", () => {
     const state = makeState(3); // K, M, U -> next is R
     const applied = applyCheckpoint(

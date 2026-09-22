@@ -10,9 +10,11 @@ export type LearnAudio = {
     options: { toneHz: number },
   ) => Promise<void>;
   /** Stops any current playback (used when leaving a flow). */
-  cancel: () => void;
+  cancel: () => Promise<void>;
   /** Suspends the audio context to release the device when idle. */
-  suspend: () => void;
+  suspend: () => Promise<void>;
+  /** Cancels playback and suspends only if no newer audio flow has started. */
+  cancelAndSuspend: () => Promise<void>;
 };
 
 export const LearnAudioContext = createContext<LearnAudio | undefined>(
