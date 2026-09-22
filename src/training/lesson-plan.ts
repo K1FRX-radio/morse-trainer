@@ -9,7 +9,7 @@ import type { Rng } from "../core/rng.ts";
 import type { Direction } from "../core/types.ts";
 
 export type LessonPhase =
-  "introduce" | "acquire" | "remediate" | "contrast" | "groups";
+  "introduce" | "acquire" | "remediate" | "contrast" | "groups-2" | "groups-3";
 
 export type PlannedExercise = {
   type: LearnExerciseType;
@@ -34,10 +34,9 @@ export type LessonConfig = {
   contrastMaxAttempts: number;
   contrastRecentWindow: number;
   contrastMinAccuracy: number;
-  /** Short group cards. */
-  groupCount: number;
-  groupMinLen: number;
-  groupMaxLen: number;
+  twoCharacterGroupCount: number;
+  threeCharacterGroupCount: number;
+  groupLengthNoticeMs: number;
   /** Isolated unassisted prompts each pending review character receives. */
   remediationPrompts: number;
 };
@@ -51,9 +50,9 @@ export const DEFAULT_LESSON_CONFIG: LessonConfig = {
   contrastMaxAttempts: 24,
   contrastRecentWindow: 12,
   contrastMinAccuracy: 0.8,
-  groupCount: 4,
-  groupMinLen: 2,
-  groupMaxLen: 3,
+  twoCharacterGroupCount: 8,
+  threeCharacterGroupCount: 8,
+  groupLengthNoticeMs: 1800,
   remediationPrompts: 3,
 };
 
@@ -150,7 +149,9 @@ export class LessonPlan {
     rng: Rng,
   ): PlannedExercise[] {
     const q: PlannedExercise[] = [];
-    const emphasis = [...new Set([...newChars, ...this.reviewChars])];
+    const emphasis = [
+      ...new Set([...newChars, ...this.reviewChars, ...this.weakChars]),
+    ];
     const focusPool = emphasis.length > 0 ? emphasis : active;
 
     // Introduce each new character, then drill it in isolation.
@@ -174,19 +175,22 @@ export class LessonPlan {
       q.push(this.nextContrastCard());
     }
 
-    // Short groups with a ramping length, each containing the focus character.
+    // Short groups teach continuous entry at one stable length at a time. Each
+    // generated group contains its selected focus character.
     if (active.length > 1) {
-      const span = this.config.groupMaxLen - this.config.groupMinLen + 1;
-      for (let i = 0; i < this.config.groupCount; i++) {
-        const len = Math.min(
-          this.config.groupMaxLen,
-          this.config.groupMinLen +
-            Math.floor((i * span) / Math.max(1, this.config.groupCount)),
-        );
-        const focus = rng() < 0.6 ? pick(focusPool, rng) : pick(active, rng);
-        const group = randomGroup(active, len, focus, rng);
-        q.push(this.card("copy-group", group, "rx", "groups", focus));
-      }
+      const addGroups = (
+        count: number,
+        length: number,
+        phase: "groups-2" | "groups-3",
+      ) => {
+        for (let i = 0; i < count; i++) {
+          const focus = rng() < 0.6 ? pick(focusPool, rng) : pick(active, rng);
+          const group = randomGroup(active, length, focus, rng);
+          q.push(this.card("copy-group", group, "rx", phase, focus));
+        }
+      };
+      addGroups(this.config.twoCharacterGroupCount, 2, "groups-2");
+      addGroups(this.config.threeCharacterGroupCount, 3, "groups-3");
     }
 
     return q;

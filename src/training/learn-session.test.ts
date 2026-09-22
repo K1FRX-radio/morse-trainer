@@ -5,6 +5,10 @@ import { createRng } from "../core/rng.ts";
 import { LearnSession, type LessonEvent } from "./learn-session.ts";
 import type { LessonPhase, PlannedExercise } from "./lesson-plan.ts";
 
+function isExercise(event: LessonEvent): event is PlannedExercise {
+  return event.type !== "transition" && event.type !== "notification";
+}
+
 function freshSession(overrides = {}) {
   const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
   let t = 0;
@@ -21,6 +25,8 @@ function freshSession(overrides = {}) {
 function completeCorrect(session: LearnSession, event: LessonEvent): void {
   if (event.type === "transition") {
     session.continueTransition();
+  } else if (event.type === "notification") {
+    session.continueNotification();
   } else if (event.type === "introduce") {
     session.submit("");
   } else if (event.type === "send-character") {
@@ -36,7 +42,7 @@ function advanceToPhase(
 ): PlannedExercise | undefined {
   let event = session.next();
   while (event) {
-    if (event.type !== "transition" && event.phase === phase) return event;
+    if (isExercise(event) && event.phase === phase) return event;
     completeCorrect(session, event);
     event = session.next();
   }
@@ -99,8 +105,8 @@ describe("LearnSession practice", () => {
     let card = session.next();
     while (card) {
       const before = session.summary().attempts;
-      if (card.type === "transition") {
-        session.continueTransition();
+      if (!isExercise(card)) {
+        completeCorrect(session, card);
         expect(session.summary().attempts).toBe(before);
       } else if (card.type === "introduce") {
         intros += 1;
@@ -165,7 +171,7 @@ describe("LearnSession Stage A fixes", () => {
     const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
     const session = new LearnSession({ state, rng: createRng(5) });
     session.start(0);
-    const group = advanceToPhase(session, "groups");
+    const group = advanceToPhase(session, "groups-2");
     expect(group?.type).toBe("copy-group");
     const focus = group?.focus ?? "";
     const before =
@@ -187,8 +193,8 @@ describe("LearnSession Stage A fixes", () => {
     session.submit(""); // miss -> inserts an assisted repeat
     const attemptsBefore = session.summary().attempts;
     const assistedEvent = session.next();
-    expect(assistedEvent?.type).not.toBe("transition");
-    if (!assistedEvent || assistedEvent.type === "transition") {
+    expect(assistedEvent && isExercise(assistedEvent)).toBe(true);
+    if (!assistedEvent || !isExercise(assistedEvent)) {
       throw new Error("expected assisted exercise");
     }
     const assisted = assistedEvent;
@@ -251,8 +257,8 @@ describe("LearnSession remediation", () => {
     focus!.needsReview = true;
     session.submit(""); // miss inserts an assisted repeat
     const assistedEvent = session.next();
-    expect(assistedEvent?.type).not.toBe("transition");
-    if (!assistedEvent || assistedEvent.type === "transition") {
+    expect(assistedEvent && isExercise(assistedEvent)).toBe(true);
+    if (!assistedEvent || !isExercise(assistedEvent)) {
       throw new Error("expected assisted exercise");
     }
     const assisted = assistedEvent;
@@ -305,8 +311,8 @@ describe("LearnSession remediation", () => {
     });
     first.start(0);
     const card = first.next();
-    expect(card?.type).not.toBe("transition");
-    if (!card || card.type === "transition") {
+    expect(card && isExercise(card)).toBe(true);
+    if (!card || !isExercise(card)) {
       throw new Error("expected remediation exercise");
     }
     first.submit(card.target);
@@ -319,8 +325,8 @@ describe("LearnSession remediation", () => {
     });
     next.start(0);
     const nextEvent = next.next();
-    expect(nextEvent?.type).not.toBe("transition");
-    if (nextEvent?.type !== "transition") {
+    expect(nextEvent && isExercise(nextEvent)).toBe(true);
+    if (nextEvent && isExercise(nextEvent)) {
       expect(nextEvent?.phase).toBe("remediate");
     }
     expect(state.characters[0].needsReview).toBe(true);
@@ -330,7 +336,7 @@ describe("LearnSession remediation", () => {
     const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
     const session = new LearnSession({ state, rng: createRng(5) });
     session.start(0);
-    const group = advanceToPhase(session, "groups");
+    const group = advanceToPhase(session, "groups-2");
     const progress = state.characters.find((character) =>
       group?.target.includes(character.character),
     );
@@ -355,11 +361,8 @@ describe("LearnSession adaptive acquisition", () => {
     session.start(0);
 
     let event = session.next();
-    while (
-      event &&
-      (event.type === "transition" || event.phase !== "contrast")
-    ) {
-      if (event.type === "transition") session.continueTransition();
+    while (event && (!isExercise(event) || event.phase !== "contrast")) {
+      if (!isExercise(event)) completeCorrect(session, event);
       else if (event.type === "introduce") session.submit("");
       else session.submit(event.assisted ? event.target : "");
       event = session.next();
@@ -393,7 +396,7 @@ describe("LearnSession transitions", () => {
       id: "multi-character-copy",
       title: "Ready for something longer?",
       text: "You’ve learned the individual sounds. Now copy several characters without stopping between them.",
-      destinationPhase: "groups",
+      destinationPhase: "groups-2",
       actionLabel: "Go",
     });
   });
@@ -407,7 +410,9 @@ describe("LearnSession transitions", () => {
       (character) => character.rx.totalAttempts,
     );
 
-    expect(() => session.submit("")).toThrow("submit called for a transition");
+    expect(() => session.submit("")).toThrow(
+      "submit called for a lesson interstitial",
+    );
     expect(session.summary()).toEqual(before);
     session.continueTransition();
     expect(session.summary()).toEqual(before);
@@ -429,7 +434,7 @@ describe("LearnSession transitions", () => {
     const group = session.next();
     expect(group?.type).toBe("copy-group");
     if (group?.type === "copy-group") {
-      expect(group.phase).toBe("groups");
+      expect(group.phase).toBe("groups-2");
     }
   });
 
@@ -454,6 +459,49 @@ describe("LearnSession transitions", () => {
       expect(session.phaseLabel).toBe(
         `${group.target.length}-character groups`,
       );
+    }
+  });
+
+  it("announces three-character groups without recording an attempt", () => {
+    const { session, state } = freshSession({ introduced: ["K", "M"] });
+    session.start(0);
+    toMultiCharacterTransition(session);
+    session.continueTransition();
+
+    let event = session.next();
+    while (event && event.type !== "notification") {
+      completeCorrect(session, event);
+      event = session.next();
+    }
+    const before = session.summary();
+    const observations = state.characters.map(
+      (character) => character.rx.totalAttempts,
+    );
+
+    expect(event).toEqual({
+      type: "notification",
+      id: "three-character-groups",
+      title: "Now copying 3-character groups",
+      destinationPhase: "groups-3",
+      actionLabel: "Go",
+      delayMs: 1800,
+    });
+    expect(session.next()).toBe(event);
+    expect(() => session.submit("")).toThrow(
+      "submit called for a lesson interstitial",
+    );
+    expect(session.summary()).toEqual(before);
+    expect(session.continueNotification()).toBe(true);
+    expect(session.continueNotification()).toBe(false);
+    expect(
+      state.characters.map((character) => character.rx.totalAttempts),
+    ).toEqual(observations);
+    const group = session.next();
+    expect(group?.type).toBe("copy-group");
+    if (group?.type === "copy-group") {
+      expect(group.phase).toBe("groups-3");
+      expect(group.target).toHaveLength(3);
+      expect(session.phaseLabel).toBe("3-character groups");
     }
   });
 });

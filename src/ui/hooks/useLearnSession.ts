@@ -19,6 +19,7 @@ import {
 import {
   LearnSession,
   type LessonEvent,
+  type LessonNotification,
   type LessonTransition,
   type SessionSummary,
 } from "../../training/learn-session.ts";
@@ -141,6 +142,9 @@ export function useLearnSession() {
   const [transition, setTransition] = useState<LessonTransition | undefined>(
     undefined,
   );
+  const [notification, setNotification] = useState<
+    LessonNotification | undefined
+  >(undefined);
   const [phaseLabel, setPhaseLabel] = useState<string | undefined>(undefined);
   const exerciseRef = useRef<PlannedExercise | undefined>(undefined);
   exerciseRef.current = exercise;
@@ -235,6 +239,7 @@ export function useLearnSession() {
     saveCurriculum(stateRef.current);
     setExercise(undefined);
     setTransition(undefined);
+    setNotification(undefined);
     setPhaseLabel(undefined);
     setPhase("summary");
   }, [audio, clearHeldKeys]);
@@ -250,10 +255,24 @@ export function useLearnSession() {
       setPhaseLabel(sessionRef.current?.phaseLabel);
       if (event.type === "transition") {
         setExercise(undefined);
+        setNotification(undefined);
         setTransition(event);
         return;
       }
+      if (event.type === "notification") {
+        setExercise(undefined);
+        setTransition(undefined);
+        setNotification(event);
+        void delay(event.delayMs).then(() => {
+          if (token !== flowToken.current) return;
+          if (sessionRef.current?.continueNotification()) {
+            advanceRef.current();
+          }
+        });
+        return;
+      }
       setTransition(undefined);
+      setNotification(undefined);
       setExercise(event);
       if (event.type === "introduce") void runIntro(event.target, token);
       else void presentPrompt(event.target, token);
@@ -392,6 +411,12 @@ export function useLearnSession() {
     }
   }, []);
 
+  const continueNotification = useCallback(() => {
+    if (sessionRef.current?.continueNotification()) {
+      advanceRef.current();
+    }
+  }, []);
+
   // --- Checkpoint mode -----------------------------------------------------
   const finishCheckpoint = useCallback(() => {
     const cp = checkpointRef.current;
@@ -517,6 +542,7 @@ export function useLearnSession() {
     phase,
     exercise,
     transition,
+    notification,
     phaseLabel,
     feedback,
     awaitingContinue,
@@ -545,6 +571,7 @@ export function useLearnSession() {
       replay,
       continueNow,
       continueTransition,
+      continueNotification,
       endSession,
       startCheckpoint,
       physicalKeyDown,

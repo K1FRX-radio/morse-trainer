@@ -87,18 +87,21 @@ describe("LessonPlan first lesson", () => {
     }
   });
 
-  it("keeps early groups short", () => {
+  it("runs eight two-character and eight three-character groups", () => {
     const cards = drain(firstLesson());
-    for (const card of cards) {
-      if (card.type === "copy-group") {
-        expect(card.target.length).toBeLessThanOrEqual(
-          DEFAULT_LESSON_CONFIG.groupMaxLen,
-        );
-        expect(card.target.length).toBeGreaterThanOrEqual(
-          DEFAULT_LESSON_CONFIG.groupMinLen,
-        );
-      }
-    }
+    const twoCharacter = cards.filter((card) => card.phase === "groups-2");
+    const threeCharacter = cards.filter((card) => card.phase === "groups-3");
+    expect(twoCharacter).toHaveLength(
+      DEFAULT_LESSON_CONFIG.twoCharacterGroupCount,
+    );
+    expect(threeCharacter).toHaveLength(
+      DEFAULT_LESSON_CONFIG.threeCharacterGroupCount,
+    );
+    expect(twoCharacter.every((card) => card.target.length === 2)).toBe(true);
+    expect(threeCharacter.every((card) => card.target.length === 3)).toBe(true);
+    expect(cards.indexOf(twoCharacter.at(-1)!)).toBeLessThan(
+      cards.indexOf(threeCharacter[0]),
+    );
   });
 
   it("includes the focus character in every group", () => {
@@ -358,6 +361,33 @@ describe("LessonPlan later stage", () => {
       .filter((c) => c.type === "introduce")
       .map((c) => c.target);
     expect(intros).toEqual(["U"]);
+  });
+
+  it("weights review and weak characters as group focuses", () => {
+    const totals = new Map<string, number>();
+    for (let seed = 1; seed <= 100; seed++) {
+      const plan = new LessonPlan({
+        active: ["K", "M", "U", "R", "E"],
+        introduced: ["K", "M", "U", "R", "E"],
+        newest: "E",
+        review: ["K"],
+        weak: ["M"],
+        rng: createRng(seed),
+      });
+      for (const card of drain(plan)) {
+        if (card.type === "copy-group") {
+          totals.set(card.focus, (totals.get(card.focus) ?? 0) + 1);
+        }
+      }
+    }
+
+    const emphasized = ((totals.get("K") ?? 0) + (totals.get("M") ?? 0)) / 2;
+    const ordinary =
+      ((totals.get("U") ?? 0) +
+        (totals.get("R") ?? 0) +
+        (totals.get("E") ?? 0)) /
+      3;
+    expect(emphasized).toBeGreaterThan(ordinary);
   });
 });
 

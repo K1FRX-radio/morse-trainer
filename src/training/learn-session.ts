@@ -44,18 +44,28 @@ export type LessonTransition = {
   id: "multi-character-copy";
   title: "Ready for something longer?";
   text: "You’ve learned the individual sounds. Now copy several characters without stopping between them.";
-  destinationPhase: "groups";
+  destinationPhase: "groups-2";
   actionLabel: "Go";
 };
 
-export type LessonEvent = PlannedExercise | LessonTransition;
+export type LessonNotification = {
+  type: "notification";
+  id: "three-character-groups";
+  title: "Now copying 3-character groups";
+  destinationPhase: "groups-3";
+  actionLabel: "Go";
+  delayMs: number;
+};
+
+export type LessonEvent =
+  PlannedExercise | LessonTransition | LessonNotification;
 
 const MULTI_CHARACTER_TRANSITION: LessonTransition = {
   type: "transition",
   id: "multi-character-copy",
   title: "Ready for something longer?",
   text: "You’ve learned the individual sounds. Now copy several characters without stopping between them.",
-  destinationPhase: "groups",
+  destinationPhase: "groups-2",
   actionLabel: "Go",
 };
 
@@ -91,10 +101,12 @@ export class LearnSession {
   private readonly now: () => number;
   private readonly config: SessionConfig;
   private readonly plan: LessonPlan;
+  private readonly groupLengthNoticeMs: number;
 
   private current: LessonEvent | undefined;
   private pendingExercise: PlannedExercise | undefined;
   private showedMultiCharacterTransition = false;
+  private showedThreeCharacterNotification = false;
   private lastActivityAt: number | undefined;
   private paused = false;
   private activeMs = 0;
@@ -116,6 +128,7 @@ export class LearnSession {
         typeof performance !== "undefined" ? performance.now() : Date.now());
     this.config = options.sessionConfig ?? DEFAULT_SESSION_CONFIG;
     const lessonConfig = options.lessonConfig ?? DEFAULT_LESSON_CONFIG;
+    this.groupLengthNoticeMs = lessonConfig.groupLengthNoticeMs;
     this.plan = new LessonPlan({
       active: unlockedCharacters(options.state),
       introduced: options.introduced ?? [],
@@ -140,16 +153,38 @@ export class LearnSession {
   /** The next lesson event, or undefined when the lesson is complete. */
   next(): LessonEvent | undefined {
     this.accrue(this.now());
-    if (this.current?.type === "transition") {
+    if (
+      this.current?.type === "transition" ||
+      this.current?.type === "notification"
+    ) {
       return this.current;
     }
     this.replayedThisCard = false;
     const exercise = this.pendingExercise ?? this.plan.next();
     this.pendingExercise = undefined;
-    if (exercise?.phase === "groups" && !this.showedMultiCharacterTransition) {
+    if (
+      exercise?.phase === "groups-2" &&
+      !this.showedMultiCharacterTransition
+    ) {
       this.showedMultiCharacterTransition = true;
       this.pendingExercise = exercise;
       this.current = MULTI_CHARACTER_TRANSITION;
+      return this.current;
+    }
+    if (
+      exercise?.phase === "groups-3" &&
+      !this.showedThreeCharacterNotification
+    ) {
+      this.showedThreeCharacterNotification = true;
+      this.pendingExercise = exercise;
+      this.current = {
+        type: "notification",
+        id: "three-character-groups",
+        title: "Now copying 3-character groups",
+        destinationPhase: "groups-3",
+        actionLabel: "Go",
+        delayMs: this.groupLengthNoticeMs,
+      };
       return this.current;
     }
     this.current = exercise;
@@ -157,7 +192,10 @@ export class LearnSession {
   }
 
   get currentExercise(): PlannedExercise | undefined {
-    return this.current?.type === "transition" ? undefined : this.current;
+    return this.current?.type === "transition" ||
+      this.current?.type === "notification"
+      ? undefined
+      : this.current;
   }
 
   get currentEvent(): LessonEvent | undefined {
@@ -168,6 +206,7 @@ export class LearnSession {
     const event = this.current;
     if (!event) return undefined;
     if (event.type === "transition") return "Single-character copy";
+    if (event.type === "notification") return "3-character groups";
     if (event.phase === "introduce" || event.phase === "acquire") {
       return `Learning ${event.focus}`;
     }
@@ -179,6 +218,14 @@ export class LearnSession {
   /** A transition changes mode but records no card or mastery observation. */
   continueTransition(): boolean {
     if (this.current?.type !== "transition") {
+      return false;
+    }
+    this.current = undefined;
+    return true;
+  }
+
+  continueNotification(): boolean {
+    if (this.current?.type !== "notification") {
       return false;
     }
     this.current = undefined;
@@ -200,8 +247,8 @@ export class LearnSession {
     if (!exercise) {
       throw new Error("submit called before next");
     }
-    if (exercise.type === "transition") {
-      throw new Error("submit called for a transition");
+    if (exercise.type === "transition" || exercise.type === "notification") {
+      throw new Error("submit called for a lesson interstitial");
     }
     this.accrue(this.now());
     this.cards += 1;

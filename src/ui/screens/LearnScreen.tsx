@@ -30,6 +30,7 @@ export function LearnScreen() {
     replay,
     continueNow,
     continueTransition,
+    continueNotification,
     begin,
     endSession,
     startCheckpoint,
@@ -59,6 +60,17 @@ export function LearnScreen() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        learn.notification &&
+        !event.repeat &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey
+      ) {
+        event.preventDefault();
+        continueNotification();
+        return;
+      }
       const handled = physicalKeyDown(
         event.key,
         event.code,
@@ -80,7 +92,13 @@ export function LearnScreen() {
       window.removeEventListener("blur", onBlur);
       clearHeldKeys();
     };
-  }, [physicalKeyDown, physicalKeyUp, clearHeldKeys]);
+  }, [
+    learn.notification,
+    continueNotification,
+    physicalKeyDown,
+    physicalKeyUp,
+    clearHeldKeys,
+  ]);
 
   function processCheckpoint(raw: string) {
     setValue("");
@@ -297,6 +315,29 @@ export function LearnScreen() {
           <p>{learn.transition.text}</p>
           <button type="button" onClick={continueTransition} autoFocus>
             {learn.transition.actionLabel}
+          </button>
+        </div>
+        <div className="practice__controls learn__end">
+          <button type="button" className="tab" onClick={endSession}>
+            End session
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  if (learn.notification) {
+    return (
+      <section>
+        <div className="learn__top">
+          <span className="field__label" aria-live="polite">
+            {learn.phaseLabel}
+          </span>
+        </div>
+        <div className="learn__intro" aria-live="polite">
+          <h2>{learn.notification.title}</h2>
+          <button type="button" onClick={continueNotification} autoFocus>
+            {learn.notification.actionLabel}
           </button>
         </div>
         <div className="practice__controls learn__end">

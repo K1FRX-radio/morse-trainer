@@ -83,6 +83,40 @@ async function toFirstCopy(fake: ReturnType<typeof makeFakeAudio>) {
   await resolvePlay(fake); // acquire audio done -> input unlocked
 }
 
+async function toMultiCharacterTransition(
+  fake: ReturnType<typeof makeFakeAudio>,
+) {
+  localStorage.setItem("k1frx.introduced.v1", JSON.stringify(["K", "M"]));
+  fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
+  await flush();
+  for (let attempt = 0; attempt < 16; attempt++) {
+    const target = fake.pending[0]?.text;
+    expect(target).toMatch(/^[KM]$/);
+    await resolvePlay(fake);
+    fireEvent.change(screen.getByLabelText("Your copy"), {
+      target: { value: target },
+    });
+    await flush();
+    await tick(450);
+  }
+}
+
+async function toThreeCharacterNotice(fake: ReturnType<typeof makeFakeAudio>) {
+  await toMultiCharacterTransition(fake);
+  fireEvent.click(screen.getByRole("button", { name: "Go" }));
+  await flush();
+  for (let group = 0; group < 8; group++) {
+    const target = fake.pending[0]?.text;
+    expect(target).toHaveLength(2);
+    await resolvePlay(fake);
+    fireEvent.change(screen.getByLabelText("Your copy"), {
+      target: { value: target },
+    });
+    await flush();
+    await tick(450);
+  }
+}
+
 beforeEach(() => {
   localStorage.clear();
   vi.useFakeTimers();
@@ -351,22 +385,9 @@ describe("LearnScreen audio sequencing", () => {
   });
 
   it("waits for Go before starting multi-character audio", async () => {
-    localStorage.setItem("k1frx.introduced.v1", JSON.stringify(["K", "M"]));
     const fake = makeFakeAudio();
     renderLearn(fake.audio);
-    fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
-    await flush();
-
-    for (let attempt = 0; attempt < 16; attempt++) {
-      const target = fake.pending[0]?.text;
-      expect(target).toMatch(/^[KM]$/);
-      await resolvePlay(fake);
-      fireEvent.change(screen.getByLabelText("Your copy"), {
-        target: { value: target },
-      });
-      await flush();
-      await tick(450);
-    }
+    await toMultiCharacterTransition(fake);
 
     expect(
       screen.getByRole("heading", { name: "Ready for something longer?" }),
@@ -378,6 +399,54 @@ describe("LearnScreen audio sequencing", () => {
     await flush();
     expect(screen.getByText("2-character groups")).toBeInTheDocument();
     expect(fake.pending[0]?.text).toHaveLength(2);
+  });
+
+  it("submits a short group early on Enter", async () => {
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+    await toMultiCharacterTransition(fake);
+    fireEvent.click(screen.getByRole("button", { name: "Go" }));
+    await flush();
+    const target = fake.pending[0]?.text ?? "KM";
+    await resolvePlay(fake);
+
+    const input = screen.getByLabelText("Your copy");
+    fireEvent.change(input, { target: { value: target[0] } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await flush();
+    expect(screen.getByRole("status")).toBeInTheDocument();
+  });
+
+  it("announces three-character groups and accepts any key to continue", async () => {
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+    await toThreeCharacterNotice(fake);
+
+    expect(
+      screen.getByRole("heading", {
+        name: "Now copying 3-character groups",
+      }),
+    ).toBeInTheDocument();
+    expect(fake.playCount()).toBe(0);
+    fireEvent.keyDown(window, { key: "x", code: "KeyX" });
+    await flush();
+    expect(fake.pending[0]?.text).toHaveLength(3);
+  });
+
+  it("automatically continues the group notice after its named delay", async () => {
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+    await toThreeCharacterNotice(fake);
+
+    await tick(1799);
+    expect(
+      screen.getByRole("heading", {
+        name: "Now copying 3-character groups",
+      }),
+    ).toBeInTheDocument();
+    expect(fake.playCount()).toBe(0);
+    await tick(1);
+    expect(fake.pending[0]?.text).toHaveLength(3);
   });
 });
 
