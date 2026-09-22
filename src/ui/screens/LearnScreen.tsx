@@ -201,6 +201,24 @@ export function LearnScreen() {
             {Math.round(s.accuracy * 100)}% correct)
           </li>
           <li>
+            Isolated prompts: {s.isolatedPrompts} · groups: {s.groups} · words:{" "}
+            {s.words}
+          </li>
+          {s.continuousCopyResult && (
+            <li>
+              Continuous copy: {Math.round(s.continuousCopyDurationMs / 1000)} s
+            </li>
+          )}
+          <li>
+            Aligned copy: {s.alignedCorrectCharacters}/{s.charactersTransmitted}{" "}
+            correct · {s.charactersTyped} typed (
+            {Math.round(s.alignedCharacterAccuracy * 100)}%)
+          </li>
+          {s.excludedFromMastery > 0 && (
+            <li>Excluded assisted/replayed cards: {s.excludedFromMastery}</li>
+          )}
+          <li>Needs review: {s.charactersNeedingReview.join(" ") || "none"}</li>
+          <li>
             Characters practiced: {s.charactersPracticed.join(" ") || "—"}
           </li>
         </ul>

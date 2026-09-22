@@ -146,6 +146,29 @@ describe("LearnSession practice", () => {
     expect(summary.cards).toBe(summary.attempts + 2);
   });
 
+  it("reports card and aligned-character work separately", () => {
+    const { session, advance } = freshSession({
+      continuousCopyDurationMs: 1000,
+    });
+    session.start(0);
+    playPerfect(session, advance);
+    const summary = session.summary();
+
+    expect(summary.isolatedPrompts).toBe(32);
+    expect(summary.groups).toBe(16);
+    expect(summary.words).toBe(0);
+    expect(summary.continuousCopyDurationMs).toBeGreaterThanOrEqual(1000);
+    expect(summary.charactersTransmitted).toBeGreaterThan(40);
+    expect(summary.charactersTyped).toBe(summary.charactersTransmitted);
+    expect(summary.alignedCorrectCharacters).toBe(
+      summary.charactersTransmitted,
+    );
+    expect(summary.alignedCharacterAccuracy).toBe(1);
+    expect(summary.excludedFromMastery).toBe(0);
+    expect(summary.charactersNeedingReview).toEqual([]);
+    expect(summary.checkpointReadiness.reason).toBe("READY");
+  });
+
   it("inserts an immediate repeat after a missed isolated card", () => {
     const { session, advance } = freshSession();
     session.start(0);
@@ -239,6 +262,7 @@ describe("LearnSession Stage A fixes", () => {
       state.characters.find((c) => c.character === focus)?.rx.recentResults
         .length ?? 0;
     expect(rxAfter).toBe(rxBefore);
+    expect(session.summary().excludedFromMastery).toBe(1);
   });
 });
 

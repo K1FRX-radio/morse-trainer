@@ -5,6 +5,7 @@
 // application service: no DOM or storage.
 
 import {
+  checkpointReadiness,
   newestCharacter,
   recentAccuracy,
   recordAttempt,
@@ -12,6 +13,7 @@ import {
   reviewCharacters,
   unlockedCharacters,
   type CurriculumState,
+  type Readiness,
 } from "../core/curriculum.ts";
 import type { Rng } from "../core/rng.ts";
 import { gradeCopy, gradeCopyAligned, normalizeCopy } from "../core/scoring.ts";
@@ -118,6 +120,20 @@ export type SessionSummary = {
   accuracy: number;
   rxAttempts: number;
   txAttempts: number;
+  isolatedPrompts: number;
+  groups: number;
+  words: number;
+  continuousCopyDurationMs: number;
+  /** Group, word, and completed-stream target characters. */
+  charactersTransmitted: number;
+  /** Normalized characters typed for group, word, and completed-stream work. */
+  charactersTyped: number;
+  alignedCorrectCharacters: number;
+  alignedCharacterAccuracy: number;
+  /** Assisted or replayed ordinary cards deliberately excluded from mastery. */
+  excludedFromMastery: number;
+  charactersNeedingReview: string[];
+  checkpointReadiness: Readiness;
   charactersPracticed: string[];
   /** True when the session meets the minimum active time and attempt count. */
   valid: boolean;
@@ -170,6 +186,13 @@ export class LearnSession {
   private correctCount = 0;
   private rxAttempts = 0;
   private txAttempts = 0;
+  private isolatedPrompts = 0;
+  private groups = 0;
+  private words = 0;
+  private alignedTargetCharacters = 0;
+  private alignedTypedCharacters = 0;
+  private alignedCorrectCharacters = 0;
+  private excludedFromMastery = 0;
   private replayedThisCard = false;
   private readonly practiced = new Set<string>();
   private readonly introducedCompleted = new Set<string>();
@@ -362,6 +385,11 @@ export class LearnSession {
     });
     const observations = applyContinuousCopyResult(this.state, result);
     this.rxAttempts += observations;
+    if (!result.abandoned) {
+      this.alignedTargetCharacters += result.targetCharacters;
+      this.alignedTypedCharacters += result.typedCharacters;
+      this.alignedCorrectCharacters += result.alignedCorrect;
+    }
     for (const observation of result.perCharacterResults) {
       this.practiced.add(observation.character);
     }
@@ -420,6 +448,7 @@ export class LearnSession {
     // Assisted or replayed cards reveal or repeat the answer, so they are
     // teaching moments and must not feed the curriculum or scored accuracy.
     const assisted = exercise.assisted || this.replayedThisCard;
+    if (assisted) this.excludedFromMastery += 1;
 
     let correct: boolean;
     if (exercise.type === "send-character") {
@@ -430,6 +459,7 @@ export class LearnSession {
       }
       this.practiced.add(exercise.target);
     } else if (exercise.type === "copy-character") {
+      this.isolatedPrompts += 1;
       const answer = typeof input === "string" ? input : "";
       correct = gradeCopy(exercise.target, answer).correct;
       if (!assisted) {
@@ -443,9 +473,16 @@ export class LearnSession {
       // when characters are inserted or dropped, so per-character mastery is safe.
       const answer = typeof input === "string" ? input : "";
       const grade = gradeCopyAligned(exercise.target, answer);
+      const normalizedTarget = normalizeCopy(exercise.target);
+      const normalizedAnswer = normalizeCopy(answer);
+      if (exercise.type === "copy-group") this.groups += 1;
+      else this.words += 1;
+      this.alignedTargetCharacters += normalizedTarget.length;
+      this.alignedTypedCharacters += normalizedAnswer.length;
+      this.alignedCorrectCharacters += grade.perChar.filter(Boolean).length;
       correct = grade.correct;
       if (!assisted) {
-        [...normalizeCopy(exercise.target)].forEach((char, index) => {
+        [...normalizedTarget].forEach((char, index) => {
           recordAttempt(this.state, char, "rx", grade.perChar[index] ?? false);
           this.rxAttempts += 1;
           this.practiced.add(char);
@@ -531,6 +568,21 @@ export class LearnSession {
       accuracy: this.attempts === 0 ? 0 : this.correctCount / this.attempts,
       rxAttempts: this.rxAttempts,
       txAttempts: this.txAttempts,
+      isolatedPrompts: this.isolatedPrompts,
+      groups: this.groups,
+      words: this.words,
+      continuousCopyDurationMs:
+        this.lastContinuousCopyResult?.durationCompleted ?? 0,
+      charactersTransmitted: this.alignedTargetCharacters,
+      charactersTyped: this.alignedTypedCharacters,
+      alignedCorrectCharacters: this.alignedCorrectCharacters,
+      alignedCharacterAccuracy:
+        this.alignedTargetCharacters === 0
+          ? 0
+          : this.alignedCorrectCharacters / this.alignedTargetCharacters,
+      excludedFromMastery: this.excludedFromMastery,
+      charactersNeedingReview: reviewCharacters(this.state),
+      checkpointReadiness: checkpointReadiness(this.state),
       charactersPracticed: [...this.practiced],
       valid: this.activeMs >= this.config.minActiveMs && this.attempts > 0,
       ...(this.lastContinuousCopyResult
