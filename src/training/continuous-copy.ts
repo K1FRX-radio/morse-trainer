@@ -12,12 +12,22 @@ import {
   type Schedule,
   type TimingOptions,
 } from "../core/timing.ts";
+import {
+  wordSelectionWeight,
+  type FocusedWordEligibility,
+} from "./word-selection.ts";
 
 export type ContinuousCopyConfig = {
   newestWeight: number;
   reviewWeight: number;
   weakWeight: number;
   maxIdenticalRun: number;
+  minimumGroupLength: number;
+  smallActiveGroupMaxLength: number;
+  largeActiveGroupMaxLength: number;
+  maxRepeatedGroupLength: number;
+  continuousWordRatio: number;
+  maxConsecutiveWordTokens: number;
 };
 
 export const DEFAULT_CONTINUOUS_COPY_CONFIG: ContinuousCopyConfig = {
@@ -25,10 +35,23 @@ export const DEFAULT_CONTINUOUS_COPY_CONFIG: ContinuousCopyConfig = {
   reviewWeight: 3,
   weakWeight: 2,
   maxIdenticalRun: 2,
+  minimumGroupLength: 2,
+  smallActiveGroupMaxLength: 4,
+  largeActiveGroupMaxLength: 5,
+  maxRepeatedGroupLength: 2,
+  continuousWordRatio: 0.35,
+  maxConsecutiveWordTokens: 2,
+};
+
+export type ContinuousCopyToken = {
+  kind: "random-group" | "word";
+  text: string;
 };
 
 export type ContinuousCopyPlan = {
-  target: string;
+  tokens: ContinuousCopyToken[];
+  audioText: string;
+  gradingTarget: string;
   schedule: Schedule;
   requestedDurationMs: number;
   scheduledDurationMs: number;
@@ -43,6 +66,7 @@ export type ContinuousCopyOptions = {
   timing: TimingOptions;
   rng: Rng;
   config?: ContinuousCopyConfig;
+  wordEligibility?: FocusedWordEligibility;
 };
 
 export type ContinuousCharacterResult = {
@@ -51,6 +75,9 @@ export type ContinuousCharacterResult = {
 };
 
 export type ContinuousCopyResult = {
+  randomGroupTokens: number;
+  wordTokens: number;
+  totalTokens: number;
   targetCharacters: number;
   typedCharacters: number;
   alignedCorrect: number;
@@ -90,6 +117,120 @@ function validatedActive(active: readonly string[]): string[] {
   return unique;
 }
 
+function chooseGroupLength(
+  activeCount: number,
+  previousLengths: readonly number[],
+  config: ContinuousCopyConfig,
+  rng: Rng,
+): number {
+  const maximum =
+    activeCount >= 5
+      ? config.largeActiveGroupMaxLength
+      : config.smallActiveGroupMaxLength;
+  const lengths = Array.from(
+    { length: maximum - config.minimumGroupLength + 1 },
+    (_, index) => config.minimumGroupLength + index,
+  );
+  const repeated = previousLengths.slice(-config.maxRepeatedGroupLength);
+  const weights = lengths.map((length) =>
+    lengths.length > 1 &&
+    repeated.length === config.maxRepeatedGroupLength &&
+    repeated.every((value) => value === length)
+      ? 0
+      : 1,
+  );
+  return lengths[weightedIndex(weights, rng)];
+}
+
+function characterWeight(
+  character: string,
+  newest: string,
+  review: ReadonlySet<string>,
+  weak: ReadonlySet<string>,
+  config: ContinuousCopyConfig,
+): number {
+  return (
+    1 +
+    (character === newest ? config.newestWeight : 0) +
+    (review.has(character) ? config.reviewWeight : 0) +
+    (weak.has(character) ? config.weakWeight : 0)
+  );
+}
+
+function buildRandomGroup(
+  active: readonly string[],
+  length: number,
+  coverage: string[],
+  previousToken: string | undefined,
+  newest: string,
+  review: ReadonlySet<string>,
+  weak: ReadonlySet<string>,
+  config: ContinuousCopyConfig,
+  rng: Rng,
+): string {
+  const characters: string[] = [];
+  for (let index = 0; index < length; index++) {
+    let character = coverage.shift();
+    if (!character) {
+      const weights = active.map((candidate) => {
+        const run = characters.slice(-config.maxIdenticalRun);
+        if (
+          active.length > 1 &&
+          run.length === config.maxIdenticalRun &&
+          run.every((value) => value === candidate)
+        ) {
+          return 0;
+        }
+        return characterWeight(candidate, newest, review, weak, config);
+      });
+      character = active[weightedIndex(weights, rng)];
+    }
+    characters.push(character);
+  }
+
+  let group = characters.join("");
+  if (active.length > 1 && group === previousToken) {
+    const finalIndex = characters.length - 1;
+    const precedingRun = characters.slice(
+      Math.max(0, finalIndex - config.maxIdenticalRun + 1),
+      finalIndex,
+    );
+    const replacement = active.find((candidate) => {
+      if (candidate === characters[finalIndex]) return false;
+      return !(
+        precedingRun.length === config.maxIdenticalRun - 1 &&
+        precedingRun.every((value) => value === candidate)
+      );
+    });
+    if (replacement) {
+      characters[finalIndex] = replacement;
+      group = characters.join("");
+    }
+  }
+  return group;
+}
+
+function chooseWord(
+  eligibility: FocusedWordEligibility,
+  previousToken: string | undefined,
+  newest: string,
+  review: ReadonlySet<string>,
+  weak: ReadonlySet<string>,
+  rng: Rng,
+): string {
+  const withoutImmediateRepeat = eligibility.candidates.filter(
+    (word) => word.text !== previousToken,
+  );
+  const candidates =
+    withoutImmediateRepeat.length > 0
+      ? withoutImmediateRepeat
+      : eligibility.candidates;
+  const weights = candidates.map((word) =>
+    wordSelectionWeight(word.text, newest, review, weak),
+  );
+  return candidates[weightedIndex(weights, rng)].text;
+}
+
 export function buildContinuousCopyPlan(
   options: ContinuousCopyOptions,
 ): ContinuousCopyPlan {
@@ -100,52 +241,76 @@ export function buildContinuousCopyPlan(
   const config = options.config ?? DEFAULT_CONTINUOUS_COPY_CONFIG;
   const review = new Set(options.review ?? []);
   const weak = new Set(options.weak ?? []);
-  const characterDurations = new Map(
-    active.map((character) => [
-      character,
-      buildSchedule(character, options.timing).totalMs,
-    ]),
-  );
   const sample = active[0];
-  const interCharacterMs =
-    buildSchedule(`${sample}${sample}`, options.timing).totalMs -
-    2 * (characterDurations.get(sample) ?? 0);
+  const sampleDuration = buildSchedule(sample, options.timing).totalMs;
+  const boundaryGapMs =
+    buildSchedule(`${sample} ${sample}`, options.timing).totalMs -
+    2 * sampleDuration;
   const coverage = shuffled(active, options.rng);
-  const target: string[] = [];
+  const tokens: ContinuousCopyToken[] = [];
+  const groupLengths: number[] = [];
+  let consecutiveWords = 0;
   let scheduledDurationMs = 0;
 
   while (scheduledDurationMs < options.durationMs) {
-    let character: string;
-    if (coverage.length > 0) {
-      character = coverage.shift() as string;
+    const useWord =
+      coverage.length === 0 &&
+      options.wordEligibility?.eligible === true &&
+      options.wordEligibility.candidates.length > 0 &&
+      consecutiveWords < config.maxConsecutiveWordTokens &&
+      options.rng() < config.continuousWordRatio;
+    let token: ContinuousCopyToken;
+    if (useWord && options.wordEligibility) {
+      token = {
+        kind: "word",
+        text: chooseWord(
+          options.wordEligibility,
+          tokens.at(-1)?.text,
+          options.newest,
+          review,
+          weak,
+          options.rng,
+        ),
+      };
+      consecutiveWords += 1;
     } else {
-      const weights = active.map((candidate) => {
-        const run = target.slice(-config.maxIdenticalRun);
-        if (
-          active.length > 1 &&
-          run.length === config.maxIdenticalRun &&
-          run.every((value) => value === candidate)
-        ) {
-          return 0;
-        }
-        return (
-          1 +
-          (candidate === options.newest ? config.newestWeight : 0) +
-          (review.has(candidate) ? config.reviewWeight : 0) +
-          (weak.has(candidate) ? config.weakWeight : 0)
-        );
-      });
-      character = active[weightedIndex(weights, options.rng)];
+      const length = chooseGroupLength(
+        active.length,
+        groupLengths,
+        config,
+        options.rng,
+      );
+      token = {
+        kind: "random-group",
+        text: buildRandomGroup(
+          active,
+          length,
+          coverage,
+          tokens.at(-1)?.text,
+          options.newest,
+          review,
+          weak,
+          config,
+          options.rng,
+        ),
+      };
+      groupLengths.push(length);
+      consecutiveWords = 0;
     }
-    if (target.length > 0) scheduledDurationMs += interCharacterMs;
-    target.push(character);
-    scheduledDurationMs += characterDurations.get(character) ?? 0;
+    const text = token.text;
+    const tokenDurationMs = buildSchedule(text, options.timing).totalMs;
+    if (tokens.length > 0) scheduledDurationMs += boundaryGapMs;
+    tokens.push(token);
+    scheduledDurationMs += tokenDurationMs;
   }
 
-  const targetText = target.join("");
-  const schedule = buildSchedule(targetText, options.timing);
+  const audioText = tokens.map((token) => token.text).join(" ");
+  const gradingTarget = tokens.map((token) => token.text).join("");
+  const schedule = buildSchedule(audioText, options.timing);
   return {
-    target: targetText,
+    tokens,
+    audioText,
+    gradingTarget,
     schedule,
     requestedDurationMs: options.durationMs,
     scheduledDurationMs: schedule.totalMs,
@@ -158,9 +323,16 @@ export function gradeContinuousCopy(
   options: { durationCompleted: number; abandoned?: boolean },
 ): ContinuousCopyResult {
   const normalizedTyped = normalizeCopy(typed);
+  const randomGroupTokens = plan.tokens.filter(
+    (token) => token.kind === "random-group",
+  ).length;
+  const wordTokens = plan.tokens.length - randomGroupTokens;
   if (options.abandoned) {
     return {
-      targetCharacters: plan.target.length,
+      randomGroupTokens,
+      wordTokens,
+      totalTokens: plan.tokens.length,
+      targetCharacters: plan.gradingTarget.length,
       typedCharacters: normalizedTyped.length,
       alignedCorrect: 0,
       accuracy: null,
@@ -173,8 +345,11 @@ export function gradeContinuousCopy(
     };
   }
 
-  const grade = gradeCopyDetailed(plan.target, normalizedTyped);
+  const grade = gradeCopyDetailed(plan.gradingTarget, normalizedTyped);
   return {
+    randomGroupTokens,
+    wordTokens,
+    totalTokens: plan.tokens.length,
     targetCharacters: grade.targetCharacters,
     typedCharacters: grade.typedCharacters,
     alignedCorrect: grade.alignedCorrect,
@@ -182,7 +357,7 @@ export function gradeContinuousCopy(
       grade.targetCharacters === 0
         ? 0
         : grade.alignedCorrect / grade.targetCharacters,
-    perCharacterResults: [...plan.target].map((character, index) => ({
+    perCharacterResults: [...plan.gradingTarget].map((character, index) => ({
       character,
       correct: grade.perChar[index] ?? false,
     })),

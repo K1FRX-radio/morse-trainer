@@ -7,7 +7,11 @@
 import type { LearnExerciseType } from "../core/exercises.ts";
 import { weightedIndex, type Rng } from "../core/rng.ts";
 import type { Direction } from "../core/types.ts";
-import { eligibleWords } from "../content/words.ts";
+import {
+  evaluateWordEligibility,
+  wordSelectionWeight,
+  type FocusedWordEligibility,
+} from "./word-selection.ts";
 
 export type LessonPhase =
   | "introduce"
@@ -78,33 +82,37 @@ type WordExerciseOptions = {
   weak?: Iterable<string>;
   rng: Rng;
   config?: LessonConfig;
+  eligibility?: FocusedWordEligibility;
 };
+
+export function focusedWordEligibility(
+  active: readonly string[],
+  config: LessonConfig = DEFAULT_LESSON_CONFIG,
+): FocusedWordEligibility {
+  return evaluateWordEligibility({
+    active,
+    minimumLength: config.initialWordMinLength,
+    maximumLength: config.initialWordMaxLength,
+    minimumPoolSize: config.minimumEligibleWordCount,
+  });
+}
 
 export function buildWordCopyExercises(
   options: WordExerciseOptions,
 ): PlannedExercise[] {
   const config = options.config ?? DEFAULT_LESSON_CONFIG;
-  const candidates = eligibleWords(options.active).filter(
-    (word) =>
-      word.text.length >= config.initialWordMinLength &&
-      word.text.length <= config.initialWordMaxLength,
-  );
-  if (candidates.length < config.minimumEligibleWordCount) return [];
+  const eligibility =
+    options.eligibility ?? focusedWordEligibility(options.active, config);
+  if (!eligibility.eligible) return [];
 
   const review = new Set(options.review ?? []);
   const weak = new Set(options.weak ?? []);
-  const remaining = [...candidates];
+  const remaining = [...eligibility.candidates];
   const exercises: PlannedExercise[] = [];
   const count = Math.min(config.wordCopyCount, remaining.length);
   for (let index = 0; index < count; index++) {
-    const weights = remaining.map(
-      (word) =>
-        1 +
-        (word.text.includes(options.newest) ? 2 : 0) +
-        ([...review].some((character) => word.text.includes(character))
-          ? 3
-          : 0) +
-        ([...weak].some((character) => word.text.includes(character)) ? 2 : 0),
+    const weights = remaining.map((word) =>
+      wordSelectionWeight(word.text, options.newest, review, weak),
     );
     const selectedIndex = weightedIndex(weights, options.rng);
     const [selected] = remaining.splice(selectedIndex, 1);

@@ -4,10 +4,12 @@ import { createInitialState, nextLockedCharacter } from "../core/curriculum.ts";
 import { createRng } from "../core/rng.ts";
 import { buildSchedule } from "../core/timing.ts";
 import {
+  DEFAULT_CONTINUOUS_COPY_CONFIG,
   applyContinuousCopyResult,
   buildContinuousCopyPlan,
   gradeContinuousCopy,
 } from "./continuous-copy.ts";
+import { focusedWordEligibility } from "./lesson-plan.ts";
 
 const timing = { charWpm: 20, effectiveWpm: 12 };
 
@@ -23,51 +25,233 @@ function plan(seed = 1, durationMs = 60000) {
   });
 }
 
+const wordEligibleActive = ["K", "M", "U", "R", "E", "S", "N", "A"];
+
+function mixedPlan(seed = 1, durationMs = 60000) {
+  return buildContinuousCopyPlan({
+    active: wordEligibleActive,
+    newest: "A",
+    review: ["K"],
+    weak: ["M"],
+    durationMs,
+    timing,
+    rng: createRng(seed),
+    wordEligibility: focusedWordEligibility(wordEligibleActive),
+  });
+}
+
 describe("buildContinuousCopyPlan", () => {
   it("uses only active characters and preserves its complete schedule", () => {
     const generated = plan();
     expect(
-      [...generated.target].every((character) => "KMUR".includes(character)),
+      [...generated.gradingTarget].every((character) =>
+        "KMUR".includes(character),
+      ),
     ).toBe(true);
-    expect(generated.schedule).toEqual(buildSchedule(generated.target, timing));
+    expect(generated.schedule).toEqual(
+      buildSchedule(generated.audioText, timing),
+    );
+    expect(generated.audioText).toBe(
+      generated.tokens.map((token) => token.text).join(" "),
+    );
+    expect(generated.gradingTarget).toBe(
+      generated.tokens.map((token) => token.text).join(""),
+    );
     expect(generated.scheduledDurationMs).toBe(generated.schedule.totalMs);
   });
 
-  it("meets duration without cutting a character", () => {
+  it("meets duration without cutting a token", () => {
     const generated = plan();
-    const maxAddition = Math.max(
-      ...["K", "M", "U", "R"].map(
-        (character) =>
-          buildSchedule(`E${character}`, timing).totalMs -
-          buildSchedule("E", timing).totalMs,
-      ),
-    );
+    const lastToken = generated.tokens.at(-1)?.text ?? "";
+    const maximumOvershoot =
+      buildSchedule(`E ${lastToken}`, timing).totalMs -
+      buildSchedule("E", timing).totalMs;
     expect(generated.scheduledDurationMs).toBeGreaterThanOrEqual(60000);
-    expect(generated.scheduledDurationMs).toBeLessThan(60000 + maxAddition);
+    expect(generated.scheduledDurationMs).toBeLessThan(
+      60000 + maximumOvershoot,
+    );
   });
 
   it("is deterministic for the same seed", () => {
     expect(plan(17)).toEqual(plan(17));
   });
 
+  it("produces meaningfully different tokens for different seeds", () => {
+    const first = plan(17).tokens.map((token) => token.text);
+    const second = plan(18).tokens.map((token) => token.text);
+    expect(first).not.toEqual(second);
+    expect(
+      first.filter((token, index) => token !== second[index]).length,
+    ).toBeGreaterThan(first.length / 2);
+  });
+
   it("covers the active set when the duration permits", () => {
-    expect(new Set(plan().target)).toEqual(new Set(["K", "M", "U", "R"]));
+    expect(new Set(plan().gradingTarget)).toEqual(
+      new Set(["K", "M", "U", "R"]),
+    );
   });
 
   it("prevents excessive identical runs", () => {
-    expect(plan().target).not.toMatch(/(.)\1\1/);
+    for (let seed = 1; seed <= 100; seed++) {
+      for (const token of plan(seed).tokens) {
+        expect(token.text).not.toMatch(/(.)\1\1/);
+      }
+    }
+  });
+
+  it("uses variable group lengths without identical adjacent tokens", () => {
+    for (let seed = 1; seed <= 100; seed++) {
+      const generated = plan(seed);
+      expect(
+        new Set(generated.tokens.map((token) => token.text.length)).size,
+      ).toBeGreaterThan(1);
+      for (let index = 1; index < generated.tokens.length; index++) {
+        expect(generated.tokens[index].text).not.toBe(
+          generated.tokens[index - 1].text,
+        );
+      }
+    }
+  });
+
+  it("uses word gaps between tokens and character gaps inside them", () => {
+    const generated = plan(4, 10000);
+    const gaps = generated.schedule.segments.filter((segment) => !segment.tone);
+    expect(gaps.some((segment) => segment.gap === "word")).toBe(true);
+    expect(gaps.some((segment) => segment.gap === "inter-char")).toBe(true);
   });
 
   it("weights newest, review, and weak characters", () => {
     const counts = new Map<string, number>();
     for (let seed = 1; seed <= 40; seed++) {
-      for (const character of plan(seed, 10000).target) {
+      for (const character of plan(seed, 10000).gradingTarget) {
         counts.set(character, (counts.get(character) ?? 0) + 1);
       }
     }
     expect(counts.get("K")).toBeGreaterThan(counts.get("U") ?? 0);
     expect(counts.get("M")).toBeGreaterThan(counts.get("U") ?? 0);
     expect(counts.get("R")).toBeGreaterThan(counts.get("U") ?? 0);
+  });
+
+  it("mixes only eligible words while retaining random groups", () => {
+    const generated = mixedPlan(9, 180000);
+    const words = generated.tokens.filter((token) => token.kind === "word");
+    const groups = generated.tokens.filter(
+      (token) => token.kind === "random-group",
+    );
+    expect(words.length).toBeGreaterThan(0);
+    expect(groups.length).toBeGreaterThan(0);
+    expect(
+      words.every((token) =>
+        [...token.text].every((character) =>
+          wordEligibleActive.includes(character),
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not mix words when focused word copy is ineligible", () => {
+    const generated = buildContinuousCopyPlan({
+      active: ["K", "M"],
+      newest: "M",
+      durationMs: 60000,
+      timing,
+      rng: createRng(7),
+      wordEligibility: focusedWordEligibility(["K", "M"]),
+    });
+    expect(
+      generated.tokens.every((token) => token.kind === "random-group"),
+    ).toBe(true);
+  });
+
+  it("respects the word ratio and consecutive-word limit over seeded plans", () => {
+    const tokens = Array.from({ length: 20 }, (_, index) =>
+      mixedPlan(index + 1, 180000),
+    ).flatMap((generated) => generated.tokens);
+    const wordRatio =
+      tokens.filter((token) => token.kind === "word").length / tokens.length;
+    expect(wordRatio).toBeGreaterThan(0.28);
+    expect(wordRatio).toBeLessThan(0.38);
+
+    let consecutiveWords = 0;
+    for (const token of tokens) {
+      consecutiveWords = token.kind === "word" ? consecutiveWords + 1 : 0;
+      expect(consecutiveWords).toBeLessThanOrEqual(
+        DEFAULT_CONTINUOUS_COPY_CONFIG.maxConsecutiveWordTokens,
+      );
+    }
+  });
+
+  it("avoids immediate repeated words when alternatives exist", () => {
+    const tokens = mixedPlan(13, 600000).tokens;
+    for (let index = 1; index < tokens.length; index++) {
+      if (tokens[index].kind === "word" && tokens[index - 1].kind === "word") {
+        expect(tokens[index].text).not.toBe(tokens[index - 1].text);
+      }
+    }
+  });
+
+  it("measurably favors newest, review, and weak characters in words", () => {
+    function emphasizedWordRatio(emphasized: boolean): number {
+      let matching = 0;
+      let total = 0;
+      for (let seed = 1; seed <= 100; seed++) {
+        const generated = buildContinuousCopyPlan({
+          active: ["K", "M", "U", "R", "E", "S", "N", "A", "P", "T"],
+          newest: emphasized ? "T" : "",
+          review: emphasized ? ["E"] : [],
+          weak: emphasized ? ["M"] : [],
+          durationMs: 180000,
+          timing,
+          rng: createRng(seed),
+          wordEligibility: focusedWordEligibility([
+            "K",
+            "M",
+            "U",
+            "R",
+            "E",
+            "S",
+            "N",
+            "A",
+            "P",
+            "T",
+          ]),
+          config: {
+            ...DEFAULT_CONTINUOUS_COPY_CONFIG,
+            continuousWordRatio: 0.7,
+          },
+        });
+        for (const token of generated.tokens) {
+          if (token.kind !== "word") continue;
+          total += 1;
+          if (/[TEM]/.test(token.text)) matching += 1;
+        }
+      }
+      return matching / total;
+    }
+
+    expect(emphasizedWordRatio(true)).toBeGreaterThan(
+      emphasizedWordRatio(false),
+    );
+  });
+
+  it.each([
+    [60000, { charWpm: 20, effectiveWpm: 12 }],
+    [180000, { charWpm: 20, effectiveWpm: 12 }],
+    [300000, { charWpm: 20, effectiveWpm: 12 }],
+    [600000, { charWpm: 20, effectiveWpm: 12 }],
+    [60000, { charWpm: 8, effectiveWpm: 5 }],
+  ])("meets %i ms at %o timing", (durationMs, selectedTiming) => {
+    const generated = buildContinuousCopyPlan({
+      active: ["K", "M"],
+      newest: "M",
+      durationMs,
+      timing: selectedTiming,
+      rng: createRng(31),
+    });
+    expect(generated.scheduledDurationMs).toBeGreaterThanOrEqual(durationMs);
+    expect(generated.schedule).toEqual(
+      buildSchedule(generated.audioText, selectedTiming),
+    );
   });
 });
 
@@ -81,13 +265,13 @@ describe("gradeContinuousCopy", () => {
   });
 
   it("ignores answer whitespace and reports rich aligned results", () => {
-    const typed = `${shortPlan.target[0]} X ${shortPlan.target.slice(1)}`;
+    const typed = `${shortPlan.gradingTarget[0]} X ${shortPlan.gradingTarget.slice(1)}`;
     const result = gradeContinuousCopy(shortPlan, typed, {
       durationCompleted: shortPlan.scheduledDurationMs,
     });
-    expect(result.targetCharacters).toBe(shortPlan.target.length);
-    expect(result.typedCharacters).toBe(shortPlan.target.length + 1);
-    expect(result.alignedCorrect).toBe(shortPlan.target.length);
+    expect(result.targetCharacters).toBe(shortPlan.gradingTarget.length);
+    expect(result.typedCharacters).toBe(shortPlan.gradingTarget.length + 1);
+    expect(result.alignedCorrect).toBe(shortPlan.gradingTarget.length);
     expect(result.insertions).toBe(1);
     expect(result.deletions).toBe(0);
     expect(result.substitutions).toBe(0);
@@ -95,11 +279,78 @@ describe("gradeContinuousCopy", () => {
     expect(result.perCharacterResults.every((item) => item.correct)).toBe(true);
   });
 
+  it("treats token separators as optional and excludes them from results", () => {
+    const fixed = {
+      ...shortPlan,
+      tokens: [
+        { kind: "random-group" as const, text: "KMK" },
+        { kind: "random-group" as const, text: "MM" },
+        { kind: "random-group" as const, text: "KKM" },
+      ],
+      audioText: "KMK MM KKM",
+      gradingTarget: "KMKMMKKM",
+      schedule: buildSchedule("KMK MM KKM", timing),
+    };
+    for (const answer of ["KMKMMKKM", "KMK MM KKM"]) {
+      const result = gradeContinuousCopy(fixed, answer, {
+        durationCompleted: fixed.schedule.totalMs,
+      });
+      expect(result.accuracy).toBe(1);
+      expect(result.targetCharacters).toBe(8);
+      expect(result.perCharacterResults).toHaveLength(8);
+    }
+
+    const shorter = gradeContinuousCopy(fixed, "KMK MM", {
+      durationCompleted: fixed.schedule.totalMs,
+    });
+    expect(shorter).toMatchObject({
+      alignedCorrect: 5,
+      insertions: 0,
+      deletions: 3,
+      substitutions: 0,
+    });
+    expect(shorter.perCharacterResults.map((item) => item.correct)).toEqual([
+      true,
+      true,
+      true,
+      false,
+      true,
+      false,
+      false,
+      true,
+    ]);
+
+    const shortest = gradeContinuousCopy(fixed, "KKM", {
+      durationCompleted: fixed.schedule.totalMs,
+    });
+    expect(shortest).toMatchObject({
+      alignedCorrect: 3,
+      insertions: 0,
+      deletions: 5,
+      substitutions: 0,
+    });
+    expect(shortest.perCharacterResults.map((item) => item.correct)).toEqual([
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+    ]);
+  });
+
   it("handles deletion, substitution, and repeated characters deterministically", () => {
     const fixed = {
       ...shortPlan,
-      target: "KMMU",
-      schedule: buildSchedule("KMMU", timing),
+      tokens: [
+        { kind: "random-group" as const, text: "KMM" },
+        { kind: "random-group" as const, text: "U" },
+      ],
+      audioText: "KMM U",
+      gradingTarget: "KMMU",
+      schedule: buildSchedule("KMM U", timing),
     };
     const first = gradeContinuousCopy(fixed, "KMK", {
       durationCompleted: fixed.scheduledDurationMs,
@@ -140,13 +391,13 @@ describe("applyContinuousCopyResult", () => {
       timing,
       rng: createRng(2),
     });
-    const result = gradeContinuousCopy(generated, generated.target, {
+    const result = gradeContinuousCopy(generated, generated.gradingTarget, {
       durationCompleted: generated.scheduledDurationMs,
     });
     const locked = nextLockedCharacter(state);
 
     expect(applyContinuousCopyResult(state, result)).toBe(
-      generated.target.length,
+      generated.gradingTarget.length,
     );
     expect(nextLockedCharacter(state)).toBe(locked);
     expect(state.characters[0].needsReview).toBe(true);
@@ -175,7 +426,7 @@ describe("continuous-copy performance", () => {
     const started = performance.now();
     const generated = plan(23, 600000);
     const generatedAt = performance.now();
-    const result = gradeContinuousCopy(generated, generated.target, {
+    const result = gradeContinuousCopy(generated, generated.gradingTarget, {
       durationCompleted: generated.scheduledDurationMs,
     });
     const finished = performance.now();

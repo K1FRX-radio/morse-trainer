@@ -4,6 +4,7 @@ import {
   DEFAULT_LESSON_CONFIG,
   LessonPlan,
   buildWordCopyExercises,
+  focusedWordEligibility,
   type PlannedExercise,
 } from "./lesson-plan.ts";
 
@@ -124,6 +125,27 @@ describe("LessonPlan first lesson", () => {
 
   it("is deterministic for a seed", () => {
     expect(drain(firstLesson(7))).toEqual(drain(firstLesson(7)));
+  });
+});
+
+describe("focusedWordEligibility", () => {
+  it("uses the configured length filter and minimum pool once", () => {
+    const early = focusedWordEligibility(["K", "M"]);
+    expect(early.eligible).toBe(false);
+
+    const active = ["K", "M", "U", "R", "E", "S", "N", "A"];
+    const later = focusedWordEligibility(active);
+    expect(later.eligible).toBe(true);
+    expect(later.candidates.length).toBeGreaterThanOrEqual(
+      DEFAULT_LESSON_CONFIG.minimumEligibleWordCount,
+    );
+    expect(
+      later.candidates.every(
+        (word) =>
+          word.text.length >= DEFAULT_LESSON_CONFIG.initialWordMinLength &&
+          word.text.length <= DEFAULT_LESSON_CONFIG.initialWordMaxLength,
+      ),
+    ).toBe(true);
   });
 });
 
