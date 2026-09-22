@@ -7,6 +7,15 @@ export type CopyGrade = {
   perChar: boolean[];
 };
 
+export type DetailedCopyGrade = CopyGrade & {
+  targetCharacters: number;
+  typedCharacters: number;
+  alignedCorrect: number;
+  insertions: number;
+  deletions: number;
+  substitutions: number;
+};
+
 /** Uppercases and removes whitespace so copy answers compare cleanly. */
 export function normalizeCopy(text: string): string {
   return text.toUpperCase().replace(/\s+/g, "");
@@ -34,44 +43,89 @@ export function gradeCopy(target: string, answer: string): CopyGrade {
  * confined to one target position instead of shifting all later characters.
  */
 export function gradeCopyAligned(target: string, answer: string): CopyGrade {
+  const detailed = gradeCopyDetailed(target, answer);
+  return { correct: detailed.correct, perChar: detailed.perChar };
+}
+
+/**
+ * Detailed deterministic edit-distance alignment. Distance calculation keeps
+ * only two rows while one byte per matrix cell preserves the chosen backtrack
+ * direction, keeping long continuous-copy streams responsive and bounded.
+ */
+export function gradeCopyDetailed(
+  target: string,
+  answer: string,
+): DetailedCopyGrade {
   const t = normalizeCopy(target);
   const a = normalizeCopy(answer);
   const n = t.length;
   const m = a.length;
 
-  // Edit-distance DP table.
-  const dp: number[][] = Array.from({ length: n + 1 }, () =>
-    new Array<number>(m + 1).fill(0),
-  );
-  for (let i = 0; i <= n; i++) dp[i][0] = i;
-  for (let j = 0; j <= m; j++) dp[0][j] = j;
+  // 0 = diagonal, 1 = target deletion, 2 = answer insertion.
+  const directions = new Uint8Array(n * m);
+  let previous = new Uint32Array(m + 1);
+  let current = new Uint32Array(m + 1);
+  for (let j = 0; j <= m; j++) previous[j] = j;
   for (let i = 1; i <= n; i++) {
+    current[0] = i;
     for (let j = 1; j <= m; j++) {
       const cost = t[i - 1] === a[j - 1] ? 0 : 1;
-      dp[i][j] = Math.min(
-        dp[i - 1][j] + 1,
-        dp[i][j - 1] + 1,
-        dp[i - 1][j - 1] + cost,
-      );
+      const diagonal = previous[j - 1] + cost;
+      const deletion = previous[j] + 1;
+      const insertion = current[j - 1] + 1;
+      const index = (i - 1) * m + (j - 1);
+      if (diagonal <= deletion && diagonal <= insertion) {
+        current[j] = diagonal;
+        directions[index] = 0;
+      } else if (deletion <= insertion) {
+        current[j] = deletion;
+        directions[index] = 1;
+      } else {
+        current[j] = insertion;
+        directions[index] = 2;
+      }
     }
+    [previous, current] = [current, previous];
   }
 
   // Backtrack, crediting target positions that align to an equal answer char.
   const perChar = new Array<boolean>(n).fill(false);
+  let alignedCorrect = 0;
+  let insertions = 0;
+  let deletions = 0;
+  let substitutions = 0;
   let i = n;
   let j = m;
   while (i > 0 && j > 0) {
-    const cost = t[i - 1] === a[j - 1] ? 0 : 1;
-    if (dp[i][j] === dp[i - 1][j - 1] + cost) {
-      if (cost === 0) perChar[i - 1] = true;
+    const direction = directions[(i - 1) * m + (j - 1)];
+    if (direction === 0) {
+      if (t[i - 1] === a[j - 1]) {
+        perChar[i - 1] = true;
+        alignedCorrect += 1;
+      } else {
+        substitutions += 1;
+      }
       i -= 1;
       j -= 1;
-    } else if (dp[i][j] === dp[i - 1][j] + 1) {
-      i -= 1; // target character dropped from the answer
+    } else if (direction === 1) {
+      deletions += 1;
+      i -= 1;
     } else {
-      j -= 1; // extra character inserted in the answer
+      insertions += 1;
+      j -= 1;
     }
   }
+  deletions += i;
+  insertions += j;
 
-  return { correct: a === t, perChar };
+  return {
+    correct: a === t,
+    perChar,
+    targetCharacters: n,
+    typedCharacters: m,
+    alignedCorrect,
+    insertions,
+    deletions,
+    substitutions,
+  };
 }

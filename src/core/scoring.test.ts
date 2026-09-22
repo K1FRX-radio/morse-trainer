@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { gradeCopy, gradeCopyAligned, normalizeCopy } from "./scoring.ts";
+import {
+  gradeCopy,
+  gradeCopyAligned,
+  gradeCopyDetailed,
+  normalizeCopy,
+} from "./scoring.ts";
 
 describe("normalizeCopy", () => {
   it("uppercases and strips whitespace", () => {
@@ -107,5 +112,41 @@ describe("gradeCopyAligned repeated and ambiguous characters", () => {
     expect(gradeCopyAligned("KMM", "KM")).toEqual(
       gradeCopyAligned("KMM", "KM"),
     );
+  });
+});
+
+describe("gradeCopyDetailed", () => {
+  it("counts insertions, deletions, substitutions, and aligned matches", () => {
+    expect(gradeCopyDetailed("KMUR", "KXMUR")).toMatchObject({
+      targetCharacters: 4,
+      typedCharacters: 5,
+      alignedCorrect: 4,
+      insertions: 1,
+      deletions: 0,
+      substitutions: 0,
+      perChar: [true, true, true, true],
+    });
+    expect(gradeCopyDetailed("KMUR", "KMR")).toMatchObject({
+      alignedCorrect: 3,
+      insertions: 0,
+      deletions: 1,
+      substitutions: 0,
+      perChar: [true, true, false, true],
+    });
+    expect(gradeCopyDetailed("KMU", "KXU")).toMatchObject({
+      alignedCorrect: 2,
+      insertions: 0,
+      deletions: 0,
+      substitutions: 1,
+      perChar: [true, false, true],
+    });
+  });
+
+  it("preserves repeated-character tie-breaking", () => {
+    expect(gradeCopyDetailed("KMM", "KM")).toMatchObject({
+      perChar: [true, false, true],
+      alignedCorrect: 2,
+      deletions: 1,
+    });
   });
 });
