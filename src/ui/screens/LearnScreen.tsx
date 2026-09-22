@@ -7,13 +7,11 @@ import {
 } from "react";
 import { encodeCharacter, isSupportedCharacter } from "../../core/morse.ts";
 import { useLearnSession } from "../hooks/useLearnSession.ts";
-import { SendPad } from "../components/SendPad.tsx";
 
 const PROMPTS: Record<string, string> = {
   "copy-character": "Copy the character you hear",
   "copy-group": "Copy the group you hear",
   "copy-word": "Copy the word you hear",
-  "send-character": "Send this character",
 };
 
 function sanitize(value: string): string {
@@ -28,33 +26,17 @@ export function LearnScreen() {
     learn.actions;
 
   const [value, setValue] = useState("");
-  const [decoded, setDecoded] = useState("");
-  const [sendReset, setSendReset] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const isCopy =
-    exercise?.direction === "rx" && exercise.type !== "introduce";
+  const isCopy = exercise?.direction === "rx" && exercise.type !== "introduce";
 
   useEffect(() => {
     setValue("");
-    setDecoded("");
-    setSendReset((n) => n + 1);
     if (isCopy) {
       // Focus so physical and on-screen keyboards go straight to the answer.
       inputRef.current?.focus();
     }
   }, [exercise, isCopy]);
-
-  // Sending auto-submits as correct as soon as the decode matches the target.
-  useEffect(() => {
-    if (
-      exercise?.type === "send-character" &&
-      !feedback &&
-      decoded.trim().toUpperCase() === exercise.target
-    ) {
-      record(true);
-    }
-  }, [decoded, exercise, feedback, record]);
 
   // Checkpoint: refocus and clear the input for each new item.
   useEffect(() => {
@@ -86,9 +68,18 @@ export function LearnScreen() {
   }
 
   function onInputKeyDown(event: KeyboardEvent<HTMLInputElement>) {
-    if (event.key !== "Enter" || !exercise || feedback) return;
+    if (event.key !== "Enter" || event.repeat) return;
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (!exercise || feedback) return;
     if (exercise.type === "copy-word" || exercise.type === "copy-group") {
       record(value);
+    }
+  }
+
+  // Keep focus in the answer field so keystrokes are never lost mid-exercise.
+  function retainFocus() {
+    if ((isCopy && !feedback) || learn.phase === "checkpoint") {
+      window.setTimeout(() => inputRef.current?.focus(), 0);
     }
   }
 
@@ -195,6 +186,7 @@ export function LearnScreen() {
           placeholder="listen…"
           value={value}
           onChange={onCheckpointChange}
+          onBlur={retainFocus}
           aria-label="Checkpoint answer"
         />
       </section>
@@ -274,7 +266,6 @@ export function LearnScreen() {
         <div className="practice">
           <p className="field__label">
             {PROMPTS[exercise.type]}
-            {exercise.type === "send-character" ? `: ${exercise.target}` : ""}
             {exercise.type === "copy-group"
               ? ` · ${exercise.target.length} characters`
               : ""}
@@ -290,64 +281,40 @@ export function LearnScreen() {
             </div>
           )}
 
-          {isCopy ? (
-            <>
-              <input
-                ref={inputRef}
-                className="learn__answer"
-                type="text"
-                inputMode="text"
-                autoComplete="off"
-                autoCapitalize="characters"
-                spellCheck={false}
-                maxLength={
-                  exercise.type === "copy-character"
-                    ? 1
-                    : exercise.type === "copy-group"
-                      ? exercise.target.length
-                      : undefined
-                }
-                placeholder={
-                  exercise.type === "copy-character"
-                    ? "type the letter"
-                    : exercise.type === "copy-group"
-                      ? `type ${exercise.target.length} characters`
-                      : "type the word, then Enter"
-                }
-                value={value}
-                onChange={onInputChange}
-                onKeyDown={onInputKeyDown}
-                disabled={!!feedback}
-                aria-label="Your copy"
-              />
-              <div className="practice__controls">
-                <button type="button" className="tab" onClick={replay}>
-                  Replay
-                </button>
-              </div>
-            </>
-          ) : (
-            <>
-              <SendPad onDecode={setDecoded} resetKey={sendReset} />
-              <div className="send__decoded" role="status" aria-live="polite">
-                <span className="field__label">Decoded</span>
-                <span className="send__decoded-text">{decoded || "\u00a0"}</span>
-              </div>
-              {!feedback && (
-                <div className="practice__controls">
-                  <button
-                    type="button"
-                    className="tab"
-                    onClick={() =>
-                      record(decoded.trim().toUpperCase() === exercise.target)
-                    }
-                  >
-                    Submit
-                  </button>
-                </div>
-              )}
-            </>
-          )}
+          <input
+            ref={inputRef}
+            className="learn__answer"
+            type="text"
+            inputMode="text"
+            autoComplete="off"
+            autoCapitalize="characters"
+            spellCheck={false}
+            maxLength={
+              exercise.type === "copy-character"
+                ? 1
+                : exercise.type === "copy-group"
+                  ? exercise.target.length
+                  : undefined
+            }
+            placeholder={
+              exercise.type === "copy-character"
+                ? "type the letter"
+                : exercise.type === "copy-group"
+                  ? `type ${exercise.target.length} characters`
+                  : "type the word, then Enter"
+            }
+            value={value}
+            onChange={onInputChange}
+            onKeyDown={onInputKeyDown}
+            onBlur={retainFocus}
+            disabled={!!feedback}
+            aria-label="Your copy"
+          />
+          <div className="practice__controls">
+            <button type="button" className="tab" onClick={replay}>
+              Replay
+            </button>
+          </div>
 
           {feedback && (
             <div className="learn__feedback" role="status">

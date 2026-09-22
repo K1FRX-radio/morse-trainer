@@ -8,12 +8,7 @@ import type { LearnExerciseType } from "../core/exercises.ts";
 import type { Rng } from "../core/rng.ts";
 import type { Direction } from "../core/types.ts";
 
-export type LessonPhase =
-  | "introduce"
-  | "acquire"
-  | "contrast"
-  | "groups"
-  | "send";
+export type LessonPhase = "introduce" | "acquire" | "contrast" | "groups";
 
 export type PlannedExercise = {
   type: LearnExerciseType;
@@ -38,8 +33,6 @@ export type LessonConfig = {
   groupCount: number;
   groupMinLen: number;
   groupMaxLen: number;
-  /** Sending cards near the end of the lesson. */
-  sendCount: number;
   /** Cap on immediate repeat cards inserted after misses. */
   maxMissRepeats: number;
 };
@@ -50,7 +43,6 @@ export const DEFAULT_LESSON_CONFIG: LessonConfig = {
   groupCount: 4,
   groupMinLen: 2,
   groupMaxLen: 3,
-  sendCount: 2,
   maxMissRepeats: 6,
 };
 
@@ -158,12 +150,6 @@ export class LessonPlan {
         const group = randomGroup(active, len, focus, rng);
         q.push(this.card("copy-group", group, "rx", "groups", focus));
       }
-    }
-
-    // A few sending drills near the end.
-    for (let i = 0; i < this.config.sendCount; i++) {
-      const focus = rng() < 0.6 ? pick(focusPool, rng) : pick(active, rng);
-      q.push(this.card("send-character", focus, "tx", "send", focus));
     }
 
     return q;

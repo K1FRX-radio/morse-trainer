@@ -69,12 +69,11 @@ describe("LessonPlan first lesson", () => {
     }
   });
 
-  it("emits sending drills with tx direction", () => {
+  it("contains no sending cards (Learn is RX-only)", () => {
     const cards = drain(firstLesson());
-    const sends = cards.filter((c) => c.type === "send-character");
-    expect(sends.length).toBe(DEFAULT_LESSON_CONFIG.sendCount);
-    for (const card of sends) {
-      expect(card.direction).toBe("tx");
+    for (const card of cards) {
+      expect(card.direction).toBe("rx");
+      expect(card.type).not.toBe("send-character");
     }
   });
 
