@@ -25,6 +25,45 @@ function firstLesson(seed = 1): LessonPlan {
   });
 }
 
+function laterLesson(seed = 1): LessonPlan {
+  return new LessonPlan({
+    active: ["K", "M", "U"],
+    introduced: ["K", "M"],
+    newest: "U",
+    rng: createRng(seed),
+  });
+}
+
+function play(
+  plan: LessonPlan,
+  result: (
+    card: PlannedExercise,
+    cleanAttempt: number,
+  ) => {
+    correct: boolean;
+    clean?: boolean;
+  },
+): { cards: PlannedExercise[]; capped: string[] } {
+  const cards: PlannedExercise[] = [];
+  const capped: string[] = [];
+  let cleanAttempt = 0;
+  let card = plan.next();
+  while (card) {
+    cards.push(card);
+    if (card.type !== "introduce") {
+      const outcome = result(card, cleanAttempt);
+      if (!card.assisted && outcome.clean !== false) cleanAttempt += 1;
+      const update = plan.reportResult(
+        outcome.correct,
+        outcome.clean ?? !card.assisted,
+      );
+      if (update.acquisitionCapped) capped.push(update.acquisitionCapped);
+    }
+    card = plan.next();
+  }
+  return { cards, capped };
+}
+
 describe("LessonPlan first lesson", () => {
   it("introduces every new character exactly once", () => {
     const cards = drain(firstLesson());
@@ -121,6 +160,188 @@ describe("LessonPlan misses", () => {
     const before = plan.length;
     plan.reportResult(false); // miss on the assisted card must not recurse
     expect(plan.length).toBe(before);
+  });
+});
+
+describe("LessonPlan adaptive acquisition", () => {
+  it("gives K and M equal clean minimum coverage", () => {
+    const { cards } = play(firstLesson(), () => ({ correct: true }));
+    const acquisition = cards.filter(
+      (card) => card.phase === "acquire" && !card.assisted,
+    );
+    expect(acquisition.filter((card) => card.focus === "K")).toHaveLength(
+      DEFAULT_LESSON_CONFIG.acquireMinAttempts,
+    );
+    expect(acquisition.filter((card) => card.focus === "M")).toHaveLength(
+      DEFAULT_LESSON_CONFIG.acquireMinAttempts,
+    );
+  });
+
+  it("exits after the minimum when recent performance is clean", () => {
+    const { cards, capped } = play(laterLesson(), () => ({ correct: true }));
+    expect(
+      cards.filter((card) => card.phase === "acquire" && !card.assisted),
+    ).toHaveLength(DEFAULT_LESSON_CONFIG.acquireMinAttempts);
+    expect(capped).toEqual([]);
+  });
+
+  it("extends weak acquisition until the recent criterion is met", () => {
+    const outcomes = [false, false, false, true, true, true, true, true, true];
+    let acquisitionAttempt = 0;
+    const { cards, capped } = play(laterLesson(), (card) => {
+      if (card.phase !== "acquire" || card.assisted) return { correct: true };
+      const correct = outcomes[acquisitionAttempt] ?? true;
+      acquisitionAttempt += 1;
+      return { correct };
+    });
+    expect(
+      cards.filter((card) => card.phase === "acquire" && !card.assisted),
+    ).toHaveLength(9);
+    expect(capped).toEqual([]);
+  });
+
+  it("caps persistently weak acquisition", () => {
+    const { cards, capped } = play(laterLesson(), (card) => ({
+      correct: card.assisted,
+    }));
+    expect(
+      cards.filter((card) => card.phase === "acquire" && !card.assisted),
+    ).toHaveLength(DEFAULT_LESSON_CONFIG.acquireMaxAttempts);
+    expect(capped).toEqual(["U"]);
+  });
+
+  it("replaces replayed cards instead of counting them toward the minimum", () => {
+    let replayed = false;
+    const { cards } = play(laterLesson(), (card) => {
+      if (card.phase === "acquire" && !card.assisted && !replayed) {
+        replayed = true;
+        return { correct: true, clean: false };
+      }
+      return { correct: true };
+    });
+    expect(
+      cards.filter((card) => card.phase === "acquire" && !card.assisted),
+    ).toHaveLength(DEFAULT_LESSON_CONFIG.acquireMinAttempts + 1);
+  });
+
+  it("keeps assisted reinforcement outside clean acquisition counts", () => {
+    let missed = false;
+    const { cards } = play(laterLesson(), (card) => {
+      if (card.phase === "acquire" && !card.assisted && !missed) {
+        missed = true;
+        return { correct: false };
+      }
+      return { correct: true };
+    });
+    expect(
+      cards.filter((card) => card.phase === "acquire" && !card.assisted),
+    ).toHaveLength(DEFAULT_LESSON_CONFIG.acquireMinAttempts);
+    expect(
+      cards.filter((card) => card.phase === "acquire" && card.assisted),
+    ).toHaveLength(1);
+  });
+
+  it("is deterministic for the same seed and outcomes", () => {
+    const run = () =>
+      play(laterLesson(19), (card) => ({ correct: card.assisted })).cards;
+    expect(run()).toEqual(run());
+  });
+});
+
+describe("LessonPlan adaptive contrast", () => {
+  it("runs the configured minimum and balances the initial K/M pair", () => {
+    const { cards } = play(firstLesson(4), () => ({ correct: true }));
+    const contrast = cards.filter(
+      (card) => card.phase === "contrast" && !card.assisted,
+    );
+    expect(contrast).toHaveLength(DEFAULT_LESSON_CONFIG.contrastMinAttempts);
+    expect(contrast.filter((card) => card.target === "K")).toHaveLength(8);
+    expect(contrast.filter((card) => card.target === "M")).toHaveLength(8);
+  });
+
+  it("extends weak contrast to its configured maximum", () => {
+    const { cards } = play(firstLesson(4), (card) => ({
+      correct: card.phase !== "contrast" || card.assisted,
+    }));
+    expect(
+      cards.filter((card) => card.phase === "contrast" && !card.assisted),
+    ).toHaveLength(DEFAULT_LESSON_CONFIG.contrastMaxAttempts);
+  });
+
+  it("replaces replayed contrast cards instead of counting them", () => {
+    let replayed = false;
+    const { cards } = play(firstLesson(4), (card) => {
+      if (card.phase === "contrast" && !card.assisted && !replayed) {
+        replayed = true;
+        return { correct: true, clean: false };
+      }
+      return { correct: true };
+    });
+    expect(
+      cards.filter((card) => card.phase === "contrast" && !card.assisted),
+    ).toHaveLength(DEFAULT_LESSON_CONFIG.contrastMinAttempts + 1);
+  });
+
+  it("avoids runs longer than two and includes every early active character", () => {
+    const plan = new LessonPlan({
+      active: ["K", "M", "U", "R", "E"],
+      introduced: ["K", "M", "U", "R", "E"],
+      newest: "E",
+      review: ["K"],
+      weak: ["M"],
+      rng: createRng(11),
+    });
+    const contrast = drain(plan).filter((card) => card.phase === "contrast");
+    expect(new Set(contrast.map((card) => card.target))).toEqual(
+      new Set(["K", "M", "U", "R", "E"]),
+    );
+    for (let index = 2; index < contrast.length; index++) {
+      expect(
+        contrast[index].target === contrast[index - 1].target &&
+          contrast[index].target === contrast[index - 2].target,
+      ).toBe(false);
+    }
+  });
+
+  it("never omits a review character from the mixed minimum", () => {
+    const active = "KMURESNAPTLIJZFOYVGC".split("");
+    const review = active.at(-1) ?? "C";
+    const plan = new LessonPlan({
+      active,
+      introduced: active,
+      newest: review,
+      review: [review],
+      rng: createRng(2),
+    });
+    const contrast = drain(plan).filter((card) => card.phase === "contrast");
+    expect(contrast.some((card) => card.target === review)).toBe(true);
+  });
+
+  it("weights newest, review, and weak characters above ordinary characters", () => {
+    const totals = new Map<string, number>();
+    for (let seed = 1; seed <= 100; seed++) {
+      const plan = new LessonPlan({
+        active: ["K", "M", "U", "R", "E"],
+        introduced: ["K", "M", "U", "R", "E"],
+        newest: "E",
+        review: ["K"],
+        weak: ["M"],
+        rng: createRng(seed),
+      });
+      for (const card of drain(plan)) {
+        if (card.phase === "contrast") {
+          totals.set(card.target, (totals.get(card.target) ?? 0) + 1);
+        }
+      }
+    }
+
+    const emphasized =
+      ((totals.get("K") ?? 0) +
+        (totals.get("M") ?? 0) +
+        (totals.get("E") ?? 0)) /
+      3;
+    const ordinary = ((totals.get("U") ?? 0) + (totals.get("R") ?? 0)) / 2;
+    expect(emphasized).toBeGreaterThan(ordinary);
   });
 });
 

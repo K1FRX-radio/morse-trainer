@@ -1,7 +1,7 @@
 // Phase-based Learn lesson plan. Replaces random exercise mixing with a
 // deterministic acquisition sequence: introduce every un-introduced active
 // character, drill it in isolation (repeating misses), then contrast within the
-// active set, short groups, and a few sends. Pure and seedable. Advancement is
+// active set and short groups. Pure and seedable. Advancement is
 // NOT decided here; a separate checkpoint (later stage) drives unlocks.
 
 import type { LearnExerciseType } from "../core/exercises.ts";
@@ -26,28 +26,35 @@ export type PlannedExercise = {
 };
 
 export type LessonConfig = {
-  /** Isolated reps of each new character right after its introduction. */
-  acquirePerNewChar: number;
-  /** Mixed isolated recognition cards drawn from the active set. */
-  contrastCount: number;
+  acquireMinAttempts: number;
+  acquireRecentWindow: number;
+  acquireMinCorrect: number;
+  acquireMaxAttempts: number;
+  contrastMinAttempts: number;
+  contrastMaxAttempts: number;
+  contrastRecentWindow: number;
+  contrastMinAccuracy: number;
   /** Short group cards. */
   groupCount: number;
   groupMinLen: number;
   groupMaxLen: number;
   /** Isolated unassisted prompts each pending review character receives. */
   remediationPrompts: number;
-  /** Cap on immediate repeat cards inserted after misses. */
-  maxMissRepeats: number;
 };
 
 export const DEFAULT_LESSON_CONFIG: LessonConfig = {
-  acquirePerNewChar: 4,
-  contrastCount: 6,
+  acquireMinAttempts: 8,
+  acquireRecentWindow: 8,
+  acquireMinCorrect: 6,
+  acquireMaxAttempts: 14,
+  contrastMinAttempts: 16,
+  contrastMaxAttempts: 24,
+  contrastRecentWindow: 12,
+  contrastMinAccuracy: 0.8,
   groupCount: 4,
   groupMinLen: 2,
   groupMaxLen: 3,
   remediationPrompts: 3,
-  maxMissRepeats: 6,
 };
 
 type LessonOptions = {
@@ -59,6 +66,8 @@ type LessonOptions = {
   newest: string;
   /** Active characters flagged for review (targeted remediation). */
   review?: Iterable<string>;
+  /** Active characters with weak recent performance. */
+  weak?: Iterable<string>;
   rng: Rng;
   config?: LessonConfig;
 };
@@ -87,15 +96,23 @@ export class LessonPlan {
   private readonly queue: PlannedExercise[];
   private readonly config: LessonConfig;
   private readonly newest: string;
+  private readonly active: readonly string[];
+  private readonly rng: Rng;
   private readonly reviewChars: string[];
+  private readonly weakChars: Set<string>;
+  private readonly acquisitionResults = new Map<string, boolean[]>();
+  private readonly contrastResults: boolean[] = [];
+  private readonly contrastCounts = new Map<string, number>();
+  private readonly contrastTargets: string[] = [];
   private cursor = 0;
-  private insertedRepeats = 0;
 
   readonly newlyIntroduced: string[];
 
   constructor(options: LessonOptions) {
     this.config = options.config ?? DEFAULT_LESSON_CONFIG;
     this.newest = options.newest;
+    this.active = options.active;
+    this.rng = options.rng;
     const introduced = new Set(options.introduced);
     const active = options.active;
     const newChars = active.filter((char) => !introduced.has(char));
@@ -103,6 +120,7 @@ export class LessonPlan {
     this.reviewChars = active.filter(
       (char) => reviewSet.has(char) && !newChars.includes(char),
     );
+    this.weakChars = new Set(options.weak ?? []);
     this.newlyIntroduced = newChars;
     this.queue = this.build(active, newChars, options.rng);
   }
@@ -138,7 +156,7 @@ export class LessonPlan {
     // Introduce each new character, then drill it in isolation.
     for (const char of newChars) {
       q.push(this.card("introduce", char, "rx", "introduce", char));
-      for (let i = 0; i < this.config.acquirePerNewChar; i++) {
+      for (let i = 0; i < this.config.acquireMinAttempts; i++) {
         q.push(this.card("copy-character", char, "rx", "acquire", char));
       }
     }
@@ -150,10 +168,10 @@ export class LessonPlan {
       }
     }
 
-    // Mixed isolated recognition across the active set, favoring new chars.
-    for (let i = 0; i < this.config.contrastCount; i++) {
-      const focus = rng() < 0.6 ? pick(focusPool, rng) : pick(active, rng);
-      q.push(this.card("copy-character", focus, "rx", "contrast", focus));
+    // Mixed isolated recognition across the active set. Further cards are
+    // inserted from reportResult when recent clean performance remains weak.
+    for (let i = 0; i < this.config.contrastMinAttempts; i++) {
+      q.push(this.nextContrastCard());
     }
 
     // Short groups with a ramping length, each containing the focus character.
@@ -190,17 +208,78 @@ export class LessonPlan {
    * Reports the result of the exercise just returned by next(). A missed
    * isolated recognition card inserts one immediate repeat, up to the cap.
    */
-  reportResult(correct: boolean): void {
+  reportResult(correct: boolean, clean = true): { acquisitionCapped?: string } {
     const justDone = this.queue[this.cursor - 1];
+    if (!justDone) return {};
+
+    let acquisitionCapped: string | undefined;
+    if (justDone.type === "copy-character" && !justDone.assisted) {
+      if (!clean) {
+        this.queue.splice(
+          this.cursor,
+          0,
+          this.card(
+            "copy-character",
+            justDone.target,
+            "rx",
+            justDone.phase,
+            justDone.focus,
+          ),
+        );
+      } else if (justDone.phase === "acquire") {
+        const results = this.acquisitionResults.get(justDone.focus) ?? [];
+        results.push(correct);
+        this.acquisitionResults.set(justDone.focus, results);
+        if (!this.hasPendingCleanCard("acquire", justDone.focus)) {
+          const recent = results.slice(-this.config.acquireRecentWindow);
+          const meetsCriterion =
+            results.length >= this.config.acquireMinAttempts &&
+            recent.filter(Boolean).length >= this.config.acquireMinCorrect;
+          if (
+            !meetsCriterion &&
+            results.length < this.config.acquireMaxAttempts
+          ) {
+            this.queue.splice(
+              this.cursor,
+              0,
+              this.card(
+                "copy-character",
+                justDone.focus,
+                "rx",
+                "acquire",
+                justDone.focus,
+              ),
+            );
+          } else if (!meetsCriterion) {
+            acquisitionCapped = justDone.focus;
+          }
+        }
+      } else if (justDone.phase === "contrast") {
+        this.contrastResults.push(correct);
+        if (!this.hasPendingCleanCard("contrast")) {
+          const recent = this.contrastResults.slice(
+            -this.config.contrastRecentWindow,
+          );
+          const accuracy =
+            recent.filter(Boolean).length / Math.max(1, recent.length);
+          if (
+            this.contrastResults.length < this.config.contrastMinAttempts ||
+            (accuracy < this.config.contrastMinAccuracy &&
+              this.contrastResults.length < this.config.contrastMaxAttempts)
+          ) {
+            this.queue.splice(this.cursor, 0, this.nextContrastCard());
+          }
+        }
+      }
+    }
+
     if (
       !correct &&
-      justDone &&
       justDone.type === "copy-character" &&
       (justDone.phase === "acquire" ||
         justDone.phase === "contrast" ||
         justDone.phase === "remediate") &&
-      !justDone.assisted &&
-      this.insertedRepeats < this.config.maxMissRepeats
+      !justDone.assisted
     ) {
       this.queue.splice(
         this.cursor,
@@ -214,8 +293,66 @@ export class LessonPlan {
           true,
         ),
       );
-      this.insertedRepeats += 1;
     }
+    return acquisitionCapped ? { acquisitionCapped } : {};
+  }
+
+  private hasPendingCleanCard(phase: LessonPhase, focus?: string): boolean {
+    return this.queue
+      .slice(this.cursor)
+      .some(
+        (card) =>
+          card.phase === phase &&
+          !card.assisted &&
+          (focus === undefined || card.focus === focus),
+      );
+  }
+
+  private nextContrastCard(): PlannedExercise {
+    const focus = this.pickContrastFocus();
+    this.contrastTargets.push(focus);
+    this.contrastCounts.set(focus, (this.contrastCounts.get(focus) ?? 0) + 1);
+    return this.card("copy-character", focus, "rx", "contrast", focus);
+  }
+
+  private pickContrastFocus(): string {
+    const previous = this.contrastTargets.at(-1);
+    const repeated =
+      previous !== undefined && this.contrastTargets.at(-2) === previous;
+    let candidates = repeated
+      ? this.active.filter((character) => character !== previous)
+      : [...this.active];
+    if (candidates.length === 0) candidates = [...this.active];
+
+    if (this.active.length === 2) {
+      const minimum = Math.min(
+        ...candidates.map(
+          (character) => this.contrastCounts.get(character) ?? 0,
+        ),
+      );
+      candidates = candidates.filter(
+        (character) => (this.contrastCounts.get(character) ?? 0) === minimum,
+      );
+    } else {
+      const required = candidates.filter((character) => {
+        if ((this.contrastCounts.get(character) ?? 0) > 0) return false;
+        return (
+          this.reviewChars.includes(character) ||
+          this.active.length <= this.config.contrastMinAttempts
+        );
+      });
+      if (required.length > 0) candidates = required;
+    }
+
+    const weighted = candidates.flatMap((character) => {
+      const weight =
+        1 +
+        (character === this.newest ? 1 : 0) +
+        (this.reviewChars.includes(character) ? 2 : 0) +
+        (this.weakChars.has(character) ? 1 : 0);
+      return new Array<string>(weight).fill(character);
+    });
+    return pick(weighted, this.rng);
   }
 
   get length(): number {

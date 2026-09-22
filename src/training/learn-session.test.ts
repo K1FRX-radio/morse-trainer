@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_CURRICULUM_CONFIG } from "../content/curriculum-data.ts";
-import { createInitialState } from "../core/curriculum.ts";
+import { createInitialState, forceUnlockNext } from "../core/curriculum.ts";
 import { createRng } from "../core/rng.ts";
 import { LearnSession } from "./learn-session.ts";
 
@@ -332,5 +332,32 @@ describe("LearnSession remediation", () => {
     session.submit(group?.target ?? "");
     expect(progress!.needsReview).toBe(true);
     expect(progress!.reviewStreak).toBe(2);
+  });
+});
+
+describe("LearnSession adaptive acquisition", () => {
+  it("marks a character for continued review after the acquisition cap", () => {
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    forceUnlockNext(state);
+    const session = new LearnSession({
+      state,
+      rng: createRng(3),
+      introduced: ["K", "M"],
+    });
+    session.start(0);
+
+    let card = session.next();
+    while (card && card.phase !== "contrast") {
+      if (card.type === "introduce") session.submit("");
+      else session.submit(card.assisted ? card.target : "");
+      card = session.next();
+    }
+
+    const newest = state.characters.find(
+      (character) => character.character === "U",
+    );
+    expect(newest?.needsReview).toBe(true);
+    expect(newest?.reviewStreak).toBe(0);
+    expect(card?.phase).toBe("contrast");
   });
 });

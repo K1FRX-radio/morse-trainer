@@ -6,6 +6,7 @@
 
 import {
   newestCharacter,
+  recentAccuracy,
   recordAttempt,
   recordReviewOutcome,
   reviewCharacters,
@@ -92,13 +93,21 @@ export class LearnSession {
       (() =>
         typeof performance !== "undefined" ? performance.now() : Date.now());
     this.config = options.sessionConfig ?? DEFAULT_SESSION_CONFIG;
+    const lessonConfig = options.lessonConfig ?? DEFAULT_LESSON_CONFIG;
     this.plan = new LessonPlan({
       active: unlockedCharacters(options.state),
       introduced: options.introduced ?? [],
       newest: newestCharacter(options.state)?.character ?? "",
       review: options.review ?? reviewCharacters(options.state),
+      weak: options.state.characters
+        .filter(
+          (character) =>
+            character.rx.recentResults.length > 0 &&
+            recentAccuracy(character.rx) < lessonConfig.contrastMinAccuracy,
+        )
+        .map((character) => character.character),
       rng: options.rng,
-      config: options.lessonConfig ?? DEFAULT_LESSON_CONFIG,
+      config: lessonConfig,
     });
   }
 
@@ -185,7 +194,16 @@ export class LearnSession {
         this.correctCount += 1;
       }
     }
-    this.plan.reportResult(correct);
+    const update = this.plan.reportResult(correct, !assisted);
+    if (update.acquisitionCapped) {
+      const progress = this.state.characters.find(
+        (character) => character.character === update.acquisitionCapped,
+      );
+      if (progress) {
+        progress.needsReview = true;
+        progress.reviewStreak = 0;
+      }
+    }
     return { exercise, correct };
   }
 
