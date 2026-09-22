@@ -39,6 +39,26 @@ export type AttemptOutcome = {
   correct: boolean;
 };
 
+export type LessonTransition = {
+  type: "transition";
+  id: "multi-character-copy";
+  title: "Ready for something longer?";
+  text: "You’ve learned the individual sounds. Now copy several characters without stopping between them.";
+  destinationPhase: "groups";
+  actionLabel: "Go";
+};
+
+export type LessonEvent = PlannedExercise | LessonTransition;
+
+const MULTI_CHARACTER_TRANSITION: LessonTransition = {
+  type: "transition",
+  id: "multi-character-copy",
+  title: "Ready for something longer?",
+  text: "You’ve learned the individual sounds. Now copy several characters without stopping between them.",
+  destinationPhase: "groups",
+  actionLabel: "Go",
+};
+
 export type SessionSummary = {
   activeMs: number;
   /** Cards completed, including introductions. */
@@ -72,7 +92,9 @@ export class LearnSession {
   private readonly config: SessionConfig;
   private readonly plan: LessonPlan;
 
-  private current: PlannedExercise | undefined;
+  private current: LessonEvent | undefined;
+  private pendingExercise: PlannedExercise | undefined;
+  private showedMultiCharacterTransition = false;
   private lastActivityAt: number | undefined;
   private paused = false;
   private activeMs = 0;
@@ -115,16 +137,52 @@ export class LearnSession {
     this.lastActivityAt = time;
   }
 
-  /** The next planned card, or undefined when the lesson is complete. */
-  next(): PlannedExercise | undefined {
+  /** The next lesson event, or undefined when the lesson is complete. */
+  next(): LessonEvent | undefined {
     this.accrue(this.now());
+    if (this.current?.type === "transition") {
+      return this.current;
+    }
     this.replayedThisCard = false;
-    this.current = this.plan.next();
+    const exercise = this.pendingExercise ?? this.plan.next();
+    this.pendingExercise = undefined;
+    if (exercise?.phase === "groups" && !this.showedMultiCharacterTransition) {
+      this.showedMultiCharacterTransition = true;
+      this.pendingExercise = exercise;
+      this.current = MULTI_CHARACTER_TRANSITION;
+      return this.current;
+    }
+    this.current = exercise;
     return this.current;
   }
 
   get currentExercise(): PlannedExercise | undefined {
+    return this.current?.type === "transition" ? undefined : this.current;
+  }
+
+  get currentEvent(): LessonEvent | undefined {
     return this.current;
+  }
+
+  get phaseLabel(): string | undefined {
+    const event = this.current;
+    if (!event) return undefined;
+    if (event.type === "transition") return "Single-character copy";
+    if (event.phase === "introduce" || event.phase === "acquire") {
+      return `Learning ${event.focus}`;
+    }
+    if (event.phase === "remediate") return `Reviewing ${event.focus}`;
+    if (event.phase === "contrast") return "Single-character copy";
+    return `${event.target.length}-character groups`;
+  }
+
+  /** A transition changes mode but records no card or mastery observation. */
+  continueTransition(): boolean {
+    if (this.current?.type !== "transition") {
+      return false;
+    }
+    this.current = undefined;
+    return true;
   }
 
   /** Marks the current card as replayed, so its result does not feed mastery. */
@@ -141,6 +199,9 @@ export class LearnSession {
     const exercise = this.current;
     if (!exercise) {
       throw new Error("submit called before next");
+    }
+    if (exercise.type === "transition") {
+      throw new Error("submit called for a transition");
     }
     this.accrue(this.now());
     this.cards += 1;

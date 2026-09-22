@@ -18,6 +18,8 @@ import {
 } from "../../training/checkpoint.ts";
 import {
   LearnSession,
+  type LessonEvent,
+  type LessonTransition,
   type SessionSummary,
 } from "../../training/learn-session.ts";
 import type { PlannedExercise } from "../../training/lesson-plan.ts";
@@ -136,6 +138,10 @@ export function useLearnSession() {
   const [exercise, setExercise] = useState<PlannedExercise | undefined>(
     undefined,
   );
+  const [transition, setTransition] = useState<LessonTransition | undefined>(
+    undefined,
+  );
+  const [phaseLabel, setPhaseLabel] = useState<string | undefined>(undefined);
   const exerciseRef = useRef<PlannedExercise | undefined>(undefined);
   exerciseRef.current = exercise;
 
@@ -227,20 +233,30 @@ export function useLearnSession() {
     setSummary(session.end());
     saveIntroduced([...loadIntroduced(), ...session.completedIntroductions]);
     saveCurriculum(stateRef.current);
+    setExercise(undefined);
+    setTransition(undefined);
+    setPhaseLabel(undefined);
     setPhase("summary");
   }, [audio, clearHeldKeys]);
 
-  const showExercise = useCallback(
-    (card: PlannedExercise) => {
+  const showEvent = useCallback(
+    (event: LessonEvent) => {
       const token = (flowToken.current += 1);
       acceptedTokenRef.current = null;
       lockedRef.current = true;
       setInputReady(false);
-      setExercise(card);
       setFeedback(undefined);
       setAwaitingContinue(false);
-      if (card.type === "introduce") void runIntro(card.target, token);
-      else void presentPrompt(card.target, token);
+      setPhaseLabel(sessionRef.current?.phaseLabel);
+      if (event.type === "transition") {
+        setExercise(undefined);
+        setTransition(event);
+        return;
+      }
+      setTransition(undefined);
+      setExercise(event);
+      if (event.type === "introduce") void runIntro(event.target, token);
+      else void presentPrompt(event.target, token);
     },
     [runIntro, presentPrompt],
   );
@@ -253,8 +269,8 @@ export function useLearnSession() {
       endSession();
       return;
     }
-    showExercise(next);
-  }, [endSession, showExercise]);
+    showEvent(next);
+  }, [endSession, showEvent]);
   advanceRef.current = advance;
 
   const begin = useCallback(async () => {
@@ -277,9 +293,9 @@ export function useLearnSession() {
     setCheckpointResult(undefined);
     setPhase("exercise");
     const first = session.next();
-    if (first) showExercise(first);
+    if (first) showEvent(first);
     else endSession();
-  }, [audio, showExercise, endSession, clearHeldKeys]);
+  }, [audio, showEvent, endSession, clearHeldKeys]);
 
   // Records the answer, replays on a miss, and advances only after any
   // corrective playback finishes and while this prompt is still current.
@@ -369,6 +385,12 @@ export function useLearnSession() {
     if (ex?.type === "introduce") completeIntro(flowToken.current);
     else advanceRef.current();
   }, [completeIntro]);
+
+  const continueTransition = useCallback(() => {
+    if (sessionRef.current?.continueTransition()) {
+      advanceRef.current();
+    }
+  }, []);
 
   // --- Checkpoint mode -----------------------------------------------------
   const finishCheckpoint = useCallback(() => {
@@ -494,6 +516,8 @@ export function useLearnSession() {
   return {
     phase,
     exercise,
+    transition,
+    phaseLabel,
     feedback,
     awaitingContinue,
     summary,
@@ -520,6 +544,7 @@ export function useLearnSession() {
       acceptCheckpoint,
       replay,
       continueNow,
+      continueTransition,
       endSession,
       startCheckpoint,
       physicalKeyDown,

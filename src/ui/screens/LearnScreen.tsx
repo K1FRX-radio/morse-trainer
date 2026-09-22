@@ -29,6 +29,7 @@ export function LearnScreen() {
     acceptCheckpoint,
     replay,
     continueNow,
+    continueTransition,
     begin,
     endSession,
     startCheckpoint,
@@ -280,6 +281,33 @@ export function LearnScreen() {
     );
   }
 
+  if (learn.transition) {
+    return (
+      <section>
+        <div className="learn__top">
+          <span className="field__label" aria-live="polite">
+            {learn.phaseLabel}
+          </span>
+          <div className="learn__bar" aria-hidden>
+            <span style={{ width: "100%" }} />
+          </div>
+        </div>
+        <div className="learn__intro" aria-live="polite">
+          <h2>{learn.transition.title}</h2>
+          <p>{learn.transition.text}</p>
+          <button type="button" onClick={continueTransition} autoFocus>
+            {learn.transition.actionLabel}
+          </button>
+        </div>
+        <div className="practice__controls learn__end">
+          <button type="button" className="tab" onClick={endSession}>
+            End session
+          </button>
+        </div>
+      </section>
+    );
+  }
+
   if (!exercise) {
     return null;
   }
@@ -292,15 +320,15 @@ export function LearnScreen() {
   return (
     <section>
       <div className="learn__top">
-        <span className="field__label">
-          Character {learn.progress.current} · {learn.progress.unlocked}/
-          {learn.progress.total} unlocked
+        <span className="field__label" aria-live="polite">
+          {learn.phaseLabel}
         </span>
         <div className="learn__bar" aria-hidden>
           <span style={{ width: `${progressPct}%` }} />
         </div>
-        <span className="field__label">
-          {learn.completed}/{learn.total}
+        <span className="field__label" aria-label="Lesson card progress">
+          {learn.completed}/{learn.total} · {learn.progress.unlocked}/
+          {learn.progress.total} unlocked
         </span>
       </div>
 

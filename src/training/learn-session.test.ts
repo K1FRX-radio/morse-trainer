@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_CURRICULUM_CONFIG } from "../content/curriculum-data.ts";
 import { createInitialState, forceUnlockNext } from "../core/curriculum.ts";
 import { createRng } from "../core/rng.ts";
-import { LearnSession } from "./learn-session.ts";
+import { LearnSession, type LessonEvent } from "./learn-session.ts";
+import type { LessonPhase, PlannedExercise } from "./lesson-plan.ts";
 
 function freshSession(overrides = {}) {
   const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
@@ -17,18 +18,37 @@ function freshSession(overrides = {}) {
   return { session, state, advance: (ms: number) => (t += ms) };
 }
 
+function completeCorrect(session: LearnSession, event: LessonEvent): void {
+  if (event.type === "transition") {
+    session.continueTransition();
+  } else if (event.type === "introduce") {
+    session.submit("");
+  } else if (event.type === "send-character") {
+    session.submit(true);
+  } else {
+    session.submit(event.target);
+  }
+}
+
+function advanceToPhase(
+  session: LearnSession,
+  phase: LessonPhase,
+): PlannedExercise | undefined {
+  let event = session.next();
+  while (event) {
+    if (event.type !== "transition" && event.phase === phase) return event;
+    completeCorrect(session, event);
+    event = session.next();
+  }
+  return undefined;
+}
+
 /** Plays a full lesson submitting the correct answer to every card. */
 function playPerfect(session: LearnSession, advance: (ms: number) => void) {
   advance(1000);
   let card = session.next();
   while (card) {
-    if (card.type === "introduce") {
-      session.submit("");
-    } else if (card.type === "send-character") {
-      session.submit(true);
-    } else {
-      session.submit(card.target);
-    }
+    completeCorrect(session, card);
     advance(1000);
     card = session.next();
   }
@@ -79,7 +99,10 @@ describe("LearnSession practice", () => {
     let card = session.next();
     while (card) {
       const before = session.summary().attempts;
-      if (card.type === "introduce") {
+      if (card.type === "transition") {
+        session.continueTransition();
+        expect(session.summary().attempts).toBe(before);
+      } else if (card.type === "introduce") {
         intros += 1;
         session.submit("");
         expect(session.summary().attempts).toBe(before); // no scored attempt
@@ -108,12 +131,7 @@ describe("LearnSession practice", () => {
     const { session, advance } = freshSession();
     session.start(0);
     advance(1000);
-    let card = session.next();
-    while (card && card.phase !== "acquire") {
-      session.submit("");
-      advance(500);
-      card = session.next();
-    }
+    const card = advanceToPhase(session, "acquire");
     expect(card?.type).toBe("copy-character");
     const before = session.totalCards;
     session.submit(""); // wrong answer
@@ -132,21 +150,6 @@ describe("LearnSession practice", () => {
 });
 
 describe("LearnSession Stage A fixes", () => {
-  function advanceToPhase(session: LearnSession, phase: string) {
-    let card = session.next();
-    while (card && card.phase !== phase) {
-      session.submit(
-        card.type === "introduce"
-          ? ""
-          : card.type === "send-character"
-            ? true
-            : card.target,
-      );
-      card = session.next();
-    }
-    return card;
-  }
-
   it("persists only introductions actually completed", () => {
     const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
     const session = new LearnSession({ state, rng: createRng(1) });
@@ -183,7 +186,12 @@ describe("LearnSession Stage A fixes", () => {
     expect(acquire?.type).toBe("copy-character");
     session.submit(""); // miss -> inserts an assisted repeat
     const attemptsBefore = session.summary().attempts;
-    const assisted = session.next();
+    const assistedEvent = session.next();
+    expect(assistedEvent?.type).not.toBe("transition");
+    if (!assistedEvent || assistedEvent.type === "transition") {
+      throw new Error("expected assisted exercise");
+    }
+    const assisted = assistedEvent;
     expect(assisted?.assisted).toBe(true);
     const focus = assisted?.focus ?? "";
     const rxBefore =
@@ -217,12 +225,7 @@ describe("LearnSession Stage A fixes", () => {
 
 describe("LearnSession remediation", () => {
   function toAcquire(session: LearnSession) {
-    let card = session.next();
-    while (card && card.phase !== "acquire") {
-      session.submit(card.type === "introduce" ? "" : card.target);
-      card = session.next();
-    }
-    return card;
+    return advanceToPhase(session, "acquire");
   }
 
   it("does not clear a review flag from a replayed correct response", () => {
@@ -247,7 +250,12 @@ describe("LearnSession remediation", () => {
     const focus = state.characters.find((c) => c.character === card?.focus);
     focus!.needsReview = true;
     session.submit(""); // miss inserts an assisted repeat
-    const assisted = session.next();
+    const assistedEvent = session.next();
+    expect(assistedEvent?.type).not.toBe("transition");
+    if (!assistedEvent || assistedEvent.type === "transition") {
+      throw new Error("expected assisted exercise");
+    }
+    const assisted = assistedEvent;
     expect(assisted?.assisted).toBe(true);
     focus!.reviewStreak = 2;
     session.submit(assisted?.target ?? ""); // assisted correct must not count
@@ -266,7 +274,7 @@ describe("LearnSession remediation", () => {
     session.start(0);
     let card = session.next();
     while (card) {
-      session.submit(card.type === "introduce" ? "" : card.target); // all correct
+      completeCorrect(session, card);
       card = session.next();
     }
     expect(state.characters[0].needsReview).toBe(false);
@@ -282,11 +290,7 @@ describe("LearnSession remediation", () => {
     });
     session.start(0);
     // Answer only the first remediation prompt, then stop early.
-    let card = session.next();
-    while (card && card.phase !== "remediate") {
-      session.submit(card.type === "introduce" ? "" : card.target);
-      card = session.next();
-    }
+    const card = advanceToPhase(session, "remediate");
     session.submit(card?.target ?? ""); // one clean correct only
     expect(state.characters[0].needsReview).toBe(true);
   });
@@ -301,7 +305,11 @@ describe("LearnSession remediation", () => {
     });
     first.start(0);
     const card = first.next();
-    first.submit(card?.target ?? "");
+    expect(card?.type).not.toBe("transition");
+    if (!card || card.type === "transition") {
+      throw new Error("expected remediation exercise");
+    }
+    first.submit(card.target);
     first.end(1000);
 
     const next = new LearnSession({
@@ -310,7 +318,11 @@ describe("LearnSession remediation", () => {
       introduced: ["K", "M"],
     });
     next.start(0);
-    expect(next.next()?.phase).toBe("remediate");
+    const nextEvent = next.next();
+    expect(nextEvent?.type).not.toBe("transition");
+    if (nextEvent?.type !== "transition") {
+      expect(nextEvent?.phase).toBe("remediate");
+    }
     expect(state.characters[0].needsReview).toBe(true);
   });
 
@@ -318,11 +330,7 @@ describe("LearnSession remediation", () => {
     const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
     const session = new LearnSession({ state, rng: createRng(5) });
     session.start(0);
-    let group = session.next();
-    while (group && group.phase !== "groups") {
-      session.submit(group.type === "introduce" ? "" : group.target);
-      group = session.next();
-    }
+    const group = advanceToPhase(session, "groups");
     const progress = state.characters.find((character) =>
       group?.target.includes(character.character),
     );
@@ -346,11 +354,15 @@ describe("LearnSession adaptive acquisition", () => {
     });
     session.start(0);
 
-    let card = session.next();
-    while (card && card.phase !== "contrast") {
-      if (card.type === "introduce") session.submit("");
-      else session.submit(card.assisted ? card.target : "");
-      card = session.next();
+    let event = session.next();
+    while (
+      event &&
+      (event.type === "transition" || event.phase !== "contrast")
+    ) {
+      if (event.type === "transition") session.continueTransition();
+      else if (event.type === "introduce") session.submit("");
+      else session.submit(event.assisted ? event.target : "");
+      event = session.next();
     }
 
     const newest = state.characters.find(
@@ -358,6 +370,90 @@ describe("LearnSession adaptive acquisition", () => {
     );
     expect(newest?.needsReview).toBe(true);
     expect(newest?.reviewStreak).toBe(0);
-    expect(card?.phase).toBe("contrast");
+    expect(event?.phase).toBe("contrast");
+  });
+});
+
+describe("LearnSession transitions", () => {
+  function toMultiCharacterTransition(session: LearnSession) {
+    let event = session.next();
+    while (event && event.type !== "transition") {
+      completeCorrect(session, event);
+      event = session.next();
+    }
+    return event;
+  }
+
+  it("emits stable transition metadata before the first group", () => {
+    const { session } = freshSession();
+    session.start(0);
+
+    expect(toMultiCharacterTransition(session)).toEqual({
+      type: "transition",
+      id: "multi-character-copy",
+      title: "Ready for something longer?",
+      text: "You’ve learned the individual sounds. Now copy several characters without stopping between them.",
+      destinationPhase: "groups",
+      actionLabel: "Go",
+    });
+  });
+
+  it("records no card, attempt, or mastery data for a transition", () => {
+    const { session, state } = freshSession();
+    session.start(0);
+    const transition = toMultiCharacterTransition(session);
+    const before = session.summary();
+    const observations = state.characters.map(
+      (character) => character.rx.totalAttempts,
+    );
+
+    expect(() => session.submit("")).toThrow("submit called for a transition");
+    expect(session.summary()).toEqual(before);
+    session.continueTransition();
+    expect(session.summary()).toEqual(before);
+    expect(
+      state.characters.map((character) => character.rx.totalAttempts),
+    ).toEqual(observations);
+    expect(transition?.type).toBe("transition");
+  });
+
+  it("advances to the retained group only after the transition continues", () => {
+    const { session } = freshSession();
+    session.start(0);
+    toMultiCharacterTransition(session);
+
+    expect(session.currentExercise).toBeUndefined();
+    expect(session.next()?.type).toBe("transition");
+    expect(session.continueTransition()).toBe(true);
+    expect(session.continueTransition()).toBe(false);
+    const group = session.next();
+    expect(group?.type).toBe("copy-group");
+    if (group?.type === "copy-group") {
+      expect(group.phase).toBe("groups");
+    }
+  });
+
+  it("reports persistent labels from the current lesson event", () => {
+    const { session } = freshSession();
+    session.start(0);
+    const first = session.next();
+    expect(first?.type).toBe("introduce");
+    expect(session.phaseLabel).toBe("Learning K");
+
+    while (session.currentEvent?.type !== "transition") {
+      const event = session.currentEvent;
+      if (event) completeCorrect(session, event);
+      session.next();
+    }
+    expect(session.phaseLabel).toBe("Single-character copy");
+
+    session.continueTransition();
+    const group = session.next();
+    expect(group?.type).toBe("copy-group");
+    if (group?.type === "copy-group") {
+      expect(session.phaseLabel).toBe(
+        `${group.target.length}-character groups`,
+      );
+    }
   });
 });

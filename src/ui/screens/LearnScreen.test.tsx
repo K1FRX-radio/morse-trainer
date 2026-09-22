@@ -114,7 +114,9 @@ describe("LearnScreen input gating", () => {
     renderLearn(fake.audio);
     await toFirstCopy(fake);
 
-    const counterBefore = screen.getByText(/\/\d+$/).textContent;
+    const counterBefore = screen.getByLabelText(
+      "Lesson card progress",
+    ).textContent;
     const input = screen.getByLabelText("Your copy") as HTMLInputElement;
     // Simulate a held key firing several input events for one prompt.
     fireEvent.change(input, { target: { value: "K" } });
@@ -127,7 +129,9 @@ describe("LearnScreen input gating", () => {
     // The completed-card counter advanced by exactly one after the hold.
     await tick(500);
     await resolvePlay(fake); // next prompt audio
-    const counterAfter = screen.getByText(/\/\d+$/).textContent;
+    const counterAfter = screen.getByLabelText(
+      "Lesson card progress",
+    ).textContent;
     expect(counterAfter).not.toBe(counterBefore);
   });
 
@@ -344,6 +348,36 @@ describe("LearnScreen audio sequencing", () => {
     view.unmount();
     await flush();
     expect(fake.playCount()).toBe(0);
+  });
+
+  it("waits for Go before starting multi-character audio", async () => {
+    localStorage.setItem("k1frx.introduced.v1", JSON.stringify(["K", "M"]));
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+    fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
+    await flush();
+
+    for (let attempt = 0; attempt < 16; attempt++) {
+      const target = fake.pending[0]?.text;
+      expect(target).toMatch(/^[KM]$/);
+      await resolvePlay(fake);
+      fireEvent.change(screen.getByLabelText("Your copy"), {
+        target: { value: target },
+      });
+      await flush();
+      await tick(450);
+    }
+
+    expect(
+      screen.getByRole("heading", { name: "Ready for something longer?" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Single-character copy")).toBeInTheDocument();
+    expect(fake.playCount()).toBe(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Go" }));
+    await flush();
+    expect(screen.getByText("2-character groups")).toBeInTheDocument();
+    expect(fake.pending[0]?.text).toHaveLength(2);
   });
 });
 
