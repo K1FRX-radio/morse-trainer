@@ -6,7 +6,11 @@ import { LearnSession, type LessonEvent } from "./learn-session.ts";
 import type { LessonPhase, PlannedExercise } from "./lesson-plan.ts";
 
 function isExercise(event: LessonEvent): event is PlannedExercise {
-  return event.type !== "transition" && event.type !== "notification";
+  return (
+    event.type !== "transition" &&
+    event.type !== "notification" &&
+    event.type !== "continuous-copy"
+  );
 }
 
 function freshSession(overrides = {}) {
@@ -27,6 +31,11 @@ function completeCorrect(session: LearnSession, event: LessonEvent): void {
     session.continueTransition();
   } else if (event.type === "notification") {
     session.continueNotification();
+  } else if (event.type === "continuous-copy") {
+    session.completeContinuousCopy(
+      event.plan.target,
+      event.plan.scheduledDurationMs,
+    );
   } else if (event.type === "introduce") {
     session.submit("");
   } else if (event.type === "send-character") {
@@ -503,5 +512,98 @@ describe("LearnSession transitions", () => {
       expect(group.target).toHaveLength(3);
       expect(session.phaseLabel).toBe("3-character groups");
     }
+  });
+
+  it("transitions into one retained continuous-copy stream after groups", () => {
+    const { session } = freshSession({
+      introduced: ["K", "M"],
+      continuousCopyDurationMs: 1000,
+    });
+    session.start(0);
+
+    let event = session.next();
+    while (
+      event &&
+      !(event.type === "transition" && event.id === "continuous-copy")
+    ) {
+      completeCorrect(session, event);
+      event = session.next();
+    }
+
+    expect(event).toEqual({
+      type: "transition",
+      id: "continuous-copy",
+      title: "Ready for continuous copy?",
+      text: "Type continuously while you listen. Keep going if you miss a character; the sound will not pause.",
+      destinationPhase: "continuous-copy",
+      actionLabel: "Go",
+    });
+    expect(session.phaseLabel).toBe("3-character groups");
+    expect(session.next()).toBe(event);
+    expect(session.continueTransition()).toBe(true);
+
+    const stream = session.next();
+    expect(stream?.type).toBe("continuous-copy");
+    expect(session.phaseLabel).toBe("Continuous copy");
+    expect(session.next()).toBe(stream);
+    expect(session.currentExercise).toBeUndefined();
+    expect(() => session.submit("")).toThrow(
+      "submit called for a lesson interstitial",
+    );
+  });
+
+  it("applies a completed stream without unlocking or clearing remediation", () => {
+    const { session, state } = freshSession({
+      introduced: ["K", "M"],
+      continuousCopyDurationMs: 1000,
+    });
+    session.start(0);
+
+    let event = session.next();
+    while (event?.type !== "continuous-copy") {
+      if (!event) throw new Error("expected continuous copy");
+      completeCorrect(session, event);
+      event = session.next();
+    }
+    state.characters[0].needsReview = true;
+    state.characters[0].reviewStreak = 2;
+    const unlockedBefore = state.characters.length;
+    const result = session.completeContinuousCopy(
+      event.plan.target,
+      event.plan.scheduledDurationMs,
+    );
+
+    expect(result.accuracy).toBe(1);
+    expect(state.characters).toHaveLength(unlockedBefore);
+    expect(state.characters[0].needsReview).toBe(true);
+    expect(state.characters[0].reviewStreak).toBe(2);
+    expect(session.summary().continuousCopyResult).toBe(result);
+    expect(session.next()).toBeUndefined();
+  });
+
+  it("records an abandoned stream without mastery observations", () => {
+    const { session, state } = freshSession({
+      introduced: ["K", "M"],
+      continuousCopyDurationMs: 1000,
+    });
+    session.start(0);
+
+    let event = session.next();
+    while (event?.type !== "continuous-copy") {
+      if (!event) throw new Error("expected continuous copy");
+      completeCorrect(session, event);
+      event = session.next();
+    }
+    const attemptsBefore = state.characters.map(
+      (character) => character.rx.totalAttempts,
+    );
+    const result = session.completeContinuousCopy("K", 250, true);
+
+    expect(result.abandoned).toBe(true);
+    expect(result.accuracy).toBeNull();
+    expect(
+      state.characters.map((character) => character.rx.totalAttempts),
+    ).toEqual(attemptsBefore);
+    expect(session.summary().continuousCopyResult).toBe(result);
   });
 });

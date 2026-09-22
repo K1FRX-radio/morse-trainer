@@ -1,4 +1,5 @@
 import { createContext, useContext } from "react";
+import type { Schedule } from "../core/timing.ts";
 
 /** Minimal audio surface the Learn flow depends on, injectable for tests. */
 export type LearnAudio = {
@@ -7,6 +8,11 @@ export type LearnAudio = {
   play: (
     text: string,
     timing: { charWpm: number; effectiveWpm: number },
+    options: { toneHz: number },
+  ) => Promise<void>;
+  /** Plays an already-generated schedule without rebuilding or chunking it. */
+  playSchedule: (
+    schedule: Schedule,
     options: { toneHz: number },
   ) => Promise<void>;
   /** Stops any current playback (used when leaving a flow). */

@@ -37,11 +37,15 @@ export function LearnScreen() {
     physicalKeyDown,
     physicalKeyUp,
     clearHeldKeys,
+    updateContinuousCopy,
+    finishContinuousCopy,
+    continueContinuousCopy,
   } = learn.actions;
 
   const [value, setValue] = useState("");
   const composingRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const continuousInputRef = useRef<HTMLTextAreaElement>(null);
 
   const isCopy = exercise?.direction === "rx" && exercise.type !== "introduce";
   const inCheckpoint = learn.phase === "checkpoint";
@@ -57,6 +61,10 @@ export function LearnScreen() {
       inputRef.current?.focus();
     }
   }, [inputReady, isCopy, inCheckpoint]);
+
+  useEffect(() => {
+    if (learn.continuousCopy.active) continuousInputRef.current?.focus();
+  }, [learn.continuousCopy.active]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -155,6 +163,12 @@ export function LearnScreen() {
     }
   }
 
+  function retainContinuousFocus() {
+    if (learn.continuousCopy.active) {
+      window.setTimeout(() => continuousInputRef.current?.focus(), 0);
+    }
+  }
+
   if (learn.phase === "onboarding") {
     return (
       <section>
@@ -190,6 +204,12 @@ export function LearnScreen() {
             Characters practiced: {s.charactersPracticed.join(" ") || "—"}
           </li>
         </ul>
+
+        {s.continuousCopyResult?.abandoned && (
+          <p className="feedback feedback--neutral">
+            Continuous copy ended early and was not counted toward practice.
+          </p>
+        )}
 
         {reason === "READY" && (
           <p className="feedback feedback--ok">
@@ -339,6 +359,85 @@ export function LearnScreen() {
           <button type="button" onClick={continueNotification} autoFocus>
             {learn.notification.actionLabel}
           </button>
+        </div>
+        <div className="practice__controls learn__end">
+          <button type="button" className="tab" onClick={endSession}>
+            End session
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  if (learn.continuousCopy.stage === "result" && learn.continuousCopy.result) {
+    const result = learn.continuousCopy.result;
+    return (
+      <section>
+        <div className="learn__top">
+          <span className="field__label">Continuous copy</span>
+          <div className="learn__bar" aria-hidden>
+            <span style={{ width: "100%" }} />
+          </div>
+        </div>
+        <h2>Copy complete</h2>
+        <ul className="summary">
+          <li>{Math.round((result.accuracy ?? 0) * 100)}% aligned accuracy</li>
+          <li>
+            {result.alignedCorrect} correct · {result.insertions} extra ·{" "}
+            {result.deletions} missed · {result.substitutions} changed
+          </li>
+        </ul>
+        <button type="button" onClick={continueContinuousCopy} autoFocus>
+          Continue
+        </button>
+      </section>
+    );
+  }
+
+  if (learn.continuousCopy.active) {
+    const { remainingMs, totalMs, stage } = learn.continuousCopy;
+    const remainingSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
+    const minutes = Math.floor(remainingSeconds / 60);
+    const seconds = String(remainingSeconds % 60).padStart(2, "0");
+    const progress = totalMs
+      ? Math.round(((totalMs - remainingMs) / totalMs) * 100)
+      : 0;
+    return (
+      <section>
+        <div className="learn__top">
+          <span className="field__label" aria-live="polite">
+            Continuous copy
+          </span>
+          <div className="learn__bar" aria-hidden>
+            <span style={{ width: `${progress}%` }} />
+          </div>
+          <span className="field__label" aria-label="Time remaining">
+            {minutes}:{seconds}
+          </span>
+        </div>
+        <div className="practice">
+          <p className="field__label" role="status">
+            {stage === "playing" ? "Listening…" : "Finishing…"}
+          </p>
+          <textarea
+            ref={continuousInputRef}
+            className="learn__continuous-answer"
+            inputMode="text"
+            autoComplete="off"
+            autoCapitalize="characters"
+            spellCheck={false}
+            value={learn.continuousCopy.text}
+            onChange={(event) => updateContinuousCopy(event.target.value)}
+            onBlur={retainContinuousFocus}
+            aria-label="Continuous copy"
+          />
+          {stage === "finishing" && (
+            <div className="practice__controls">
+              <button type="button" onClick={() => finishContinuousCopy()}>
+                Finish
+              </button>
+            </div>
+          )}
         </div>
         <div className="practice__controls learn__end">
           <button type="button" className="tab" onClick={endSession}>

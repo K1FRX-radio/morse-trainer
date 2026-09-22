@@ -287,6 +287,18 @@ input[type="text"] {
   margin: 0.75rem 0;
 }
 
+.learn__continuous-answer {
+  display: block;
+  width: 100%;
+  min-height: 10rem;
+  resize: vertical;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: 1.15rem;
+  line-height: 1.6;
+  text-transform: uppercase;
+  margin: 0.75rem 0;
+}
+
 .learn__assist {
   display: flex;
   flex-direction: column;

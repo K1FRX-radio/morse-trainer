@@ -15,6 +15,14 @@ import {
 } from "../core/curriculum.ts";
 import type { Rng } from "../core/rng.ts";
 import { gradeCopy, gradeCopyAligned, normalizeCopy } from "../core/scoring.ts";
+import type { TimingOptions } from "../core/timing.ts";
+import {
+  applyContinuousCopyResult,
+  buildContinuousCopyPlan,
+  gradeContinuousCopy,
+  type ContinuousCopyPlan,
+  type ContinuousCopyResult,
+} from "./continuous-copy.ts";
 import {
   DEFAULT_LESSON_CONFIG,
   LessonPlan,
@@ -41,10 +49,10 @@ export type AttemptOutcome = {
 
 export type LessonTransition = {
   type: "transition";
-  id: "multi-character-copy";
-  title: "Ready for something longer?";
-  text: "You’ve learned the individual sounds. Now copy several characters without stopping between them.";
-  destinationPhase: "groups-2";
+  id: "multi-character-copy" | "continuous-copy";
+  title: string;
+  text: string;
+  destinationPhase: "groups-2" | "continuous-copy";
   actionLabel: "Go";
 };
 
@@ -57,8 +65,14 @@ export type LessonNotification = {
   delayMs: number;
 };
 
+export type ContinuousCopyEvent = {
+  type: "continuous-copy";
+  id: "continuous-copy";
+  plan: ContinuousCopyPlan;
+};
+
 export type LessonEvent =
-  PlannedExercise | LessonTransition | LessonNotification;
+  PlannedExercise | LessonTransition | LessonNotification | ContinuousCopyEvent;
 
 const MULTI_CHARACTER_TRANSITION: LessonTransition = {
   type: "transition",
@@ -67,6 +81,21 @@ const MULTI_CHARACTER_TRANSITION: LessonTransition = {
   text: "You’ve learned the individual sounds. Now copy several characters without stopping between them.",
   destinationPhase: "groups-2",
   actionLabel: "Go",
+};
+
+const CONTINUOUS_COPY_TRANSITION: LessonTransition = {
+  type: "transition",
+  id: "continuous-copy",
+  title: "Ready for continuous copy?",
+  text: "Type continuously while you listen. Keep going if you miss a character; the sound will not pause.",
+  destinationPhase: "continuous-copy",
+  actionLabel: "Go",
+};
+
+export const DEFAULT_CONTINUOUS_COPY_DURATION_MS = 60000;
+const DEFAULT_CONTINUOUS_COPY_TIMING: TimingOptions = {
+  charWpm: 20,
+  effectiveWpm: 12,
 };
 
 export type SessionSummary = {
@@ -82,6 +111,7 @@ export type SessionSummary = {
   charactersPracticed: string[];
   /** True when the session meets the minimum active time and attempt count. */
   valid: boolean;
+  continuousCopyResult?: ContinuousCopyResult;
 };
 
 type SessionOptions = {
@@ -94,6 +124,8 @@ type SessionOptions = {
   now?: () => number;
   lessonConfig?: LessonConfig;
   sessionConfig?: SessionConfig;
+  continuousCopyDurationMs?: number;
+  continuousCopyTiming?: TimingOptions;
 };
 
 export class LearnSession {
@@ -101,12 +133,20 @@ export class LearnSession {
   private readonly now: () => number;
   private readonly config: SessionConfig;
   private readonly plan: LessonPlan;
+  private readonly rng: Rng;
   private readonly groupLengthNoticeMs: number;
+  private readonly contrastMinAccuracy: number;
+  private readonly continuousCopyDurationMs: number;
+  private readonly continuousCopyTiming: TimingOptions;
 
   private current: LessonEvent | undefined;
   private pendingExercise: PlannedExercise | undefined;
   private showedMultiCharacterTransition = false;
   private showedThreeCharacterNotification = false;
+  private showedContinuousCopyTransition = false;
+  private startedContinuousCopy = false;
+  private completedContinuousCopy = false;
+  private lastContinuousCopyResult: ContinuousCopyResult | undefined;
   private lastActivityAt: number | undefined;
   private paused = false;
   private activeMs = 0;
@@ -127,8 +167,14 @@ export class LearnSession {
       (() =>
         typeof performance !== "undefined" ? performance.now() : Date.now());
     this.config = options.sessionConfig ?? DEFAULT_SESSION_CONFIG;
+    this.rng = options.rng;
     const lessonConfig = options.lessonConfig ?? DEFAULT_LESSON_CONFIG;
     this.groupLengthNoticeMs = lessonConfig.groupLengthNoticeMs;
+    this.contrastMinAccuracy = lessonConfig.contrastMinAccuracy;
+    this.continuousCopyDurationMs =
+      options.continuousCopyDurationMs ?? DEFAULT_CONTINUOUS_COPY_DURATION_MS;
+    this.continuousCopyTiming =
+      options.continuousCopyTiming ?? DEFAULT_CONTINUOUS_COPY_TIMING;
     this.plan = new LessonPlan({
       active: unlockedCharacters(options.state),
       introduced: options.introduced ?? [],
@@ -155,7 +201,8 @@ export class LearnSession {
     this.accrue(this.now());
     if (
       this.current?.type === "transition" ||
-      this.current?.type === "notification"
+      this.current?.type === "notification" ||
+      this.current?.type === "continuous-copy"
     ) {
       return this.current;
     }
@@ -187,13 +234,46 @@ export class LearnSession {
       };
       return this.current;
     }
+    if (!exercise && !this.showedContinuousCopyTransition) {
+      this.showedContinuousCopyTransition = true;
+      this.current = CONTINUOUS_COPY_TRANSITION;
+      return this.current;
+    }
+    if (
+      !exercise &&
+      !this.startedContinuousCopy &&
+      !this.completedContinuousCopy
+    ) {
+      this.startedContinuousCopy = true;
+      this.current = {
+        type: "continuous-copy",
+        id: "continuous-copy",
+        plan: buildContinuousCopyPlan({
+          active: unlockedCharacters(this.state),
+          newest: newestCharacter(this.state)?.character ?? "",
+          review: reviewCharacters(this.state),
+          weak: this.state.characters
+            .filter(
+              (character) =>
+                character.rx.recentResults.length > 0 &&
+                recentAccuracy(character.rx) < this.contrastMinAccuracy,
+            )
+            .map((character) => character.character),
+          durationMs: this.continuousCopyDurationMs,
+          timing: this.continuousCopyTiming,
+          rng: this.rng,
+        }),
+      };
+      return this.current;
+    }
     this.current = exercise;
     return this.current;
   }
 
   get currentExercise(): PlannedExercise | undefined {
     return this.current?.type === "transition" ||
-      this.current?.type === "notification"
+      this.current?.type === "notification" ||
+      this.current?.type === "continuous-copy"
       ? undefined
       : this.current;
   }
@@ -205,8 +285,13 @@ export class LearnSession {
   get phaseLabel(): string | undefined {
     const event = this.current;
     if (!event) return undefined;
-    if (event.type === "transition") return "Single-character copy";
+    if (event.type === "transition") {
+      return event.destinationPhase === "continuous-copy"
+        ? "3-character groups"
+        : "Single-character copy";
+    }
     if (event.type === "notification") return "3-character groups";
+    if (event.type === "continuous-copy") return "Continuous copy";
     if (event.phase === "introduce" || event.phase === "acquire") {
       return `Learning ${event.focus}`;
     }
@@ -232,6 +317,31 @@ export class LearnSession {
     return true;
   }
 
+  completeContinuousCopy(
+    typed: string,
+    durationCompleted: number,
+    abandoned = false,
+  ): ContinuousCopyResult {
+    if (this.current?.type !== "continuous-copy") {
+      if (this.lastContinuousCopyResult) return this.lastContinuousCopyResult;
+      throw new Error("completeContinuousCopy called outside continuous copy");
+    }
+    this.accrue(this.now());
+    const result = gradeContinuousCopy(this.current.plan, typed, {
+      durationCompleted,
+      abandoned,
+    });
+    const observations = applyContinuousCopyResult(this.state, result);
+    this.rxAttempts += observations;
+    for (const observation of result.perCharacterResults) {
+      this.practiced.add(observation.character);
+    }
+    this.lastContinuousCopyResult = result;
+    this.completedContinuousCopy = true;
+    this.current = undefined;
+    return result;
+  }
+
   /** Marks the current card as replayed, so its result does not feed mastery. */
   markReplayed(): void {
     this.replayedThisCard = true;
@@ -247,7 +357,11 @@ export class LearnSession {
     if (!exercise) {
       throw new Error("submit called before next");
     }
-    if (exercise.type === "transition" || exercise.type === "notification") {
+    if (
+      exercise.type === "transition" ||
+      exercise.type === "notification" ||
+      exercise.type === "continuous-copy"
+    ) {
       throw new Error("submit called for a lesson interstitial");
     }
     this.accrue(this.now());
@@ -371,6 +485,9 @@ export class LearnSession {
       txAttempts: this.txAttempts,
       charactersPracticed: [...this.practiced],
       valid: this.activeMs >= this.config.minActiveMs && this.attempts > 0,
+      ...(this.lastContinuousCopyResult
+        ? { continuousCopyResult: this.lastContinuousCopyResult }
+        : {}),
     };
   }
 

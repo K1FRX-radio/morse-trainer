@@ -26,6 +26,7 @@ import {
 import type { PlannedExercise } from "../../training/lesson-plan.ts";
 import { useLearnAudio } from "../learn-audio-context.ts";
 import { useSettings } from "../settings-context.ts";
+import { useContinuousCopy } from "./useContinuousCopy.ts";
 
 const CURRICULUM_STORAGE_KEY = "k1frx.curriculum.v2";
 const INTRODUCED_STORAGE_KEY = "k1frx.introduced.v1";
@@ -159,6 +160,29 @@ export function useLearnSession() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [, forceTick] = useState(0);
 
+  const recordContinuousCopy = useCallback(
+    (typed: string, durationCompleted: number, abandoned: boolean) => {
+      const session = sessionRef.current;
+      if (!session) {
+        throw new Error("continuous copy completed without a Learn session");
+      }
+      const result = session.completeContinuousCopy(
+        typed,
+        durationCompleted,
+        abandoned,
+      );
+      saveCurriculum(stateRef.current);
+      forceTick((value) => value + 1);
+      return result;
+    },
+    [],
+  );
+  const continuousCopy = useContinuousCopy({
+    audio,
+    toneHz: settings.toneHz,
+    onComplete: recordContinuousCopy,
+  });
+
   const timing = useMemo(
     () => ({ charWpm: settings.charWpm, effectiveWpm: settings.effectiveWpm }),
     [settings.charWpm, settings.effectiveWpm],
@@ -226,6 +250,8 @@ export function useLearnSession() {
   );
 
   const endSession = useCallback(() => {
+    continuousCopy.abandon();
+    continuousCopy.reset();
     flowToken.current += 1;
     playbackGeneration.current += 1;
     clearHeldKeys();
@@ -242,7 +268,7 @@ export function useLearnSession() {
     setNotification(undefined);
     setPhaseLabel(undefined);
     setPhase("summary");
-  }, [audio, clearHeldKeys]);
+  }, [audio, clearHeldKeys, continuousCopy]);
 
   const showEvent = useCallback(
     (event: LessonEvent) => {
@@ -271,13 +297,21 @@ export function useLearnSession() {
         });
         return;
       }
+      if (event.type === "continuous-copy") {
+        clearHeldKeys();
+        setExercise(undefined);
+        setTransition(undefined);
+        setNotification(undefined);
+        continuousCopy.start(event);
+        return;
+      }
       setTransition(undefined);
       setNotification(undefined);
       setExercise(event);
       if (event.type === "introduce") void runIntro(event.target, token);
       else void presentPrompt(event.target, token);
     },
-    [runIntro, presentPrompt],
+    [runIntro, presentPrompt, clearHeldKeys, continuousCopy],
   );
 
   const advance = useCallback(() => {
@@ -293,6 +327,7 @@ export function useLearnSession() {
   advanceRef.current = advance;
 
   const begin = useCallback(async () => {
+    continuousCopy.reset();
     clearHeldKeys();
     await audio.cancel();
     flowToken.current += 1;
@@ -304,6 +339,7 @@ export function useLearnSession() {
       state: stateRef.current,
       rng: createRng(Date.now() >>> 0),
       introduced: loadIntroduced(),
+      continuousCopyTiming: timing,
     });
     session.start();
     sessionRef.current = session;
@@ -314,7 +350,7 @@ export function useLearnSession() {
     const first = session.next();
     if (first) showEvent(first);
     else endSession();
-  }, [audio, showEvent, endSession, clearHeldKeys]);
+  }, [audio, showEvent, endSession, clearHeldKeys, continuousCopy, timing]);
 
   // Records the answer, replays on a miss, and advances only after any
   // corrective playback finishes and while this prompt is still current.
@@ -417,6 +453,11 @@ export function useLearnSession() {
     }
   }, []);
 
+  const continueContinuousCopy = useCallback(() => {
+    continuousCopy.reset();
+    advanceRef.current();
+  }, [continuousCopy]);
+
   // --- Checkpoint mode -----------------------------------------------------
   const finishCheckpoint = useCallback(() => {
     const cp = checkpointRef.current;
@@ -434,6 +475,7 @@ export function useLearnSession() {
   }, [audio, clearHeldKeys]);
 
   const startCheckpoint = useCallback(async () => {
+    continuousCopy.reset();
     clearHeldKeys();
     await audio.cancel();
     flowToken.current += 1;
@@ -453,7 +495,7 @@ export function useLearnSession() {
     const first = checkpointRef.current.current();
     if (first) void presentPrompt(first, token);
     else finishCheckpoint();
-  }, [audio, presentPrompt, finishCheckpoint, clearHeldKeys]);
+  }, [audio, presentPrompt, finishCheckpoint, clearHeldKeys, continuousCopy]);
 
   const acceptCheckpoint = useCallback(
     (raw: string) => {
@@ -543,6 +585,14 @@ export function useLearnSession() {
     exercise,
     transition,
     notification,
+    continuousCopy: {
+      stage: continuousCopy.stage,
+      text: continuousCopy.text,
+      remainingMs: continuousCopy.remainingMs,
+      totalMs: continuousCopy.totalMs,
+      result: continuousCopy.result,
+      active: continuousCopy.active,
+    },
     phaseLabel,
     feedback,
     awaitingContinue,
@@ -572,6 +622,9 @@ export function useLearnSession() {
       continueNow,
       continueTransition,
       continueNotification,
+      updateContinuousCopy: continuousCopy.setText,
+      finishContinuousCopy: continuousCopy.finish,
+      continueContinuousCopy,
       endSession,
       startCheckpoint,
       physicalKeyDown,

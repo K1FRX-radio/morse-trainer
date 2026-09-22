@@ -8,11 +8,16 @@ import {
 } from "@testing-library/react";
 import { DEFAULT_CURRICULUM_CONFIG } from "../../content/curriculum-data.ts";
 import { createInitialState } from "../../core/curriculum.ts";
+import type { Schedule } from "../../core/timing.ts";
 import { LearnAudioContext, type LearnAudio } from "../learn-audio-context.ts";
 import { SettingsProvider } from "../settings-provider.tsx";
 import { LearnScreen } from "./LearnScreen.tsx";
 
-type PendingPlay = { text: string; resolve: () => void };
+type PendingPlay = {
+  text?: string;
+  schedule?: Schedule;
+  resolve: () => void;
+};
 
 function makeFakeAudio() {
   const pending: PendingPlay[] = [];
@@ -21,6 +26,10 @@ function makeFakeAudio() {
     play: (text) =>
       new Promise<void>((resolve) => {
         pending.push({ text, resolve });
+      }),
+    playSchedule: (schedule) =>
+      new Promise<void>((resolve) => {
+        pending.push({ schedule, resolve });
       }),
     // Cancellation resolves in-flight playback, mirroring the real engine.
     cancel: async () => {
@@ -108,6 +117,24 @@ async function toThreeCharacterNotice(fake: ReturnType<typeof makeFakeAudio>) {
   for (let group = 0; group < 8; group++) {
     const target = fake.pending[0]?.text;
     expect(target).toHaveLength(2);
+    await resolvePlay(fake);
+    fireEvent.change(screen.getByLabelText("Your copy"), {
+      target: { value: target },
+    });
+    await flush();
+    await tick(450);
+  }
+}
+
+async function toContinuousCopyTransition(
+  fake: ReturnType<typeof makeFakeAudio>,
+) {
+  await toThreeCharacterNotice(fake);
+  fireEvent.click(screen.getByRole("button", { name: "Go" }));
+  await flush();
+  for (let group = 0; group < 8; group++) {
+    const target = fake.pending[0]?.text;
+    expect(target).toHaveLength(3);
     await resolvePlay(fake);
     fireEvent.change(screen.getByLabelText("Your copy"), {
       target: { value: target },
@@ -447,6 +474,82 @@ describe("LearnScreen audio sequencing", () => {
     expect(fake.playCount()).toBe(0);
     await tick(1);
     expect(fake.pending[0]?.text).toHaveLength(3);
+  });
+
+  it("starts one continuous schedule and keeps copy input active during playback", async () => {
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+    await toContinuousCopyTransition(fake);
+
+    expect(
+      screen.getByRole("heading", { name: "Ready for continuous copy?" }),
+    ).toBeInTheDocument();
+    expect(fake.playCount()).toBe(0);
+    fireEvent.click(screen.getByRole("button", { name: "Go" }));
+    await flush();
+
+    expect(fake.playCount()).toBe(1);
+    expect(fake.pending[0]?.schedule?.totalMs).toBeGreaterThanOrEqual(60000);
+    expect(screen.getByRole("status")).toHaveTextContent("Listening…");
+    const input = screen.getByLabelText(
+      "Continuous copy",
+    ) as HTMLTextAreaElement;
+    expect(input).toBeEnabled();
+    fireEvent.change(input, { target: { value: "KM KM" } });
+    expect(input).toHaveValue("KM KM");
+    expect(
+      screen.queryByRole("button", { name: "Replay" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/characters$/)).not.toBeInTheDocument();
+  });
+
+  it("keeps input through the grace period and then shows aligned results", async () => {
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+    await toContinuousCopyTransition(fake);
+    fireEvent.click(screen.getByRole("button", { name: "Go" }));
+    await flush();
+
+    const input = screen.getByLabelText("Continuous copy");
+    fireEvent.change(input, { target: { value: "KM" } });
+    await resolvePlay(fake);
+    expect(screen.getByRole("status")).toHaveTextContent("Finishing…");
+    expect(input).toBeEnabled();
+    expect(input).toHaveValue("KM");
+
+    await tick(2000);
+    expect(
+      screen.getByRole("heading", { name: "Copy complete" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/aligned accuracy/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await flush();
+    expect(
+      screen.getByRole("heading", { name: "Session complete" }),
+    ).toBeInTheDocument();
+  });
+
+  it("discards an intentionally ended stream from practice", async () => {
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+    await toContinuousCopyTransition(fake);
+    fireEvent.click(screen.getByRole("button", { name: "Go" }));
+    await flush();
+    fireEvent.change(screen.getByLabelText("Continuous copy"), {
+      target: { value: "KM" },
+    });
+    await tick(500);
+
+    fireEvent.click(screen.getByRole("button", { name: "End session" }));
+    await flush();
+
+    expect(
+      screen.getByRole("heading", { name: "Session complete" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/ended early and was not counted/),
+    ).toBeInTheDocument();
+    expect(fake.playCount()).toBe(0);
   });
 });
 

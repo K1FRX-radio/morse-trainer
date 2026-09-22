@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AudioSession } from "../audio/audio-session.ts";
 import type { CwEngine } from "../audio/cw-engine.ts";
+import { buildSchedule } from "../core/timing.ts";
 import { createLearnAudio } from "./learn-audio-controller.ts";
 
 function deferred() {
@@ -47,5 +48,19 @@ describe("Learn audio lifecycle", () => {
     await staleStop;
 
     expect(session.suspend).not.toHaveBeenCalled();
+  });
+
+  it("plays a preserved schedule through the engine", async () => {
+    const schedule = buildSchedule("KM", { charWpm: 20, effectiveWpm: 12 });
+    const engine = {
+      playSchedule: vi.fn(() => Promise.resolve()),
+    } as unknown as CwEngine;
+    const audio = createLearnAudio(engine, {} as AudioSession, () =>
+      Promise.resolve(),
+    );
+
+    await audio.playSchedule(schedule, { toneHz: 600 });
+
+    expect(engine.playSchedule).toHaveBeenCalledWith(schedule, { toneHz: 600 });
   });
 });

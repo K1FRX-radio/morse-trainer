@@ -18,6 +18,10 @@ export function createLearnAudio(
       lifecycleGeneration += 1;
       await engine.playText(text, timing, options);
     },
+    playSchedule: async (schedule, options) => {
+      lifecycleGeneration += 1;
+      await engine.playSchedule(schedule, options);
+    },
     cancel: async () => {
       lifecycleGeneration += 1;
       await engine.cancel();
