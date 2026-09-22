@@ -11,20 +11,48 @@ import { forceUnlockNext, type CurriculumState } from "../core/curriculum.ts";
 import type { Rng } from "../core/rng.ts";
 import { normalizeCopy } from "../core/scoring.ts";
 
+/**
+ * The minimum items needed to give every active character coverage and the
+ * newest character its minimum observations.
+ */
+function requiredLength(activeCount: number, config: CheckpointConfig): number {
+  const minNewest = Math.max(1, config.minNewestObservations);
+  return activeCount - 1 + minNewest;
+}
+
+/**
+ * The checkpoint length for an active-set size: grows with the set within the
+ * configured bounds, but is raised when needed to guarantee full coverage. Throws
+ * if the configured capacity cannot cover the active set (a config error).
+ */
 export function checkpointLength(
   activeCount: number,
   config: CheckpointConfig = DEFAULT_CHECKPOINT_CONFIG,
 ): number {
-  return Math.min(
+  if (activeCount < 1) {
+    throw new RangeError("checkpoint requires at least one active character");
+  }
+  const required = requiredLength(activeCount, config);
+  if (required > config.maxLength) {
+    throw new RangeError(
+      `checkpoint maxLength ${config.maxLength} cannot cover ${activeCount} active ` +
+        `characters with ${config.minNewestObservations} newest observations ` +
+        `(needs ${required})`,
+    );
+  }
+  const base = Math.min(
     config.maxLength,
     Math.max(config.minLength, Math.round(activeCount * config.itemsPerActive)),
   );
+  return Math.max(base, required);
 }
 
 /**
- * Builds the isolated-character checkpoint sequence: enough of the newest
- * character for coverage, the remainder sampled across the active set, then a
- * deterministic shuffle.
+ * Builds the isolated-character checkpoint sequence with guaranteed balance:
+ * every active character appears, the newest appears at least its minimum,
+ * remaining slots approach the desired newest share and are otherwise spread
+ * evenly across the other characters, then a seeded shuffle sets the order.
+ * Coverage never depends on randomness.
  */
 export function buildCheckpoint(
   active: readonly string[],
@@ -32,24 +60,48 @@ export function buildCheckpoint(
   rng: Rng,
   config: CheckpointConfig = DEFAULT_CHECKPOINT_CONFIG,
 ): string[] {
+  if (active.length === 0) {
+    throw new RangeError("checkpoint requires active characters");
+  }
   const length = checkpointLength(active.length, config);
-  const newestCount = Math.min(
-    length,
-    Math.max(
-      config.minNewestObservations,
-      Math.round(length * config.newestShare),
-    ),
+  const others = active.filter((c) => c !== newest);
+  const minNewest = Math.max(1, config.minNewestObservations);
+
+  // Priority: coverage, then newest minimum, then desired newest share (capped so
+  // every other character keeps its one slot), then even repetitions of others.
+  const desiredNewest = Math.round(length * config.newestShare);
+  const targetNewest = Math.min(
+    Math.max(minNewest, desiredNewest),
+    length - others.length,
   );
 
-  const items: string[] = [];
-  for (let i = 0; i < newestCount; i++) {
-    items.push(newest);
-  }
-  for (let i = newestCount; i < length; i++) {
-    items.push(active[Math.floor(rng() * active.length)]);
+  const counts = new Map<string, number>();
+  for (const c of active) {
+    counts.set(c, c === newest ? targetNewest : 1);
   }
 
-  // Deterministic Fisher-Yates shuffle.
+  let total = [...counts.values()].reduce((a, b) => a + b, 0);
+  if (others.length === 0) {
+    counts.set(newest, length); // single-character edge case
+    total = length;
+  }
+  // Round-robin the remaining slots across the other characters for even spread.
+  let cursor = 0;
+  while (total < length && others.length > 0) {
+    const c = others[cursor % others.length];
+    counts.set(c, (counts.get(c) ?? 0) + 1);
+    cursor += 1;
+    total += 1;
+  }
+
+  const items: string[] = [];
+  for (const c of active) {
+    for (let i = 0; i < (counts.get(c) ?? 0); i++) {
+      items.push(c);
+    }
+  }
+
+  // Deterministic Fisher-Yates shuffle (ordering only; coverage already fixed).
   for (let i = items.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1));
     [items[i], items[j]] = [items[j], items[i]];

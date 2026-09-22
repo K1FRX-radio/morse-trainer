@@ -8,6 +8,7 @@ import {
   checkpointReadiness,
   createInitialState,
   forceUnlockNext,
+  unlockedCharacters,
   type CurriculumState,
 } from "../core/curriculum.ts";
 import { createRng } from "../core/rng.ts";
@@ -33,30 +34,79 @@ function setRx(state: CurriculumState, char: string, results: boolean[]) {
   if (progress) progress.rx.recentResults = [...results];
 }
 
-describe("buildCheckpoint", () => {
-  const active = ["K", "M", "U", "R"];
-
-  it("has a bounded length that grows with the active set", () => {
-    expect(checkpointLength(2)).toBe(DEFAULT_CHECKPOINT_CONFIG.minLength);
-    expect(checkpointLength(100)).toBe(DEFAULT_CHECKPOINT_CONFIG.maxLength);
-  });
-
-  it("guarantees newest-character coverage and only active characters", () => {
-    const items = buildCheckpoint(active, "R", createRng(1));
-    expect(items.length).toBe(checkpointLength(active.length));
-    const newest = items.filter((c) => c === "R").length;
-    expect(newest).toBeGreaterThanOrEqual(
-      DEFAULT_CHECKPOINT_CONFIG.minNewestObservations,
-    );
-    for (const item of items) {
-      expect(active).toContain(item);
+describe("checkpointLength", () => {
+  it("stays within configured bounds across the current curriculum", () => {
+    for (let n = 2; n <= KOCH_ORDER.length; n++) {
+      const length = checkpointLength(n);
+      expect(length).toBeGreaterThanOrEqual(DEFAULT_CHECKPOINT_CONFIG.minLength);
+      expect(length).toBeLessThanOrEqual(DEFAULT_CHECKPOINT_CONFIG.maxLength);
     }
   });
 
-  it("is deterministic for a seed", () => {
-    expect(buildCheckpoint(active, "R", createRng(9))).toEqual(
-      buildCheckpoint(active, "R", createRng(9)),
+  it("throws when the configured capacity cannot cover the active set", () => {
+    const tiny = { ...DEFAULT_CHECKPOINT_CONFIG, maxLength: 10 };
+    expect(() => checkpointLength(20, tiny)).toThrow(RangeError);
+  });
+});
+
+describe("buildCheckpoint", () => {
+  function build(n: number, seed: number) {
+    const state = makeState(n);
+    const active = unlockedCharacters(state);
+    const newest = active[active.length - 1];
+    return { active, newest, items: buildCheckpoint(active, newest, createRng(seed)) };
+  }
+
+  function counts(items: string[]): Record<string, number> {
+    const map: Record<string, number> = {};
+    for (const c of items) map[c] = (map[c] ?? 0) + 1;
+    return map;
+  }
+
+  it("covers every active character for all set sizes 2..41", () => {
+    for (let n = 2; n <= KOCH_ORDER.length; n++) {
+      const { active, newest, items } = build(n, 1);
+      expect(items.length).toBe(checkpointLength(n));
+      const present = new Set(items);
+      for (const character of active) {
+        expect(present.has(character)).toBe(true);
+      }
+      for (const item of items) {
+        expect(active).toContain(item);
+      }
+      const newestCount = items.filter((c) => c === newest).length;
+      expect(newestCount).toBeGreaterThanOrEqual(
+        DEFAULT_CHECKPOINT_CONFIG.minNewestObservations,
+      );
+    }
+  });
+
+  it("keeps older-character counts balanced (differ by at most one)", () => {
+    const { active, newest, items } = build(6, 3);
+    const others = active.filter((c) => c !== newest);
+    const otherCounts = others.map((c) => items.filter((x) => x === c).length);
+    expect(Math.max(...otherCounts) - Math.min(...otherCounts)).toBeLessThanOrEqual(
+      1,
     );
+  });
+
+  it("is deterministic for identical seeds", () => {
+    expect(build(8, 5).items).toEqual(build(8, 5).items);
+  });
+
+  it("changes order but not coverage for different seeds", () => {
+    const a = build(8, 5);
+    const b = build(8, 9);
+    expect(a.items).not.toEqual(b.items);
+    expect(counts(a.items)).toEqual(counts(b.items));
+  });
+
+  it("throws for an impossible configuration", () => {
+    const active = unlockedCharacters(makeState(20));
+    const tiny = { ...DEFAULT_CHECKPOINT_CONFIG, maxLength: 10 };
+    expect(() =>
+      buildCheckpoint(active, active[active.length - 1], createRng(1), tiny),
+    ).toThrow(RangeError);
   });
 });
 
