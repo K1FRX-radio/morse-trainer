@@ -3,6 +3,7 @@ import {
   useRef,
   useState,
   type ChangeEvent,
+  type CompositionEvent,
   type KeyboardEvent,
 } from "react";
 import { encodeCharacter, isSupportedCharacter } from "../../core/morse.ts";
@@ -21,64 +22,88 @@ function sanitize(value: string): string {
 
 export function LearnScreen() {
   const learn = useLearnSession();
-  const { exercise, feedback, awaitingContinue } = learn;
-  const { record, replay, continueNow, begin, endSession, startCheckpoint, checkpointAnswer } =
-    learn.actions;
+  const { exercise, feedback, awaitingContinue, inputReady, isPlaying } = learn;
+  const {
+    acceptIsolated,
+    submitGroupWord,
+    acceptCheckpoint,
+    replay,
+    continueNow,
+    begin,
+    endSession,
+    startCheckpoint,
+  } = learn.actions;
 
   const [value, setValue] = useState("");
+  const composingRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const isCopy = exercise?.direction === "rx" && exercise.type !== "introduce";
+  const inCheckpoint = learn.phase === "checkpoint";
 
+  // Clear the field for each new prompt (practice card or checkpoint item).
   useEffect(() => {
     setValue("");
-    if (isCopy) {
-      // Focus so physical and on-screen keyboards go straight to the answer.
-      inputRef.current?.focus();
-    }
-  }, [exercise, isCopy]);
+  }, [exercise, learn.checkpoint.position]);
 
-  // Checkpoint: refocus and clear the input for each new item.
+  // Focus the field once its prompt audio has finished and input is unlocked.
   useEffect(() => {
-    if (learn.phase === "checkpoint") {
-      setValue("");
+    if (inputReady && (isCopy || inCheckpoint)) {
       inputRef.current?.focus();
     }
-  }, [learn.phase, learn.checkpoint.position]);
+  }, [inputReady, isCopy, inCheckpoint]);
+
+  function processCheckpoint(raw: string) {
+    setValue("");
+    acceptCheckpoint(raw);
+  }
 
   function onCheckpointChange(event: ChangeEvent<HTMLInputElement>) {
-    const first = sanitize(event.target.value).slice(0, 1);
-    setValue("");
-    if (first) checkpointAnswer(first);
+    if (composingRef.current) return;
+    processCheckpoint(event.target.value);
+  }
+
+  function processCopy(raw: string) {
+    if (!exercise) return;
+    if (exercise.type === "copy-character") {
+      setValue("");
+      acceptIsolated(raw);
+      return;
+    }
+    const next = sanitize(raw);
+    setValue(next);
+    if (
+      exercise.type === "copy-group" &&
+      next.length >= exercise.target.length
+    ) {
+      submitGroupWord(next);
+    }
   }
 
   function onInputChange(event: ChangeEvent<HTMLInputElement>) {
-    if (!exercise || feedback) return;
-    const next = sanitize(event.target.value);
-    if (exercise.type === "copy-character") {
-      const first = next.slice(0, 1);
-      setValue(first);
-      if (first) record(first);
-      return;
-    }
-    setValue(next);
-    if (exercise.type === "copy-group" && next.length >= exercise.target.length) {
-      record(next);
-    }
+    if (composingRef.current) return;
+    processCopy(event.target.value);
+  }
+
+  function onCompositionEnd(event: CompositionEvent<HTMLInputElement>) {
+    composingRef.current = false;
+    const raw = event.currentTarget.value;
+    if (inCheckpoint) processCheckpoint(raw);
+    else processCopy(raw);
   }
 
   function onInputKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.key !== "Enter" || event.repeat) return;
     if (event.ctrlKey || event.metaKey || event.altKey) return;
-    if (!exercise || feedback) return;
+    if (!exercise) return;
     if (exercise.type === "copy-word" || exercise.type === "copy-group") {
-      record(value);
+      submitGroupWord(value);
     }
   }
 
-  // Keep focus in the answer field so keystrokes are never lost mid-exercise.
+  // Keep focus in the answer field, but never let a focus change unlock input.
   function retainFocus() {
-    if ((isCopy && !feedback) || learn.phase === "checkpoint") {
+    if (inputReady && (isCopy || inCheckpoint)) {
       window.setTimeout(() => inputRef.current?.focus(), 0);
     }
   }
@@ -114,7 +139,9 @@ export function LearnScreen() {
             Cards: {s.cards} · scored attempts: {s.attempts} (
             {Math.round(s.accuracy * 100)}% correct)
           </li>
-          <li>Characters practiced: {s.charactersPracticed.join(" ") || "—"}</li>
+          <li>
+            Characters practiced: {s.charactersPracticed.join(" ") || "—"}
+          </li>
         </ul>
 
         {reason === "READY" && (
@@ -172,7 +199,8 @@ export function LearnScreen() {
           </span>
         </div>
         <p className="field__label">
-          Copy each character you hear. No replay or hints during the checkpoint.
+          Copy each character you hear. No replay or hints during the
+          checkpoint.
         </p>
         <input
           ref={inputRef}
@@ -183,10 +211,13 @@ export function LearnScreen() {
           autoCapitalize="characters"
           spellCheck={false}
           maxLength={1}
-          placeholder="listen…"
+          placeholder={inputReady ? "type it" : "listen…"}
           value={value}
           onChange={onCheckpointChange}
+          onCompositionStart={() => (composingRef.current = true)}
+          onCompositionEnd={onCompositionEnd}
           onBlur={retainFocus}
+          disabled={!inputReady}
           aria-label="Checkpoint answer"
         />
       </section>
@@ -254,10 +285,15 @@ export function LearnScreen() {
           </code>
           <p className="field__label">Listen…</p>
           <div className="practice__controls">
-            <button type="button" className="tab" onClick={replay}>
+            <button
+              type="button"
+              className="tab"
+              onClick={replay}
+              disabled={isPlaying}
+            >
               Replay
             </button>
-            <button type="button" onClick={continueNow}>
+            <button type="button" onClick={continueNow} disabled={isPlaying}>
               Continue
             </button>
           </div>
@@ -306,12 +342,19 @@ export function LearnScreen() {
             value={value}
             onChange={onInputChange}
             onKeyDown={onInputKeyDown}
+            onCompositionStart={() => (composingRef.current = true)}
+            onCompositionEnd={onCompositionEnd}
             onBlur={retainFocus}
-            disabled={!!feedback}
+            disabled={!inputReady || !!feedback}
             aria-label="Your copy"
           />
           <div className="practice__controls">
-            <button type="button" className="tab" onClick={replay}>
+            <button
+              type="button"
+              className="tab"
+              onClick={replay}
+              disabled={isPlaying}
+            >
               Replay
             </button>
           </div>
@@ -334,7 +377,12 @@ export function LearnScreen() {
 
           {awaitingContinue && (
             <div className="practice__controls">
-              <button type="button" onClick={continueNow} autoFocus>
+              <button
+                type="button"
+                onClick={continueNow}
+                disabled={isPlaying}
+                autoFocus
+              >
                 Continue
               </button>
             </div>

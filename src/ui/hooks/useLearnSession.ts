@@ -8,7 +8,7 @@ import {
   type CurriculumState,
   type Readiness,
 } from "../../core/curriculum.ts";
-import { encodeText } from "../../core/morse.ts";
+import { encodeText, isSupportedCharacter } from "../../core/morse.ts";
 import { createRng } from "../../core/rng.ts";
 import type { CharacterProgress } from "../../core/types.ts";
 import {
@@ -21,23 +21,19 @@ import {
   type SessionSummary,
 } from "../../training/learn-session.ts";
 import type { PlannedExercise } from "../../training/lesson-plan.ts";
+import { useLearnAudio } from "../learn-audio-context.ts";
 import { useSettings } from "../settings-context.ts";
-import { useAudioEngine } from "./useAudioEngine.ts";
 
 const CURRICULUM_STORAGE_KEY = "k1frx.curriculum.v2";
 const INTRODUCED_STORAGE_KEY = "k1frx.introduced.v1";
 
-// Brief holds after grading an answer (ms); introductions are paced by audio.
-const ADVANCE_AFTER_CORRECT = 500;
-const ADVANCE_AFTER_MISS = 1500;
+// Brief holds (ms). Introductions and misses are otherwise paced by audio.
 const INTRO_GAP = 400;
+const HOLD_AFTER_CORRECT = 450;
+const HOLD_AFTER_MISS = 500;
 
 export type LearnPhase =
-  | "onboarding"
-  | "exercise"
-  | "summary"
-  | "checkpoint"
-  | "checkpoint-result";
+  "onboarding" | "exercise" | "summary" | "checkpoint" | "checkpoint-result";
 
 export type Feedback = {
   correct: boolean;
@@ -101,13 +97,20 @@ function toMorse(target: string): string {
     .join(" ");
 }
 
+function firstSupported(raw: string): string | undefined {
+  for (const char of raw.toUpperCase()) {
+    if (isSupportedCharacter(char)) return char;
+  }
+  return undefined;
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 export function useLearnSession() {
   const { settings } = useSettings();
-  const { engine, unlock } = useAudioEngine();
+  const audio = useLearnAudio();
   const auto = settings.pacing === "auto";
 
   const stateRef = useRef<CurriculumState>(
@@ -117,17 +120,31 @@ export function useLearnSession() {
     stateRef.current = loadCurriculum();
   }
   const sessionRef = useRef<LearnSession | undefined>(undefined);
-  const timers = useRef<number[]>([]);
+  const checkpointRef = useRef<CheckpointSession | undefined>(undefined);
+
+  // Flow tokens invalidate stale async transitions; the one-shot lock guarantees
+  // exactly one accepted answer per presented prompt.
   const flowToken = useRef(0);
+  const lockedRef = useRef(true);
+  const acceptedTokenRef = useRef<number | null>(null);
+  const playingRef = useRef(false);
   const introDoneToken = useRef<number | null>(null);
 
   const [phase, setPhase] = useState<LearnPhase>("onboarding");
   const [exercise, setExercise] = useState<PlannedExercise | undefined>(
     undefined,
   );
+  const exerciseRef = useRef<PlannedExercise | undefined>(undefined);
+  exerciseRef.current = exercise;
+
   const [feedback, setFeedback] = useState<Feedback | undefined>(undefined);
   const [awaitingContinue, setAwaitingContinue] = useState(false);
   const [summary, setSummary] = useState<SessionSummary | undefined>(undefined);
+  const [checkpointResult, setCheckpointResult] = useState<
+    CheckpointApplied | undefined
+  >(undefined);
+  const [inputReady, setInputReady] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
   const [, forceTick] = useState(0);
 
   const timing = useMemo(
@@ -135,34 +152,37 @@ export function useLearnSession() {
     [settings.charWpm, settings.effectiveWpm],
   );
 
-  const clearTimers = useCallback(() => {
-    for (const id of timers.current) window.clearTimeout(id);
-    timers.current = [];
-  }, []);
-
-  // Resolves when playback finishes so introductions pace to real audio length.
   const play = useCallback(
-    (text: string): Promise<void> =>
-      engine.playText(text, timing, { toneHz: settings.toneHz }),
-    [engine, timing, settings.toneHz],
+    async (text: string) => {
+      playingRef.current = true;
+      setIsPlaying(true);
+      try {
+        await audio.play(text, timing, { toneHz: settings.toneHz });
+      } finally {
+        playingRef.current = false;
+        setIsPlaying(false);
+      }
+    },
+    [audio, timing, settings.toneHz],
+  );
+
+  // Locks input, plays the prompt, and unlocks only after playback completes
+  // if this prompt is still current.
+  const presentPrompt = useCallback(
+    async (target: string, token: number) => {
+      lockedRef.current = true;
+      setInputReady(false);
+      await play(target);
+      if (token !== flowToken.current) return;
+      lockedRef.current = false;
+      setInputReady(true);
+    },
+    [play],
   );
 
   const advanceRef = useRef<() => void>(() => {});
 
-  const endSession = useCallback(() => {
-    clearTimers();
-    flowToken.current += 1;
-    const session = sessionRef.current;
-    if (!session) return;
-    setSummary(session.end());
-    saveIntroduced([...loadIntroduced(), ...session.completedIntroductions]);
-    saveCurriculum(stateRef.current);
-    setPhase("summary");
-  }, [clearTimers]);
-
-  // Records the current introduction exactly once, then advances.
-  const completeIntro = useCallback(() => {
-    const token = flowToken.current;
+  const completeIntro = useCallback((token: number) => {
     if (introDoneToken.current === token) return;
     introDoneToken.current = token;
     sessionRef.current?.submit("");
@@ -171,38 +191,48 @@ export function useLearnSession() {
   }, []);
 
   const runIntro = useCallback(
-    async (card: PlannedExercise, token: number) => {
-      await play(card.target);
+    async (target: string, token: number) => {
+      lockedRef.current = true;
+      setInputReady(false);
+      await play(target);
       if (token !== flowToken.current) return;
       await delay(INTRO_GAP);
       if (token !== flowToken.current) return;
-      await play(card.target);
+      await play(target);
       if (token !== flowToken.current) return;
-      if (auto) completeIntro();
+      if (auto) completeIntro(token);
       else setAwaitingContinue(true);
     },
     [auto, play, completeIntro],
   );
 
+  const endSession = useCallback(() => {
+    audio.cancel();
+    flowToken.current += 1;
+    const session = sessionRef.current;
+    if (!session) return;
+    setSummary(session.end());
+    saveIntroduced([...loadIntroduced(), ...session.completedIntroductions]);
+    saveCurriculum(stateRef.current);
+    setPhase("summary");
+  }, [audio]);
+
   const showExercise = useCallback(
-    (next: PlannedExercise) => {
-      clearTimers();
+    (card: PlannedExercise) => {
       const token = (flowToken.current += 1);
-      setExercise(next);
+      acceptedTokenRef.current = null;
+      lockedRef.current = true;
+      setInputReady(false);
+      setExercise(card);
       setFeedback(undefined);
       setAwaitingContinue(false);
-
-      if (next.type === "introduce") {
-        void runIntro(next, token);
-      } else if (next.type !== "send-character") {
-        void play(next.target);
-      }
+      if (card.type === "introduce") void runIntro(card.target, token);
+      else void presentPrompt(card.target, token);
     },
-    [clearTimers, play, runIntro],
+    [runIntro, presentPrompt],
   );
 
   const advance = useCallback(() => {
-    clearTimers();
     const session = sessionRef.current;
     if (!session) return;
     const next = session.next();
@@ -211,11 +241,13 @@ export function useLearnSession() {
       return;
     }
     showExercise(next);
-  }, [clearTimers, endSession, showExercise]);
+  }, [endSession, showExercise]);
   advanceRef.current = advance;
 
   const begin = useCallback(async () => {
-    await unlock();
+    audio.cancel();
+    flowToken.current += 1;
+    await audio.unlock();
     const session = new LearnSession({
       state: stateRef.current,
       rng: createRng(Date.now() >>> 0),
@@ -225,68 +257,109 @@ export function useLearnSession() {
     sessionRef.current = session;
     introDoneToken.current = null;
     setSummary(undefined);
+    setCheckpointResult(undefined);
     setPhase("exercise");
     const first = session.next();
     if (first) showExercise(first);
     else endSession();
-  }, [unlock, showExercise, endSession]);
+  }, [audio, showExercise, endSession]);
 
-  const record = useCallback(
-    (input: string | boolean) => {
+  // Records the answer, replays on a miss, and advances only after any
+  // corrective playback finishes and while this prompt is still current.
+  const afterAnswer = useCallback(
+    async (input: string, token: number) => {
       const session = sessionRef.current;
-      if (!session || !exercise || feedback) return;
+      const ex = exerciseRef.current;
+      if (!session || !ex) return;
       const outcome = session.submit(input);
       saveCurriculum(stateRef.current);
       forceTick((n) => n + 1);
-
       setFeedback({
         correct: outcome.correct,
-        expected: exercise.target,
-        morse: toMorse(exercise.target),
+        expected: ex.target,
+        morse: toMorse(ex.target),
       });
       if (!outcome.correct) {
-        void play(exercise.target);
+        await play(ex.target);
+        if (token !== flowToken.current) return;
       }
       if (auto) {
-        const id = window.setTimeout(
-          () => advanceRef.current(),
-          outcome.correct ? ADVANCE_AFTER_CORRECT : ADVANCE_AFTER_MISS,
-        );
-        timers.current.push(id);
+        await delay(outcome.correct ? HOLD_AFTER_CORRECT : HOLD_AFTER_MISS);
+        if (token !== flowToken.current) return;
+        advanceRef.current();
       } else {
         setAwaitingContinue(true);
       }
     },
-    [auto, exercise, feedback, play],
+    [auto, play],
+  );
+
+  // The single one-shot gate: returns the current token and locks, or null.
+  const claimPrompt = useCallback((): number | null => {
+    const token = flowToken.current;
+    if (lockedRef.current) return null;
+    if (acceptedTokenRef.current === token) return null;
+    acceptedTokenRef.current = token;
+    lockedRef.current = true;
+    setInputReady(false);
+    return token;
+  }, []);
+
+  const acceptIsolated = useCallback(
+    (raw: string) => {
+      const ex = exerciseRef.current;
+      if (!ex || ex.type !== "copy-character") return;
+      const first = firstSupported(raw);
+      if (!first) return;
+      const token = claimPrompt();
+      if (token === null) return;
+      void afterAnswer(first, token);
+    },
+    [claimPrompt, afterAnswer],
+  );
+
+  const submitGroupWord = useCallback(
+    (value: string) => {
+      const ex = exerciseRef.current;
+      if (!ex || (ex.type !== "copy-group" && ex.type !== "copy-word")) return;
+      const token = claimPrompt();
+      if (token === null) return;
+      void afterAnswer(value, token);
+    },
+    [claimPrompt, afterAnswer],
   );
 
   const replay = useCallback(() => {
-    if (!exercise || exercise.type === "send-character") return;
-    if (exercise.type !== "introduce") {
-      // Replaying an answer card is an assist, so exclude it from mastery.
-      sessionRef.current?.markReplayed();
+    const ex = exerciseRef.current;
+    if (!ex || ex.type === "introduce") {
+      if (ex?.type === "introduce" && !playingRef.current) void play(ex.target);
+      return;
     }
-    void play(exercise.target);
-  }, [exercise, play]);
-
-  const continueNow = useCallback(() => {
-    if (exercise?.type === "introduce") completeIntro();
-    else advance();
-  }, [exercise, completeIntro, advance]);
-
-  // --- Checkpoint mode -----------------------------------------------------
-  const checkpointRef = useRef<CheckpointSession | undefined>(undefined);
-  const [checkpointResult, setCheckpointResult] = useState<
-    CheckpointApplied | undefined
-  >(undefined);
-
-  const presentCheckpoint = useCallback(() => {
-    const target = checkpointRef.current?.current();
-    if (target) void play(target);
+    if (playingRef.current) return;
+    sessionRef.current?.markReplayed();
+    void play(ex.target);
   }, [play]);
 
+  const continueNow = useCallback(() => {
+    const ex = exerciseRef.current;
+    if (ex?.type === "introduce") completeIntro(flowToken.current);
+    else advanceRef.current();
+  }, [completeIntro]);
+
+  // --- Checkpoint mode -----------------------------------------------------
+  const finishCheckpoint = useCallback(() => {
+    const cp = checkpointRef.current;
+    if (!cp) return;
+    const applied = applyCheckpoint(stateRef.current, cp.grade());
+    saveCurriculum(stateRef.current);
+    setCheckpointResult(applied);
+    setPhase("checkpoint-result");
+  }, []);
+
   const startCheckpoint = useCallback(async () => {
-    await unlock();
+    audio.cancel();
+    flowToken.current += 1;
+    await audio.unlock();
     checkpointRef.current = new CheckpointSession({
       active: unlockedCharacters(stateRef.current),
       newest: newestCharacter(stateRef.current)?.character ?? "",
@@ -294,25 +367,33 @@ export function useLearnSession() {
     });
     setCheckpointResult(undefined);
     setPhase("checkpoint");
-    presentCheckpoint();
-  }, [unlock, presentCheckpoint]);
+    const token = (flowToken.current += 1);
+    acceptedTokenRef.current = null;
+    const first = checkpointRef.current.current();
+    if (first) void presentPrompt(first, token);
+    else finishCheckpoint();
+  }, [audio, presentPrompt, finishCheckpoint]);
 
-  const checkpointAnswer = useCallback(
-    (input: string) => {
+  const acceptCheckpoint = useCallback(
+    (raw: string) => {
       const cp = checkpointRef.current;
       if (!cp) return;
-      cp.answer(input);
+      const first = firstSupported(raw);
+      if (!first) return;
+      const token = claimPrompt();
+      if (token === null) return;
+      cp.answer(first);
       forceTick((n) => n + 1);
       if (cp.isComplete()) {
-        const applied = applyCheckpoint(stateRef.current, cp.grade());
-        saveCurriculum(stateRef.current);
-        setCheckpointResult(applied);
-        setPhase("checkpoint-result");
-      } else {
-        presentCheckpoint();
+        finishCheckpoint();
+        return;
       }
+      const next = cp.current();
+      const nextToken = (flowToken.current += 1);
+      acceptedTokenRef.current = null;
+      if (next) void presentPrompt(next, nextToken);
     },
-    [presentCheckpoint],
+    [claimPrompt, presentPrompt, finishCheckpoint],
   );
 
   useEffect(() => {
@@ -326,7 +407,14 @@ export function useLearnSession() {
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, []);
 
-  useEffect(() => clearTimers, [clearTimers]);
+  // Invalidate pending async work and stop audio on unmount.
+  useEffect(
+    () => () => {
+      flowToken.current += 1;
+      audio.cancel();
+    },
+    [audio],
+  );
 
   const current: CharacterProgress | undefined = newestCharacter(
     stateRef.current,
@@ -344,6 +432,8 @@ export function useLearnSession() {
     auto,
     readiness,
     checkpointResult,
+    inputReady,
+    isPlaying,
     checkpoint: {
       position: checkpoint?.position ?? 0,
       length: checkpoint?.length ?? 0,
@@ -357,12 +447,13 @@ export function useLearnSession() {
     },
     actions: {
       begin,
-      record,
+      acceptIsolated,
+      submitGroupWord,
+      acceptCheckpoint,
       replay,
       continueNow,
       endSession,
       startCheckpoint,
-      checkpointAnswer,
     },
   };
 }

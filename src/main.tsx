@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import { App } from "./App.tsx";
+import { LearnAudioProvider } from "./ui/learn-audio.tsx";
 import { SettingsProvider } from "./ui/settings-provider.tsx";
 import "./global.css";
 
@@ -17,7 +18,9 @@ createRoot(rootElement).render(
   <StrictMode>
     <BrowserRouter basename={basename}>
       <SettingsProvider>
-        <App />
+        <LearnAudioProvider>
+          <App />
+        </LearnAudioProvider>
       </SettingsProvider>
     </BrowserRouter>
   </StrictMode>,
