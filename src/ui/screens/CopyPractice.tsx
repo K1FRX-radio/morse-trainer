@@ -67,7 +67,9 @@ export function CopyPractice() {
     if (!prompt) {
       return;
     }
-    setResult(normalize(answer) === normalize(prompt) ? "correct" : "incorrect");
+    setResult(
+      normalize(answer) === normalize(prompt) ? "correct" : "incorrect",
+    );
     setRevealed(true);
   }
 
@@ -115,7 +117,9 @@ export function CopyPractice() {
       {result && (
         <p
           className={
-            result === "correct" ? "feedback feedback--ok" : "feedback feedback--bad"
+            result === "correct"
+              ? "feedback feedback--ok"
+              : "feedback feedback--bad"
           }
           role="status"
         >

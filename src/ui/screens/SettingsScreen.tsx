@@ -110,7 +110,9 @@ export function SettingsScreen() {
         <select
           value={settings.pacing}
           onChange={(event) =>
-            update({ pacing: event.target.value === "manual" ? "manual" : "auto" })
+            update({
+              pacing: event.target.value === "manual" ? "manual" : "auto",
+            })
           }
         >
           <option value="auto">Automatic (recommended)</option>

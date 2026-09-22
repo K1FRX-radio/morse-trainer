@@ -74,8 +74,14 @@ export function normalizeSettings(
   return {
     charWpm,
     effectiveWpm,
-    toneHz: clamp(settings.toneHz ?? DEFAULT_SETTINGS.toneHz, SETTING_RANGES.toneHz),
-    volume: clamp(settings.volume ?? DEFAULT_SETTINGS.volume, SETTING_RANGES.volume),
+    toneHz: clamp(
+      settings.toneHz ?? DEFAULT_SETTINGS.toneHz,
+      SETTING_RANGES.toneHz,
+    ),
+    volume: clamp(
+      settings.volume ?? DEFAULT_SETTINGS.volume,
+      SETTING_RANGES.volume,
+    ),
     noiseLevel: clamp(
       settings.noiseLevel ?? DEFAULT_SETTINGS.noiseLevel,
       SETTING_RANGES.noiseLevel,

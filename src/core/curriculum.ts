@@ -187,9 +187,7 @@ export function recordReviewOutcome(
 
 /** Characters currently flagged for review, in curriculum order. */
 export function reviewCharacters(state: CurriculumState): string[] {
-  return state.characters
-    .filter((c) => c.needsReview)
-    .map((c) => c.character);
+  return state.characters.filter((c) => c.needsReview).map((c) => c.character);
 }
 
 /**
@@ -209,10 +207,7 @@ export function forceUnlockNext(
 }
 
 export type ReadinessReason =
-  | "READY"
-  | "NEEDS_PRACTICE"
-  | "NEEDS_REVIEW"
-  | "COMPLETE";
+  "READY" | "NEEDS_PRACTICE" | "NEEDS_REVIEW" | "COMPLETE";
 
 export type Readiness = {
   ready: boolean;

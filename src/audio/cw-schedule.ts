@@ -61,7 +61,11 @@ export function scheduleToGainEvents(
       }
 
       events.push({ atSec: startMs / 1000, value: 0, ramp: "set" });
-      events.push({ atSec: (startMs + attack) / 1000, value: peak, ramp: "linear" });
+      events.push({
+        atSec: (startMs + attack) / 1000,
+        value: peak,
+        ramp: "linear",
+      });
       events.push({
         atSec: (endMs - release) / 1000,
         value: peak,

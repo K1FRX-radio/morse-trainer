@@ -216,7 +216,12 @@ export class CheckpointSession {
   }
 
   grade(): CheckpointResult {
-    return gradeCheckpoint(this.targets, this.answers, this.newest, this.config);
+    return gradeCheckpoint(
+      this.targets,
+      this.answers,
+      this.newest,
+      this.config,
+    );
   }
 }
 

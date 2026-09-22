@@ -3,7 +3,11 @@
 // keying. A fresh oscillator/gain pair is created per playback and discarded on
 // completion or cancellation so suspend/resume on mobile cannot strand a tone.
 
-import { buildSchedule, type Schedule, type TimingOptions } from "../core/timing.ts";
+import {
+  buildSchedule,
+  type Schedule,
+  type TimingOptions,
+} from "../core/timing.ts";
 import type { AudioSession } from "./audio-session.ts";
 import { scheduleToGainEvents } from "./cw-schedule.ts";
 

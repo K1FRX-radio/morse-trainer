@@ -114,7 +114,10 @@ export class AudioSession {
   async applyPreferredSink(): Promise<void> {
     if (this.method === "audiocontext") {
       const ctx = this.ctx as SinkAudioContext | undefined;
-      if (typeof ctx?.setSinkId !== "function" || ctx.sinkId === this.preferredSinkId) {
+      if (
+        typeof ctx?.setSinkId !== "function" ||
+        ctx.sinkId === this.preferredSinkId
+      ) {
         return;
       }
       try {
@@ -124,7 +127,10 @@ export class AudioSession {
       }
     } else if (this.method === "media-element") {
       const element = this.sinkElement;
-      if (typeof element?.setSinkId !== "function" || element.sinkId === this.preferredSinkId) {
+      if (
+        typeof element?.setSinkId !== "function" ||
+        element.sinkId === this.preferredSinkId
+      ) {
         return;
       }
       // setSinkId on a media element requires it to be playing.

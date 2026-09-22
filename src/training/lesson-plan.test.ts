@@ -28,7 +28,9 @@ function firstLesson(seed = 1): LessonPlan {
 describe("LessonPlan first lesson", () => {
   it("introduces every new character exactly once", () => {
     const cards = drain(firstLesson());
-    const intros = cards.filter((c) => c.type === "introduce").map((c) => c.target);
+    const intros = cards
+      .filter((c) => c.type === "introduce")
+      .map((c) => c.target);
     expect(intros).toEqual(["K", "M"]);
   });
 

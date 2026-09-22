@@ -5,10 +5,7 @@
 import type { Rng } from "../core/rng.ts";
 
 export type CopyContentMode =
-  | "letters"
-  | "letters-numbers"
-  | "words"
-  | "callsigns";
+  "letters" | "letters-numbers" | "words" | "callsigns";
 
 export const COPY_CONTENT_MODES: readonly CopyContentMode[] = [
   "letters",

@@ -9,11 +9,7 @@ import type { Rng } from "../core/rng.ts";
 import type { Direction } from "../core/types.ts";
 
 export type LessonPhase =
-  | "introduce"
-  | "acquire"
-  | "remediate"
-  | "contrast"
-  | "groups";
+  "introduce" | "acquire" | "remediate" | "contrast" | "groups";
 
 export type PlannedExercise = {
   type: LearnExerciseType;

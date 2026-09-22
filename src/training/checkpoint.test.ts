@@ -38,7 +38,9 @@ describe("checkpointLength", () => {
   it("stays within configured bounds across the current curriculum", () => {
     for (let n = 2; n <= KOCH_ORDER.length; n++) {
       const length = checkpointLength(n);
-      expect(length).toBeGreaterThanOrEqual(DEFAULT_CHECKPOINT_CONFIG.minLength);
+      expect(length).toBeGreaterThanOrEqual(
+        DEFAULT_CHECKPOINT_CONFIG.minLength,
+      );
       expect(length).toBeLessThanOrEqual(DEFAULT_CHECKPOINT_CONFIG.maxLength);
     }
   });
@@ -54,7 +56,11 @@ describe("buildCheckpoint", () => {
     const state = makeState(n);
     const active = unlockedCharacters(state);
     const newest = active[active.length - 1];
-    return { active, newest, items: buildCheckpoint(active, newest, createRng(seed)) };
+    return {
+      active,
+      newest,
+      items: buildCheckpoint(active, newest, createRng(seed)),
+    };
   }
 
   function counts(items: string[]): Record<string, number> {
@@ -85,9 +91,9 @@ describe("buildCheckpoint", () => {
     const { active, newest, items } = build(6, 3);
     const others = active.filter((c) => c !== newest);
     const otherCounts = others.map((c) => items.filter((x) => x === c).length);
-    expect(Math.max(...otherCounts) - Math.min(...otherCounts)).toBeLessThanOrEqual(
-      1,
-    );
+    expect(
+      Math.max(...otherCounts) - Math.min(...otherCounts),
+    ).toBeLessThanOrEqual(1);
   });
 
   it("is deterministic for identical seeds", () => {
@@ -224,13 +230,20 @@ describe("checkpointReadiness", () => {
   it("is ready when the newest character is well practiced", () => {
     const state = makeState(3);
     setRx(state, "U", Array(12).fill(true));
-    expect(checkpointReadiness(state)).toEqual({ ready: true, reason: "READY" });
+    expect(checkpointReadiness(state)).toEqual({
+      ready: true,
+      reason: "READY",
+    });
   });
 
   it("vetoes readiness for a well-sampled weak older character", () => {
     const state = makeState(3);
     setRx(state, "U", Array(12).fill(true));
-    setRx(state, "K", [...Array(8)].map((_, i) => i < 5)); // 62.5% over 8
+    setRx(
+      state,
+      "K",
+      [...Array(8)].map((_, i) => i < 5),
+    ); // 62.5% over 8
     const readiness = checkpointReadiness(state);
     expect(readiness.reason).toBe("NEEDS_REVIEW");
     expect(readiness.weakCharacter).toBe("K");

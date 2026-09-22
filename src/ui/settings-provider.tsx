@@ -1,8 +1,5 @@
 import { useCallback, useMemo, useState, type ReactNode } from "react";
-import {
-  normalizeSettings,
-  type PracticeSettings,
-} from "../core/settings.ts";
+import { normalizeSettings, type PracticeSettings } from "../core/settings.ts";
 import {
   OUTPUT_DEVICE_STORAGE_KEY,
   SETTINGS_STORAGE_KEY,
