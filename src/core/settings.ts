@@ -3,6 +3,11 @@
 // audio and timing.
 
 export type PacingMode = "auto" | "manual";
+export type ContinuousCopyDurationMs = 60000 | 180000 | 300000 | 600000;
+
+export const CONTINUOUS_COPY_DURATIONS = [
+  60000, 180000, 300000, 600000,
+] as const satisfies readonly ContinuousCopyDurationMs[];
 
 export type PracticeSettings = {
   /** Character speed in WPM; sets element and intra-character timing. */
@@ -17,6 +22,8 @@ export type PracticeSettings = {
   noiseLevel: number;
   /** Learn-mode flow: auto-advance, or wait for Enter between cards. */
   pacing: PacingMode;
+  /** Requested duration of the continuous-copy portion of a Learn lesson. */
+  continuousCopyDurationMs: ContinuousCopyDurationMs;
 };
 
 export type SettingRange = {
@@ -44,6 +51,7 @@ export const DEFAULT_SETTINGS: PracticeSettings = {
   volume: SETTING_RANGES.volume.default,
   noiseLevel: SETTING_RANGES.noiseLevel.default,
   pacing: "auto",
+  continuousCopyDurationMs: 60000,
 };
 
 function clamp(value: number, range: SettingRange): number {
@@ -87,5 +95,18 @@ export function normalizeSettings(
       SETTING_RANGES.noiseLevel,
     ),
     pacing: settings.pacing === "manual" ? "manual" : "auto",
+    continuousCopyDurationMs: CONTINUOUS_COPY_DURATIONS.includes(
+      settings.continuousCopyDurationMs as ContinuousCopyDurationMs,
+    )
+      ? (settings.continuousCopyDurationMs as ContinuousCopyDurationMs)
+      : DEFAULT_SETTINGS.continuousCopyDurationMs,
   };
+}
+
+export function recommendedContinuousCopyDurationMs(
+  activeCharacters: number,
+): ContinuousCopyDurationMs {
+  if (activeCharacters <= 4) return 60000;
+  if (activeCharacters <= 10) return 180000;
+  return 300000;
 }

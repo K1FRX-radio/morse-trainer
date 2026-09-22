@@ -1,5 +1,10 @@
 import { useState } from "react";
-import { SETTING_RANGES, type PracticeSettings } from "../../core/settings.ts";
+import {
+  CONTINUOUS_COPY_DURATIONS,
+  SETTING_RANGES,
+  type ContinuousCopyDurationMs,
+  type PracticeSettings,
+} from "../../core/settings.ts";
 import {
   getOutputSupport,
   listOutputDevices,
@@ -120,8 +125,33 @@ export function SettingsScreen() {
         </select>
       </label>
 
+      <label className="field">
+        <span className="field__label">Continuous copy duration</span>
+        <select
+          value={settings.continuousCopyDurationMs}
+          onChange={(event) =>
+            update({
+              continuousCopyDurationMs: Number(
+                event.target.value,
+              ) as ContinuousCopyDurationMs,
+            })
+          }
+        >
+          {CONTINUOUS_COPY_DURATIONS.map((durationMs) => {
+            const minutes = durationMs / 60000;
+            return (
+              <option key={durationMs} value={durationMs}>
+                {minutes} {minutes === 1 ? "minute" : "minutes"}
+              </option>
+            );
+          })}
+        </select>
+      </label>
+
       <p className="settings__note">
         Effective speed is capped at the character speed (Farnsworth spacing).
+        Learn recommends a continuous-copy duration for your active character
+        set without changing this choice.
       </p>
 
       <h3>Audio output</h3>

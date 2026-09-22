@@ -484,6 +484,9 @@ describe("LearnScreen audio sequencing", () => {
     expect(
       screen.getByRole("heading", { name: "Ready for continuous copy?" }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Recommended for your active set: 1 minute/),
+    ).toBeInTheDocument();
     expect(fake.playCount()).toBe(0);
     fireEvent.click(screen.getByRole("button", { name: "Go" }));
     await flush();
@@ -501,6 +504,21 @@ describe("LearnScreen audio sequencing", () => {
       screen.queryByRole("button", { name: "Replay" }),
     ).not.toBeInTheDocument();
     expect(screen.queryByText(/characters$/)).not.toBeInTheDocument();
+  });
+
+  it("uses the learner's selected continuous-copy duration", async () => {
+    localStorage.setItem(
+      "k1frx.settings.v1",
+      JSON.stringify({ continuousCopyDurationMs: 180000 }),
+    );
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+    await toContinuousCopyTransition(fake);
+
+    expect(screen.getByText(/Selected: 3 minutes/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Go" }));
+    await flush();
+    expect(fake.pending[0]?.schedule?.totalMs).toBeGreaterThanOrEqual(180000);
   });
 
   it("keeps input through the grace period and then shows aligned results", async () => {

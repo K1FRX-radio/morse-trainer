@@ -3,6 +3,7 @@ import {
   DEFAULT_SETTINGS,
   SETTING_RANGES,
   normalizeSettings,
+  recommendedContinuousCopyDurationMs,
 } from "./settings.ts";
 
 describe("normalizeSettings", () => {
@@ -36,5 +37,35 @@ describe("normalizeSettings", () => {
   it("falls back to defaults for NaN", () => {
     const result = normalizeSettings({ charWpm: Number.NaN });
     expect(result.charWpm).toBe(DEFAULT_SETTINGS.charWpm);
+  });
+
+  it("defaults old stored settings to one minute of continuous copy", () => {
+    expect(normalizeSettings({ charWpm: 18 }).continuousCopyDurationMs).toBe(
+      60000,
+    );
+  });
+
+  it("accepts only named continuous-copy durations", () => {
+    expect(
+      normalizeSettings({ continuousCopyDurationMs: 300000 })
+        .continuousCopyDurationMs,
+    ).toBe(300000);
+    expect(
+      normalizeSettings({ continuousCopyDurationMs: 90000 as 60000 })
+        .continuousCopyDurationMs,
+    ).toBe(60000);
+  });
+});
+
+describe("recommendedContinuousCopyDurationMs", () => {
+  it.each([
+    [2, 60000],
+    [4, 60000],
+    [5, 180000],
+    [10, 180000],
+    [11, 300000],
+    [21, 300000],
+  ])("recommends by active-set size (%i)", (active, expected) => {
+    expect(recommendedContinuousCopyDurationMs(active)).toBe(expected);
   });
 });

@@ -10,6 +10,7 @@ import {
 } from "../../core/curriculum.ts";
 import { encodeText, isSupportedCharacter } from "../../core/morse.ts";
 import { createRng } from "../../core/rng.ts";
+import { recommendedContinuousCopyDurationMs } from "../../core/settings.ts";
 import type { CharacterProgress } from "../../core/types.ts";
 import {
   applyCheckpoint,
@@ -339,6 +340,7 @@ export function useLearnSession() {
       state: stateRef.current,
       rng: createRng(Date.now() >>> 0),
       introduced: loadIntroduced(),
+      continuousCopyDurationMs: settings.continuousCopyDurationMs,
       continuousCopyTiming: timing,
     });
     session.start();
@@ -350,7 +352,15 @@ export function useLearnSession() {
     const first = session.next();
     if (first) showEvent(first);
     else endSession();
-  }, [audio, showEvent, endSession, clearHeldKeys, continuousCopy, timing]);
+  }, [
+    audio,
+    showEvent,
+    endSession,
+    clearHeldKeys,
+    continuousCopy,
+    settings.continuousCopyDurationMs,
+    timing,
+  ]);
 
   // Records the answer, replays on a miss, and advances only after any
   // corrective playback finishes and while this prompt is still current.
@@ -592,6 +602,10 @@ export function useLearnSession() {
       totalMs: continuousCopy.totalMs,
       result: continuousCopy.result,
       active: continuousCopy.active,
+      selectedDurationMs: settings.continuousCopyDurationMs,
+      recommendedDurationMs: recommendedContinuousCopyDurationMs(
+        stateRef.current.characters.length,
+      ),
     },
     phaseLabel,
     feedback,

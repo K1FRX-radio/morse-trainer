@@ -320,6 +320,9 @@ export function LearnScreen() {
   }
 
   if (learn.transition) {
+    const recommendationMinutes =
+      learn.continuousCopy.recommendedDurationMs / 60000;
+    const selectedMinutes = learn.continuousCopy.selectedDurationMs / 60000;
     return (
       <section>
         <div className="learn__top">
@@ -333,6 +336,13 @@ export function LearnScreen() {
         <div className="learn__intro" aria-live="polite">
           <h2>{learn.transition.title}</h2>
           <p>{learn.transition.text}</p>
+          {learn.transition.id === "continuous-copy" && (
+            <p className="field__label">
+              Recommended for your active set: {recommendationMinutes}{" "}
+              {recommendationMinutes === 1 ? "minute" : "minutes"}. Selected:{" "}
+              {selectedMinutes} {selectedMinutes === 1 ? "minute" : "minutes"}.
+            </p>
+          )}
           <button type="button" onClick={continueTransition} autoFocus>
             {learn.transition.actionLabel}
           </button>
