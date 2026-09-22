@@ -26,6 +26,12 @@ export function gradeCopy(target: string, answer: string): CopyGrade {
  * inserted or dropped character does not mark everything after it wrong. perChar
  * credits target positions matched by the alignment; correct still requires an
  * exact match. Use for multi-character groups and words.
+ *
+ * Tie-breaking is deterministic: backtracking runs from the end and, among
+ * equal-cost steps, prefers a diagonal match/substitution, then a target
+ * deletion, then an answer insertion. For repeated characters this credits the
+ * right-most matching occurrences, and a single insertion or deletion stays
+ * confined to one target position instead of shifting all later characters.
  */
 export function gradeCopyAligned(target: string, answer: string): CopyGrade {
   const t = normalizeCopy(target);

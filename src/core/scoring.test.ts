@@ -56,3 +56,56 @@ describe("gradeCopyAligned", () => {
     expect(grade.perChar).toEqual([true, false, true]);
   });
 });
+
+describe("gradeCopyAligned repeated and ambiguous characters", () => {
+  // Deterministic tie-break: right-most occurrences are credited, and a single
+  // insertion/deletion stays confined to one target position (no cascade).
+  it("confines a dropped repeat to one interior position", () => {
+    expect(gradeCopyAligned("KMM", "KM").perChar).toEqual([true, false, true]);
+    expect(gradeCopyAligned("KMK", "KK").perChar).toEqual([true, false, true]);
+  });
+
+  it("confines a dropped leading repeat to the first position", () => {
+    expect(gradeCopyAligned("KKM", "KM").perChar).toEqual([false, true, true]);
+  });
+
+  it("does not shift later characters after a leading insertion", () => {
+    expect(gradeCopyAligned("KM", "XKM").perChar).toEqual([true, true]);
+  });
+
+  it("does not shift characters after a trailing insertion", () => {
+    expect(gradeCopyAligned("KM", "KMX").perChar).toEqual([true, true]);
+  });
+
+  it("credits later characters after a leading deletion", () => {
+    expect(gradeCopyAligned("KMUR", "MUR").perChar).toEqual([
+      false,
+      true,
+      true,
+      true,
+    ]);
+  });
+
+  it("handles multiple insertions and deletions", () => {
+    // Mid insertion of X: every target position still credited.
+    expect(gradeCopyAligned("KMUR", "KXMUR").perChar).toEqual([
+      true,
+      true,
+      true,
+      true,
+    ]);
+    // Leading deletion plus a trailing substitution.
+    expect(gradeCopyAligned("KMUR", "MUX").perChar).toEqual([
+      false,
+      true,
+      true,
+      false,
+    ]);
+  });
+
+  it("is deterministic for the same inputs", () => {
+    expect(gradeCopyAligned("KMM", "KM")).toEqual(
+      gradeCopyAligned("KMM", "KM"),
+    );
+  });
+});
