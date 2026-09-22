@@ -37,7 +37,7 @@ function completeCorrect(session: LearnSession, event: LessonEvent): void {
     session.continueNotification();
   } else if (event.type === "continuous-copy") {
     session.completeContinuousCopy(
-      event.plan.target,
+      event.plan.gradingTarget,
       event.plan.scheduledDurationMs,
     );
   } else if (event.type === "introduce") {
@@ -158,6 +158,14 @@ describe("LearnSession practice", () => {
     expect(summary.groups).toBe(16);
     expect(summary.words).toBe(0);
     expect(summary.continuousCopyDurationMs).toBeGreaterThanOrEqual(1000);
+    expect(summary.continuousRandomGroupTokens).toBeGreaterThan(0);
+    expect(summary.continuousWordTokens).toBe(0);
+    expect(summary.continuousTotalTokens).toBe(
+      summary.continuousRandomGroupTokens + summary.continuousWordTokens,
+    );
+    expect(summary.continuousInsertions).toBe(0);
+    expect(summary.continuousDeletions).toBe(0);
+    expect(summary.continuousSubstitutions).toBe(0);
     expect(summary.charactersTransmitted).toBeGreaterThan(40);
     expect(summary.charactersTyped).toBe(summary.charactersTransmitted);
     expect(summary.alignedCorrectCharacters).toBe(
@@ -597,7 +605,7 @@ describe("LearnSession transitions", () => {
     state.characters[0].reviewStreak = 2;
     const unlockedBefore = state.characters.length;
     const result = session.completeContinuousCopy(
-      event.plan.target,
+      event.plan.gradingTarget,
       event.plan.scheduledDurationMs,
     );
 
@@ -649,7 +657,7 @@ describe("LearnSession transitions", () => {
     expect(session.currentEvent).toBeUndefined();
   });
 
-  it("gates eligible words behind a transition after continuous copy", () => {
+  it("runs eligible focused words before mixed continuous copy", () => {
     const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
     while (state.characters.length < 10) forceUnlockNext(state);
     const active = state.characters.map((character) => character.character);
@@ -657,23 +665,18 @@ describe("LearnSession transitions", () => {
       state,
       rng: createRng(8),
       introduced: active,
-      continuousCopyDurationMs: 1000,
+      continuousCopyDurationMs: 60000,
     });
     session.start(0);
 
     let event = session.next();
-    while (event?.type !== "continuous-copy") {
-      if (!event) throw new Error("expected continuous copy");
+    while (!(event?.type === "transition" && event.id === "word-copy")) {
+      if (!event) throw new Error("expected word transition");
       completeCorrect(session, event);
       event = session.next();
     }
-    session.completeContinuousCopy(
-      event.plan.target,
-      event.plan.scheduledDurationMs,
-    );
 
-    const transition = session.next();
-    expect(transition).toEqual({
+    expect(event).toEqual({
       type: "transition",
       id: "word-copy",
       title: "Ready to copy words?",
@@ -681,15 +684,13 @@ describe("LearnSession transitions", () => {
       destinationPhase: "words",
       actionLabel: "Go",
     });
-    expect(session.phaseLabel).toBe("Continuous copy");
-    expect(session.next()).toBe(transition);
+    expect(session.phaseLabel).toBe("3-character groups");
+    expect(session.next()).toBe(event);
     expect(session.continueTransition()).toBe(true);
 
     const words: string[] = [];
     event = session.next();
-    while (event) {
-      expect(isExercise(event)).toBe(true);
-      if (!isExercise(event)) throw new Error("expected word exercise");
+    while (event && isExercise(event)) {
       expect(event.type).toBe("copy-word");
       expect(event.phase).toBe("words");
       expect(
@@ -701,6 +702,53 @@ describe("LearnSession transitions", () => {
     }
     expect(words).toHaveLength(DEFAULT_LESSON_CONFIG.wordCopyCount);
     expect(new Set(words)).toHaveLength(words.length);
+    expect(event).toEqual({
+      type: "transition",
+      id: "continuous-copy",
+      title: "Ready for continuous copy?",
+      text: "Type continuously while you listen. Keep going if you miss a character; the sound will not pause.",
+      destinationPhase: "continuous-copy",
+      actionLabel: "Go",
+    });
+    expect(session.phaseLabel).toBe("Word copy");
+    session.continueTransition();
+    const stream = session.next();
+    expect(stream?.type).toBe("continuous-copy");
+    if (stream?.type === "continuous-copy") {
+      expect(stream.plan.tokens.some((token) => token.kind === "word")).toBe(
+        true,
+      );
+    }
+  });
+
+  it("keeps the word transition attempt-neutral", () => {
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    while (state.characters.length < 10) forceUnlockNext(state);
+    const active = state.characters.map((character) => character.character);
+    const session = new LearnSession({
+      state,
+      rng: createRng(18),
+      introduced: active,
+      continuousCopyDurationMs: 1000,
+    });
+    session.start(0);
+
+    let event = session.next();
+    while (!(event?.type === "transition" && event.id === "word-copy")) {
+      if (!event) throw new Error("expected word transition");
+      completeCorrect(session, event);
+      event = session.next();
+    }
+    const before = session.summary();
+    const observations = state.characters.map(
+      (character) => character.rx.totalAttempts,
+    );
+
+    expect(session.continueTransition()).toBe(true);
+    expect(session.summary()).toEqual(before);
+    expect(
+      state.characters.map((character) => character.rx.totalAttempts),
+    ).toEqual(observations);
   });
 
   it("excludes replayed word copy from mastery and remediation", () => {
@@ -716,16 +764,11 @@ describe("LearnSession transitions", () => {
     session.start(0);
 
     let event = session.next();
-    while (event?.type !== "continuous-copy") {
-      if (!event) throw new Error("expected continuous copy");
+    while (!(event?.type === "transition" && event.id === "word-copy")) {
+      if (!event) throw new Error("expected word transition");
       completeCorrect(session, event);
       event = session.next();
     }
-    session.completeContinuousCopy(
-      event.plan.target,
-      event.plan.scheduledDurationMs,
-    );
-    session.next();
     session.continueTransition();
     const word = session.next();
     if (!word || !isExercise(word)) throw new Error("expected word exercise");

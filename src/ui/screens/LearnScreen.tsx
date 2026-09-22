@@ -6,7 +6,8 @@ import {
   type CompositionEvent,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
-import { encodeCharacter, isSupportedCharacter } from "../../core/morse.ts";
+import { encodeCharacter } from "../../core/morse.ts";
+import { sanitizeCopyInput } from "../copy-input.ts";
 import { useLearnSession } from "../hooks/useLearnSession.ts";
 
 const PROMPTS: Record<string, string> = {
@@ -15,16 +16,19 @@ const PROMPTS: Record<string, string> = {
   "copy-word": "Copy the word you hear",
 };
 
-function sanitize(value: string): string {
-  // Keep every supported Morse character, including punctuation like . , = / ?
-  return [...value.toUpperCase()].filter(isSupportedCharacter).join("");
-}
-
 export function LearnScreen() {
   const learn = useLearnSession();
-  const { exercise, feedback, awaitingContinue, inputReady, isPlaying } = learn;
+  const {
+    exercise,
+    feedback,
+    awaitingContinue,
+    inputReady,
+    typingReady,
+    isPlaying,
+  } = learn;
   const {
     acceptIsolated,
+    updateGroupWord,
     submitGroupWord,
     acceptCheckpoint,
     replay,
@@ -49,18 +53,21 @@ export function LearnScreen() {
 
   const isCopy = exercise?.direction === "rx" && exercise.type !== "introduce";
   const inCheckpoint = learn.phase === "checkpoint";
+  const supportsTypeBehind =
+    exercise?.type === "copy-group" || exercise?.type === "copy-word";
+  const answerReady = supportsTypeBehind ? typingReady : inputReady;
 
   // Clear the field for each new prompt (practice card or checkpoint item).
   useEffect(() => {
     setValue("");
   }, [exercise, learn.checkpoint.position]);
 
-  // Focus the field once its prompt audio has finished and input is unlocked.
+  // Groups and words focus when playback begins; isolated copy waits for audio.
   useEffect(() => {
-    if (inputReady && (isCopy || inCheckpoint)) {
+    if (answerReady && (isCopy || inCheckpoint)) {
       inputRef.current?.focus();
     }
-  }, [inputReady, isCopy, inCheckpoint]);
+  }, [answerReady, isCopy, inCheckpoint]);
 
   useEffect(() => {
     if (learn.continuousCopy.active) continuousInputRef.current?.focus();
@@ -125,14 +132,9 @@ export function LearnScreen() {
       acceptIsolated(raw);
       return;
     }
-    const next = sanitize(raw);
+    const next = sanitizeCopyInput(raw);
     setValue(next);
-    if (
-      exercise.type === "copy-group" &&
-      next.length >= exercise.target.length
-    ) {
-      submitGroupWord(next);
-    }
+    updateGroupWord(next);
   }
 
   function onInputChange(event: ChangeEvent<HTMLInputElement>) {
@@ -158,7 +160,7 @@ export function LearnScreen() {
 
   // Keep focus in the answer field, but never let a focus change unlock input.
   function retainFocus() {
-    if (inputReady && (isCopy || inCheckpoint)) {
+    if (answerReady && (isCopy || inCheckpoint)) {
       window.setTimeout(() => inputRef.current?.focus(), 0);
     }
   }
@@ -207,6 +209,9 @@ export function LearnScreen() {
           {s.continuousCopyResult && (
             <li>
               Continuous copy: {Math.round(s.continuousCopyDurationMs / 1000)} s
+              · {s.continuousTotalTokens} tokens (
+              {s.continuousRandomGroupTokens} groups · {s.continuousWordTokens}{" "}
+              words)
             </li>
           )}
           <li>
@@ -414,6 +419,10 @@ export function LearnScreen() {
             {result.alignedCorrect} correct · {result.insertions} extra ·{" "}
             {result.deletions} missed · {result.substitutions} changed
           </li>
+          <li>
+            {result.totalTokens} tokens · {result.randomGroupTokens} groups ·{" "}
+            {result.wordTokens} words
+          </li>
         </ul>
         <button type="button" onClick={continueContinuousCopy} autoFocus>
           Continue
@@ -569,7 +578,7 @@ export function LearnScreen() {
             onCompositionStart={() => (composingRef.current = true)}
             onCompositionEnd={onCompositionEnd}
             onBlur={retainFocus}
-            disabled={!inputReady || !!feedback}
+            disabled={!answerReady || !!feedback}
             aria-label="Your copy"
           />
           <div className="practice__controls">

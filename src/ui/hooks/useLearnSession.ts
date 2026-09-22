@@ -46,6 +46,11 @@ export type Feedback = {
   morse: string;
 };
 
+type QueuedSubmission = {
+  token: number;
+  kind: "automatic" | "explicit";
+};
+
 function loadCurriculum(): CurriculumState {
   try {
     const raw = localStorage.getItem(CURRICULUM_STORAGE_KEY);
@@ -136,6 +141,9 @@ export function useLearnSession() {
   const playbackGeneration = useRef(0);
   const heldKeysRef = useRef(new Set<string>());
   const introDoneToken = useRef<number | null>(null);
+  const queuedSubmissionRef = useRef<QueuedSubmission | null>(null);
+  const currentAnswerRef = useRef("");
+  const flushQueuedSubmissionRef = useRef<(token: number) => void>(() => {});
 
   const [phase, setPhase] = useState<LearnPhase>("onboarding");
   const [exercise, setExercise] = useState<PlannedExercise | undefined>(
@@ -158,6 +166,7 @@ export function useLearnSession() {
     CheckpointApplied | undefined
   >(undefined);
   const [inputReady, setInputReady] = useState(false);
+  const [typingReady, setTypingReady] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [, forceTick] = useState(0);
 
@@ -206,16 +215,18 @@ export function useLearnSession() {
     [audio, timing, settings.toneHz],
   );
 
-  // Locks input, plays the prompt, and unlocks only after playback completes
-  // if this prompt is still current.
+  // Group and word fields permit typing during playback, but every prompt
+  // remains locked against grading until its audio completes.
   const presentPrompt = useCallback(
-    async (target: string, token: number) => {
+    async (target: string, token: number, typeBehind = false) => {
       lockedRef.current = true;
       setInputReady(false);
+      setTypingReady(typeBehind);
       await play(target);
       if (token !== flowToken.current) return;
       lockedRef.current = false;
       setInputReady(true);
+      flushQueuedSubmissionRef.current(token);
     },
     [play],
   );
@@ -238,6 +249,7 @@ export function useLearnSession() {
     async (target: string, token: number) => {
       lockedRef.current = true;
       setInputReady(false);
+      setTypingReady(false);
       await play(target);
       if (token !== flowToken.current) return;
       await delay(INTRO_GAP);
@@ -254,6 +266,8 @@ export function useLearnSession() {
     continuousCopy.abandon();
     continuousCopy.reset();
     flowToken.current += 1;
+    queuedSubmissionRef.current = null;
+    currentAnswerRef.current = "";
     playbackGeneration.current += 1;
     clearHeldKeys();
     playingRef.current = false;
@@ -275,8 +289,11 @@ export function useLearnSession() {
     (event: LessonEvent) => {
       const token = (flowToken.current += 1);
       acceptedTokenRef.current = null;
+      queuedSubmissionRef.current = null;
+      currentAnswerRef.current = "";
       lockedRef.current = true;
       setInputReady(false);
+      setTypingReady(false);
       setFeedback(undefined);
       setAwaitingContinue(false);
       setPhaseLabel(sessionRef.current?.phaseLabel);
@@ -310,7 +327,13 @@ export function useLearnSession() {
       setNotification(undefined);
       setExercise(event);
       if (event.type === "introduce") void runIntro(event.target, token);
-      else void presentPrompt(event.target, token);
+      else {
+        void presentPrompt(
+          event.target,
+          token,
+          event.type === "copy-group" || event.type === "copy-word",
+        );
+      }
     },
     [runIntro, presentPrompt, clearHeldKeys, continuousCopy],
   );
@@ -332,6 +355,8 @@ export function useLearnSession() {
     clearHeldKeys();
     await audio.cancel();
     flowToken.current += 1;
+    queuedSubmissionRef.current = null;
+    currentAnswerRef.current = "";
     playbackGeneration.current += 1;
     playingRef.current = false;
     setIsPlaying(false);
@@ -400,6 +425,7 @@ export function useLearnSession() {
     acceptedTokenRef.current = token;
     lockedRef.current = true;
     setInputReady(false);
+    setTypingReady(false);
     return token;
   }, []);
 
@@ -416,16 +442,69 @@ export function useLearnSession() {
     [claimPrompt, afterAnswer],
   );
 
+  const updateGroupWord = useCallback(
+    (value: string) => {
+      const ex = exerciseRef.current;
+      if (!ex || (ex.type !== "copy-group" && ex.type !== "copy-word")) return;
+      const token = flowToken.current;
+      if (acceptedTokenRef.current === token) return;
+      currentAnswerRef.current = value;
+      if (ex.type !== "copy-group") return;
+
+      if (value.length < ex.target.length) {
+        if (
+          queuedSubmissionRef.current?.token === token &&
+          queuedSubmissionRef.current.kind === "automatic"
+        ) {
+          queuedSubmissionRef.current = null;
+        }
+        return;
+      }
+
+      if (lockedRef.current) {
+        queuedSubmissionRef.current ??= { token, kind: "automatic" };
+        return;
+      }
+      const claimedToken = claimPrompt();
+      if (claimedToken !== null) {
+        void afterAnswer(currentAnswerRef.current, claimedToken);
+      }
+    },
+    [claimPrompt, afterAnswer],
+  );
+
   const submitGroupWord = useCallback(
     (value: string) => {
       const ex = exerciseRef.current;
       if (!ex || (ex.type !== "copy-group" && ex.type !== "copy-word")) return;
-      const token = claimPrompt();
-      if (token === null) return;
-      void afterAnswer(value, token);
+      const token = flowToken.current;
+      if (acceptedTokenRef.current === token) return;
+      currentAnswerRef.current = value;
+      if (lockedRef.current) {
+        queuedSubmissionRef.current = { token, kind: "explicit" };
+        return;
+      }
+      const claimedToken = claimPrompt();
+      if (claimedToken !== null) {
+        void afterAnswer(currentAnswerRef.current, claimedToken);
+      }
     },
     [claimPrompt, afterAnswer],
   );
+
+  const flushQueuedSubmission = useCallback(
+    (token: number) => {
+      const queued = queuedSubmissionRef.current;
+      if (!queued || queued.token !== token) return;
+      queuedSubmissionRef.current = null;
+      const claimedToken = claimPrompt();
+      if (claimedToken !== null) {
+        void afterAnswer(currentAnswerRef.current, claimedToken);
+      }
+    },
+    [claimPrompt, afterAnswer],
+  );
+  flushQueuedSubmissionRef.current = flushQueuedSubmission;
 
   const replay = useCallback(() => {
     const ex = exerciseRef.current;
@@ -437,11 +516,13 @@ export function useLearnSession() {
     const token = flowToken.current;
     lockedRef.current = true;
     setInputReady(false);
+    setTypingReady(ex.type === "copy-group" || ex.type === "copy-word");
     sessionRef.current?.markReplayed();
     void play(ex.target).then(() => {
       if (token !== flowToken.current) return;
       lockedRef.current = false;
       setInputReady(true);
+      flushQueuedSubmissionRef.current(token);
     });
   }, [play]);
 
@@ -473,6 +554,8 @@ export function useLearnSession() {
     const cp = checkpointRef.current;
     if (!cp) return;
     flowToken.current += 1;
+    queuedSubmissionRef.current = null;
+    currentAnswerRef.current = "";
     playbackGeneration.current += 1;
     clearHeldKeys();
     playingRef.current = false;
@@ -489,6 +572,8 @@ export function useLearnSession() {
     clearHeldKeys();
     await audio.cancel();
     flowToken.current += 1;
+    queuedSubmissionRef.current = null;
+    currentAnswerRef.current = "";
     playbackGeneration.current += 1;
     playingRef.current = false;
     setIsPlaying(false);
@@ -524,6 +609,8 @@ export function useLearnSession() {
       const next = cp.current();
       const nextToken = (flowToken.current += 1);
       acceptedTokenRef.current = null;
+      queuedSubmissionRef.current = null;
+      currentAnswerRef.current = "";
       if (next) void presentPrompt(next, nextToken);
     },
     [claimPrompt, presentPrompt, finishCheckpoint],
@@ -576,6 +663,8 @@ export function useLearnSession() {
   useEffect(
     () => () => {
       flowToken.current += 1;
+      queuedSubmissionRef.current = null;
+      currentAnswerRef.current = "";
       playbackGeneration.current += 1;
       heldKeysRef.current.clear();
       void audio.cancelAndSuspend();
@@ -615,6 +704,7 @@ export function useLearnSession() {
     readiness,
     checkpointResult,
     inputReady,
+    typingReady,
     isPlaying,
     checkpoint: {
       position: checkpoint?.position ?? 0,
@@ -630,6 +720,7 @@ export function useLearnSession() {
     actions: {
       begin,
       acceptIsolated,
+      updateGroupWord,
       submitGroupWord,
       acceptCheckpoint,
       replay,

@@ -25,13 +25,18 @@ const event: ContinuousCopyEvent = {
   type: "continuous-copy",
   id: "continuous-copy",
   plan: {
-    target: "KMKM",
+    tokens: [{ kind: "random-group", text: "KMKM" }],
+    audioText: "KMKM",
+    gradingTarget: "KMKM",
     schedule,
     requestedDurationMs: schedule.totalMs,
     scheduledDurationMs: schedule.totalMs,
   },
 };
 const result: ContinuousCopyResult = {
+  randomGroupTokens: 1,
+  wordTokens: 0,
+  totalTokens: 1,
   targetCharacters: 4,
   typedCharacters: 4,
   alignedCorrect: 4,
