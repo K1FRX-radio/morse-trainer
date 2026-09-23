@@ -1,3 +1,4 @@
+import { DEFAULT_ADVANCEMENT_CONFIG } from "../content/curriculum-data.ts";
 import {
   nextLockedCharacter,
   recordAttempt,
@@ -28,6 +29,7 @@ export type ContinuousCopyConfig = {
   maxRepeatedGroupLength: number;
   continuousWordRatio: number;
   maxConsecutiveWordTokens: number;
+  advancementNewestObservations: number;
 };
 
 export const DEFAULT_CONTINUOUS_COPY_CONFIG: ContinuousCopyConfig = {
@@ -41,6 +43,8 @@ export const DEFAULT_CONTINUOUS_COPY_CONFIG: ContinuousCopyConfig = {
   maxRepeatedGroupLength: 2,
   continuousWordRatio: 0.35,
   maxConsecutiveWordTokens: 2,
+  advancementNewestObservations:
+    DEFAULT_ADVANCEMENT_CONFIG.minNewestObservations,
 };
 
 export type ContinuousCopyToken = {
@@ -160,7 +164,7 @@ function characterWeight(
 function buildRandomGroup(
   active: readonly string[],
   length: number,
-  coverage: string[],
+  remainingCoverage: Map<string, number>,
   previousToken: string | undefined,
   newest: string,
   review: ReadonlySet<string>,
@@ -170,44 +174,49 @@ function buildRandomGroup(
 ): string {
   const characters: string[] = [];
   for (let index = 0; index < length; index++) {
-    let character = coverage.shift();
-    if (!character) {
-      const weights = active.map((candidate) => {
-        const run = characters.slice(-config.maxIdenticalRun);
-        if (
-          active.length > 1 &&
-          run.length === config.maxIdenticalRun &&
-          run.every((value) => value === candidate)
-        ) {
-          return 0;
-        }
-        return characterWeight(candidate, newest, review, weak, config);
-      });
-      character = active[weightedIndex(weights, rng)];
-    }
+    const run = characters.slice(-config.maxIdenticalRun);
+    const isAllowed = (candidate: string) => {
+      if (
+        active.length > 1 &&
+        run.length === config.maxIdenticalRun &&
+        run.every((value) => value === candidate)
+      ) {
+        return false;
+      }
+      return !(
+        active.length > 1 &&
+        previousToken?.length === length &&
+        index === length - 1 &&
+        characters.every(
+          (value, characterIndex) => value === previousToken[characterIndex],
+        ) &&
+        candidate === previousToken[index]
+      );
+    };
+    const weights = active.map((candidate) => {
+      if (!isAllowed(candidate)) return 0;
+      const remaining = remainingCoverage.get(candidate) ?? 0;
+      return remaining > 0
+        ? remaining * characterWeight(candidate, newest, review, weak, config)
+        : 0;
+    });
+    const hasEligibleCoverage = weights.some((weight) => weight > 0);
+    const selectionWeights = hasEligibleCoverage
+      ? weights
+      : active.map((candidate) =>
+          isAllowed(candidate)
+            ? characterWeight(candidate, newest, review, weak, config)
+            : 0,
+        );
+    const character = active[weightedIndex(selectionWeights, rng)];
     characters.push(character);
+    const remaining = remainingCoverage.get(character) ?? 0;
+    if (remaining > 0) {
+      remainingCoverage.set(character, remaining - 1);
+    }
   }
 
-  let group = characters.join("");
-  if (active.length > 1 && group === previousToken) {
-    const finalIndex = characters.length - 1;
-    const precedingRun = characters.slice(
-      Math.max(0, finalIndex - config.maxIdenticalRun + 1),
-      finalIndex,
-    );
-    const replacement = active.find((candidate) => {
-      if (candidate === characters[finalIndex]) return false;
-      return !(
-        precedingRun.length === config.maxIdenticalRun - 1 &&
-        precedingRun.every((value) => value === candidate)
-      );
-    });
-    if (replacement) {
-      characters[finalIndex] = replacement;
-      group = characters.join("");
-    }
-  }
-  return group;
+  return characters.join("");
 }
 
 function chooseWord(
@@ -246,15 +255,28 @@ export function buildContinuousCopyPlan(
   const boundaryGapMs =
     buildSchedule(`${sample} ${sample}`, options.timing).totalMs -
     2 * sampleDuration;
-  const coverage = shuffled(active, options.rng);
+  const candidateOrder = shuffled(active, options.rng);
+  // Reserve full active-set coverage and the newest-character minimum before
+  // ordinary weighted sampling or word mixing can begin.
+  const remainingCoverage = new Map(
+    candidateOrder.map((character) => [
+      character,
+      character === options.newest
+        ? Math.max(1, config.advancementNewestObservations)
+        : 1,
+    ]),
+  );
   const tokens: ContinuousCopyToken[] = [];
   const groupLengths: number[] = [];
   let consecutiveWords = 0;
   let scheduledDurationMs = 0;
 
   while (scheduledDurationMs < options.durationMs) {
+    const coverageComplete = [...remainingCoverage.values()].every(
+      (remaining) => remaining === 0,
+    );
     const useWord =
-      coverage.length === 0 &&
+      coverageComplete &&
       options.wordEligibility?.eligible === true &&
       options.wordEligibility.candidates.length > 0 &&
       consecutiveWords < config.maxConsecutiveWordTokens &&
@@ -283,9 +305,9 @@ export function buildContinuousCopyPlan(
       token = {
         kind: "random-group",
         text: buildRandomGroup(
-          active,
+          candidateOrder,
           length,
-          coverage,
+          remainingCoverage,
           tokens.at(-1)?.text,
           options.newest,
           review,

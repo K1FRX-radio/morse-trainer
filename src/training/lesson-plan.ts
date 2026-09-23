@@ -1,8 +1,8 @@
 // Phase-based Learn lesson plan. Replaces random exercise mixing with a
 // deterministic acquisition sequence: introduce every un-introduced active
 // character, drill it in isolation (repeating misses), then contrast within the
-// active set and short groups. Pure and seedable. Advancement is
-// Advancement is not decided here; completed continuous copy supplies evidence.
+// active set and short groups. Pure and seedable. Advancement is not decided
+// here; completed continuous copy supplies evidence.
 
 import type { LearnExerciseType } from "../core/exercises.ts";
 import { weightedIndex, type Rng } from "../core/rng.ts";

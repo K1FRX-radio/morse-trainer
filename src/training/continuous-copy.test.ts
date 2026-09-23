@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_CURRICULUM_CONFIG } from "../content/curriculum-data.ts";
+import {
+  DEFAULT_ADVANCEMENT_CONFIG,
+  DEFAULT_CURRICULUM_CONFIG,
+} from "../content/curriculum-data.ts";
 import { createInitialState, nextLockedCharacter } from "../core/curriculum.ts";
 import { createRng } from "../core/rng.ts";
+import { recommendedContinuousCopyDurationMs } from "../core/settings.ts";
 import { buildSchedule } from "../core/timing.ts";
+import { minimumAdvancementObservations } from "./advancement.ts";
 import {
   DEFAULT_CONTINUOUS_COPY_CONFIG,
   applyContinuousCopyResult,
@@ -91,6 +96,46 @@ describe("buildContinuousCopyPlan", () => {
     );
   });
 
+  it("meets advancement coverage across recommended streams", () => {
+    const timings = [
+      { charWpm: 20, effectiveWpm: 12 },
+      { charWpm: 8, effectiveWpm: 5 },
+    ];
+    for (let activeCount = 2; activeCount <= 40; activeCount++) {
+      const active = DEFAULT_CURRICULUM_CONFIG.order.slice(0, activeCount);
+      const newest = active.at(-1) ?? "";
+      const durationMs = recommendedContinuousCopyDurationMs(activeCount);
+      for (const selectedTiming of timings) {
+        for (let seed = 1; seed <= 5; seed++) {
+          const generated = buildContinuousCopyPlan({
+            active,
+            newest,
+            durationMs,
+            timing: selectedTiming,
+            rng: createRng(seed),
+            wordEligibility: focusedWordEligibility(active),
+          });
+          if (
+            generated.gradingTarget.length <
+            minimumAdvancementObservations(activeCount)
+          ) {
+            continue;
+          }
+          const counts = new Map<string, number>();
+          for (const character of generated.gradingTarget) {
+            counts.set(character, (counts.get(character) ?? 0) + 1);
+          }
+          expect(
+            active.every((character) => (counts.get(character) ?? 0) >= 1),
+          ).toBe(true);
+          expect(counts.get(newest)).toBeGreaterThanOrEqual(
+            DEFAULT_ADVANCEMENT_CONFIG.minNewestObservations,
+          );
+        }
+      }
+    }
+  });
+
   it("prevents excessive identical runs", () => {
     for (let seed = 1; seed <= 100; seed++) {
       for (const token of plan(seed).tokens) {
@@ -146,6 +191,46 @@ describe("buildContinuousCopyPlan", () => {
           wordEligibleActive.includes(character),
         ),
       ),
+    ).toBe(true);
+  });
+
+  it("does not mix words before completing advancement coverage", () => {
+    for (let seed = 1; seed <= 20; seed++) {
+      const generated = mixedPlan(seed, 180000);
+      const firstWord = generated.tokens.findIndex(
+        (token) => token.kind === "word",
+      );
+      expect(firstWord).toBeGreaterThan(0);
+      const prefix = generated.tokens
+        .slice(0, firstWord)
+        .map((token) => token.text)
+        .join("");
+      expect(
+        wordEligibleActive.every((character) => prefix.includes(character)),
+      ).toBe(true);
+      expect(
+        [...prefix].filter((character) => character === "A").length,
+      ).toBeGreaterThanOrEqual(
+        DEFAULT_ADVANCEMENT_CONFIG.minNewestObservations,
+      );
+    }
+  });
+
+  it("does not extend a short stream to force advancement coverage", () => {
+    const generated = buildContinuousCopyPlan({
+      active: wordEligibleActive,
+      newest: "A",
+      durationMs: 1000,
+      timing: { charWpm: 8, effectiveWpm: 5 },
+      rng: createRng(4),
+      wordEligibility: focusedWordEligibility(wordEligibleActive),
+    });
+
+    expect(generated.gradingTarget.length).toBeLessThan(
+      minimumAdvancementObservations(wordEligibleActive.length),
+    );
+    expect(
+      generated.tokens.every((token) => token.kind === "random-group"),
     ).toBe(true);
   });
 
