@@ -10,9 +10,8 @@ import { MemoryRouter } from "react-router-dom";
 import { App } from "../../App.tsx";
 import { DEFAULT_CURRICULUM_CONFIG } from "../../content/curriculum-data.ts";
 import { createInitialState, forceUnlockNext } from "../../core/curriculum.ts";
-import { createRng } from "../../core/rng.ts";
+import { decodePattern } from "../../core/morse.ts";
 import type { Schedule } from "../../core/timing.ts";
-import { buildCheckpoint } from "../../training/checkpoint.ts";
 import { DEFAULT_LESSON_CONFIG } from "../../training/lesson-plan.ts";
 import { sanitizeCopyInput } from "../copy-input.ts";
 import { LearnAudioContext, type LearnAudio } from "../learn-audio-context.ts";
@@ -38,7 +37,7 @@ function makeFakeAudio() {
     },
     playSchedule: (schedule) =>
       new Promise<void>((resolve) => {
-        pending.push({ schedule, resolve });
+        pending.push({ text: decodeSchedule(schedule), schedule, resolve });
       }),
     // Cancellation resolves in-flight playback, mirroring the real engine.
     cancel: async () => {
@@ -57,6 +56,23 @@ function makeFakeAudio() {
     resolveNext: () => pending.shift()?.resolve(),
     resolveAt: (index: number) => pending.splice(index, 1)[0]?.resolve(),
   };
+}
+
+function decodeSchedule(schedule: Schedule): string {
+  const characters: string[] = [];
+  let pattern = "";
+  for (const segment of schedule.segments) {
+    if (segment.tone) {
+      pattern += segment.element === "dit" ? "." : "-";
+    } else if (segment.gap !== "intra") {
+      const character = decodePattern(pattern);
+      if (character) characters.push(character);
+      pattern = "";
+    }
+  }
+  const finalCharacter = decodePattern(pattern);
+  if (finalCharacter) characters.push(finalCharacter);
+  return characters.join("");
 }
 
 function renderLearn(audio: LearnAudio) {
@@ -102,16 +118,6 @@ async function tick(ms: number) {
     await Promise.resolve();
   });
   await flush();
-}
-
-function checkpointSeedFor(prefix: readonly string[]): number {
-  for (let seed = 0; seed < 10000; seed++) {
-    const targets = buildCheckpoint(["K", "M"], "M", createRng(seed));
-    if (prefix.every((target, index) => targets[index] === target)) {
-      return seed;
-    }
-  }
-  throw new Error(`No checkpoint seed starts with ${prefix.join("")}`);
 }
 
 /** Drives from onboarding to the first isolated copy card (acquire of K). */
@@ -539,7 +545,9 @@ describe("LearnScreen audio sequencing", () => {
       JSON.parse(localStorage.getItem("k1frx.introduced.v1") ?? "[]"),
     ).not.toContain("K");
 
-    fireEvent.click(screen.getByRole("button", { name: "Practice again" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Practice these characters again" }),
+    );
     await flush();
     expect(screen.getByText("K")).toBeInTheDocument();
     await resolvePlay(fake);
@@ -570,7 +578,11 @@ describe("LearnScreen audio sequencing", () => {
 
       fireEvent.click(screen.getByRole("button", { name: "End session" }));
       await flush();
-      fireEvent.click(screen.getByRole("button", { name: "Practice again" }));
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "Practice these characters again",
+        }),
+      );
       await flush();
       fake.resolveAt(staleIndex);
       await flush();
@@ -711,7 +723,9 @@ describe("LearnScreen audio sequencing", () => {
     await flush();
     fireEvent.click(screen.getByRole("button", { name: "End session" }));
     await flush();
-    fireEvent.click(screen.getByRole("button", { name: "Practice again" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Practice these characters again" }),
+    );
     await flush();
     expect(fake.playCount()).toBe(2);
 
@@ -1085,123 +1099,110 @@ describe("LearnScreen audio sequencing", () => {
   });
 });
 
-describe("LearnScreen checkpoint", () => {
-  async function toCheckpoint(
+describe("LearnScreen advancement", () => {
+  async function completeContinuousCopy(
     fake: ReturnType<typeof makeFakeAudio>,
-    prefix?: readonly string[],
+    answer?: (target: string) => string,
   ) {
-    await toFirstCopy(fake);
-    fireEvent.click(screen.getByRole("button", { name: "End session" }));
+    await toContinuousCopyTransition(fake);
+    fireEvent.click(screen.getByRole("button", { name: "Go" }));
     await flush();
-    if (prefix) vi.setSystemTime(checkpointSeedFor(prefix));
-    fireEvent.click(screen.getByRole("button", { name: /checkpoint/i }));
-    await flush(); // startCheckpoint: unlock + present first item -> play
-    if (prefix) expect(fake.pending[0]?.text).toBe(prefix[0]);
-    await resolvePlay(fake); // first item audio done -> input enabled
+    const target = fake.pending[0]?.text ?? "";
+    expect(target.length).toBeGreaterThanOrEqual(24);
+    fireEvent.change(screen.getByLabelText("Continuous copy"), {
+      target: { value: answer ? answer(target) : target },
+    });
+    await resolvePlay(fake);
+    await tick(2000);
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await flush();
+    return target;
   }
 
-  it("keeps manual checkpoint entry available while review is unresolved", async () => {
-    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
-    state.characters[0].needsReview = true;
-    localStorage.setItem(
-      "k1frx.curriculum.v2",
-      JSON.stringify(state.characters),
-    );
-    localStorage.setItem("k1frx.introduced.v1", JSON.stringify(["K", "M"]));
+  it("offers actual metrics and unlocks only U into its introduction", async () => {
     const fake = makeFakeAudio();
     renderLearn(fake.audio);
+    await completeContinuousCopy(fake);
 
-    fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
-    await flush();
-    await resolvePlay(fake);
-    fireEvent.click(screen.getByRole("button", { name: "End session" }));
-    await flush();
-
-    expect(screen.getByText(/Review K/)).toBeInTheDocument();
-    const checkpoint = screen.getByRole("button", {
-      name: "Try a checkpoint",
-    });
-    expect(checkpoint).toBeEnabled();
-    fireEvent.click(checkpoint);
-    await flush();
-    expect(screen.getByLabelText("Checkpoint answer")).toBeInTheDocument();
-  });
-
-  it("accepts exactly one response per played character with no feedback", async () => {
-    const fake = makeFakeAudio();
-    renderLearn(fake.audio);
-    await toCheckpoint(fake);
-
-    const input = screen.getByLabelText(
-      "Checkpoint answer",
-    ) as HTMLInputElement;
-    expect(screen.getByText(/^0\//)).toBeInTheDocument();
-
-    fireEvent.change(input, { target: { value: "K" } }); // accept -> next item plays
-    fireEvent.change(input, { target: { value: "M" } }); // locked during audio
-    await flush();
-
-    expect(screen.getByText(/^1\//)).toBeInTheDocument(); // advanced by one only
-    // No per-item correctness feedback during the checkpoint.
-    expect(screen.queryByText("✓")).not.toBeInTheDocument();
-    expect(screen.queryByText(/Correct|Not quite/)).not.toBeInTheDocument();
-  });
-
-  it("keeps the checkpoint input locked until its tone finishes", async () => {
-    const fake = makeFakeAudio();
-    renderLearn(fake.audio);
-    await toCheckpoint(fake);
-
-    const input = screen.getByLabelText(
-      "Checkpoint answer",
-    ) as HTMLInputElement;
-    fireEvent.change(input, { target: { value: "K" } }); // advances; next tone plays
-    await flush();
-    const next = screen.getByLabelText("Checkpoint answer") as HTMLInputElement;
-    expect(next.disabled).toBe(true); // tone not finished
-    await resolvePlay(fake);
     expect(
-      (screen.getByLabelText("Checkpoint answer") as HTMLInputElement).disabled,
-    ).toBe(false);
+      screen.getByRole("heading", {
+        name: "Looks like you’re ready for a new character!",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("You copied 100% overall and 100% of M."),
+    ).toBeInTheDocument();
+    const learnNext = screen.getByRole("button", { name: "Learn U" });
+    fireEvent.click(learnNext);
+    fireEvent.click(learnNext);
+    await flush();
+
+    const saved = JSON.parse(
+      localStorage.getItem("k1frx.curriculum.v2") ?? "[]",
+    ) as Array<{ character: string }>;
+    expect(saved.map(({ character }) => character)).toEqual(["K", "M", "U"]);
+    expect(fake.pending[0]?.text).toBe("U");
+    expect(screen.getByText("U")).toBeInTheDocument();
+    await resolvePlay(fake);
+    await tick(60000);
+    expect(screen.getByText("U")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Start practice" }),
+    ).toBeEnabled();
   });
 
-  it("accepts fresh same-key presses without keyup between checkpoint items", async () => {
+  it("starts another lesson without unlocking from the secondary action", async () => {
     const fake = makeFakeAudio();
     renderLearn(fake.audio);
-    await toCheckpoint(fake, ["K", "K"]);
+    await completeContinuousCopy(fake);
 
-    fireEvent.keyDown(window, { key: "k", code: "KeyK" });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Practice these characters again" }),
+    );
     await flush();
-    expect(screen.getByText(/^1\//)).toBeInTheDocument();
-    expect(fake.pending[0]?.text).toBe("K");
-    await resolvePlay(fake);
 
-    fireEvent.keyDown(window, { key: "k", code: "KeyK", repeat: true });
-    await flush();
-    expect(screen.getByText(/^1\//)).toBeInTheDocument();
-
-    fireEvent.keyDown(window, { key: "k", code: "KeyK" });
-    await flush();
-    expect(screen.getByText(/^2\//)).toBeInTheDocument();
+    const saved = JSON.parse(
+      localStorage.getItem("k1frx.curriculum.v2") ?? "[]",
+    ) as Array<{ character: string }>;
+    expect(saved.map(({ character }) => character)).toEqual(["K", "M"]);
+    expect(fake.pending[0]?.text).not.toBe("U");
   });
 
-  it("accepts an alternating K M K checkpoint with one press per item", async () => {
+  it("does not offer advancement below the overall accuracy threshold", async () => {
     const fake = makeFakeAudio();
     renderLearn(fake.audio);
-    await toCheckpoint(fake, ["K", "M", "K"]);
+    await completeContinuousCopy(fake, (target) =>
+      [...target]
+        .map((character, index) => (index < 11 ? "U" : character))
+        .join(""),
+    );
 
-    fireEvent.keyDown(window, { key: "k", code: "KeyK" });
-    await flush();
-    expect(fake.pending[0]?.text).toBe("M");
-    await resolvePlay(fake);
+    expect(screen.getByText(/aim for 90%/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^Learn / }),
+    ).not.toBeInTheDocument();
+  });
 
-    fireEvent.keyDown(window, { key: "m", code: "KeyM" });
-    await flush();
-    expect(fake.pending[0]?.text).toBe("K");
-    await resolvePlay(fake);
+  it("gives unresolved review priority and never offers advancement", async () => {
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+    await completeContinuousCopy(fake, (target) => target.replaceAll("K", "M"));
 
-    fireEvent.keyDown(window, { key: "k", code: "KeyK" });
-    await flush();
-    expect(screen.getByText(/^3\//)).toBeInTheDocument();
+    expect(screen.getByText(/more practice with K/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^Learn / }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("contains no checkpoint controls or terminology", async () => {
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+    await completeContinuousCopy(fake);
+
+    expect(screen.queryByText(/checkpoint/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /checkpoint/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/checkpoint/i)).not.toBeInTheDocument();
   });
 });

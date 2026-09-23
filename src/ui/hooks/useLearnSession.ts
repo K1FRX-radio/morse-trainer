@@ -1,22 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_CURRICULUM_CONFIG } from "../../content/curriculum-data.ts";
 import {
-  checkpointReadiness,
   createInitialState,
   newestCharacter,
-  unlockedCharacters,
   type CurriculumState,
-  type Readiness,
 } from "../../core/curriculum.ts";
 import { encodeText, isSupportedCharacter } from "../../core/morse.ts";
 import { createRng } from "../../core/rng.ts";
 import { recommendedContinuousCopyDurationMs } from "../../core/settings.ts";
 import type { CharacterProgress } from "../../core/types.ts";
-import {
-  applyCheckpoint,
-  CheckpointSession,
-  type CheckpointApplied,
-} from "../../training/checkpoint.ts";
+import { acceptAdvancement as acceptAdvancementOffer } from "../../training/advancement.ts";
 import {
   LearnSession,
   type LessonEvent,
@@ -36,8 +29,7 @@ const INTRODUCED_STORAGE_KEY = "k1frx.introduced.v1";
 const HOLD_AFTER_CORRECT = 450;
 const HOLD_AFTER_MISS = 500;
 
-export type LearnPhase =
-  "onboarding" | "exercise" | "summary" | "checkpoint" | "checkpoint-result";
+export type LearnPhase = "onboarding" | "exercise" | "summary";
 
 export type Feedback = {
   correct: boolean;
@@ -131,7 +123,6 @@ export function useLearnSession() {
     stateRef.current = loadCurriculum();
   }
   const sessionRef = useRef<LearnSession | undefined>(undefined);
-  const checkpointRef = useRef<CheckpointSession | undefined>(undefined);
 
   // Flow tokens invalidate stale async transitions; the one-shot lock guarantees
   // exactly one accepted answer per presented prompt.
@@ -168,9 +159,6 @@ export function useLearnSession() {
   );
   const [awaitingContinue, setAwaitingContinue] = useState(false);
   const [summary, setSummary] = useState<SessionSummary | undefined>(undefined);
-  const [checkpointResult, setCheckpointResult] = useState<
-    CheckpointApplied | undefined
-  >(undefined);
   const [inputReady, setInputReady] = useState(false);
   const [typingReady, setTypingReady] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -403,7 +391,6 @@ export function useLearnSession() {
     sessionRef.current = session;
     introDoneToken.current = null;
     setSummary(undefined);
-    setCheckpointResult(undefined);
     setPhase("exercise");
     const first = session.next();
     if (first) showEvent(first);
@@ -590,88 +577,19 @@ export function useLearnSession() {
     advanceRef.current();
   }, [continuousCopy]);
 
-  // --- Checkpoint mode -----------------------------------------------------
-  const finishCheckpoint = useCallback(() => {
-    const cp = checkpointRef.current;
-    if (!cp) return;
-    nextFlowToken();
-    queuedSubmissionRef.current = null;
-    currentAnswerRef.current = "";
-    playbackGeneration.current += 1;
-    clearHeldKeys();
-    playingRef.current = false;
-    setIsPlaying(false);
-    void audio.cancelAndSuspend();
-    const applied = applyCheckpoint(stateRef.current, cp.grade());
+  const acceptAdvancement = useCallback(() => {
+    const assessment = summary?.advancementAssessment;
+    const result = summary?.continuousCopyResult;
+    if (!assessment || !result) return;
+    const unlocked = acceptAdvancementOffer(
+      stateRef.current,
+      result,
+      assessment,
+    );
+    if (!unlocked) return;
     saveCurriculum(stateRef.current);
-    setCheckpointResult(applied);
-    setPhase("checkpoint-result");
-  }, [audio, clearHeldKeys, nextFlowToken]);
-
-  const startCheckpoint = useCallback(async () => {
-    continuousCopy.reset();
-    clearHeldKeys();
-    await audio.cancel();
-    nextFlowToken();
-    queuedSubmissionRef.current = null;
-    currentAnswerRef.current = "";
-    playbackGeneration.current += 1;
-    playingRef.current = false;
-    setIsPlaying(false);
-    await audio.unlock();
-    checkpointRef.current = new CheckpointSession({
-      active: unlockedCharacters(stateRef.current),
-      newest: newestCharacter(stateRef.current)?.character ?? "",
-      rng: createRng(Date.now() >>> 0),
-    });
-    setCheckpointResult(undefined);
-    setPhase("checkpoint");
-    const token = nextFlowToken();
-    acceptedTokenRef.current = null;
-    bindHeldKeysToPrompt(token);
-    const first = checkpointRef.current.current();
-    if (first) void presentPrompt(first, token);
-    else finishCheckpoint();
-  }, [
-    audio,
-    presentPrompt,
-    finishCheckpoint,
-    clearHeldKeys,
-    continuousCopy,
-    nextFlowToken,
-    bindHeldKeysToPrompt,
-  ]);
-
-  const acceptCheckpoint = useCallback(
-    (raw: string) => {
-      const cp = checkpointRef.current;
-      if (!cp) return;
-      const first = firstSupported(raw);
-      if (!first) return;
-      const token = claimPrompt();
-      if (token === null) return;
-      cp.answer(first);
-      forceTick((n) => n + 1);
-      if (cp.isComplete()) {
-        finishCheckpoint();
-        return;
-      }
-      const next = cp.current();
-      const nextToken = nextFlowToken();
-      acceptedTokenRef.current = null;
-      queuedSubmissionRef.current = null;
-      currentAnswerRef.current = "";
-      bindHeldKeysToPrompt(nextToken);
-      if (next) void presentPrompt(next, nextToken);
-    },
-    [
-      claimPrompt,
-      presentPrompt,
-      finishCheckpoint,
-      nextFlowToken,
-      bindHeldKeysToPrompt,
-    ],
-  );
+    void begin();
+  }, [begin, summary]);
 
   const physicalKeyDown = useCallback(
     (
@@ -682,8 +600,7 @@ export function useLearnSession() {
     ): boolean => {
       const ex = exerciseRef.current;
       const acceptsCharacter =
-        phase === "checkpoint" ||
-        (phase === "exercise" && ex?.type === "copy-character");
+        phase === "exercise" && ex?.type === "copy-character";
       if (!acceptsCharacter || modified) return false;
 
       const character = key.toUpperCase();
@@ -698,11 +615,10 @@ export function useLearnSession() {
       if (repeat || heldKeysRef.current.has(physicalKey)) return true;
 
       heldKeysRef.current.add(physicalKey);
-      if (phase === "checkpoint") acceptCheckpoint(character);
-      else acceptIsolated(character);
+      acceptIsolated(character);
       return true;
     },
-    [phase, acceptCheckpoint, acceptIsolated, bindHeldKeysToPrompt],
+    [phase, acceptIsolated, bindHeldKeysToPrompt],
   );
 
   const physicalKeyUp = useCallback((key: string, code: string) => {
@@ -737,8 +653,6 @@ export function useLearnSession() {
     stateRef.current,
   );
   const session = sessionRef.current;
-  const checkpoint = checkpointRef.current;
-  const readiness: Readiness = checkpointReadiness(stateRef.current);
 
   return {
     phase,
@@ -763,15 +677,9 @@ export function useLearnSession() {
     awaitingContinue,
     summary,
     auto,
-    readiness,
-    checkpointResult,
     inputReady,
     typingReady,
     isPlaying,
-    checkpoint: {
-      position: checkpoint?.position ?? 0,
-      length: checkpoint?.length ?? 0,
-    },
     completed: session?.completedCards ?? 0,
     total: session?.totalCards ?? 0,
     progress: {
@@ -784,7 +692,7 @@ export function useLearnSession() {
       acceptIsolated,
       updateGroupWord,
       submitGroupWord,
-      acceptCheckpoint,
+      acceptAdvancement,
       replay,
       continueNow,
       continueTransition,
@@ -793,7 +701,6 @@ export function useLearnSession() {
       finishContinuousCopy: continuousCopy.finish,
       continueContinuousCopy,
       endSession,
-      startCheckpoint,
       physicalKeyDown,
       physicalKeyUp,
       clearHeldKeys,

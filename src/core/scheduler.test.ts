@@ -3,7 +3,6 @@ import { DEFAULT_CURRICULUM_CONFIG } from "../content/curriculum-data.ts";
 import {
   createInitialState,
   recordAttempt,
-  unlockNext,
   unlockedCharacters,
 } from "./curriculum.ts";
 import { createRng } from "./rng.ts";
@@ -34,7 +33,6 @@ describe("scheduler", () => {
 
   it("only ever selects unlocked characters across many draws", () => {
     const state = createInitialState(config);
-    unlockNext(state); // no-op without accuracy; keeps 4 unlocked
     const allowed = new Set(unlockedCharacters(state));
     const rng = createRng(42);
     for (let i = 0; i < 10000; i++) {

@@ -2,7 +2,7 @@
 // deterministic acquisition sequence: introduce every un-introduced active
 // character, drill it in isolation (repeating misses), then contrast within the
 // active set and short groups. Pure and seedable. Advancement is
-// NOT decided here; a separate checkpoint (later stage) drives unlocks.
+// Advancement is not decided here; completed continuous copy supplies evidence.
 
 import type { LearnExerciseType } from "../core/exercises.ts";
 import { weightedIndex, type Rng } from "../core/rng.ts";
@@ -31,8 +31,7 @@ export type PlannedExercise = {
   focus: string;
   newestCharacter: boolean;
   /** True when this card is an assisted reinforcement after a miss (shows the
-   * character + Morse). Assisted cards must not count toward checkpoint
-   * readiness. */
+   * character + Morse). Assisted cards do not contribute advancement evidence. */
   assisted: boolean;
 };
 

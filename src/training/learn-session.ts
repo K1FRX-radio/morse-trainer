@@ -1,11 +1,10 @@
 // Learn-mode practice session. Drives a phase-based LessonPlan, records practice
 // results into the curriculum for scheduling and review, and tracks active
-// practice time excluding idle and paused spans. Practice does NOT advance the
-// curriculum; a separate checkpoint (later stage) drives unlocks. Pure
+// practice time excluding idle and paused spans. Explicit acceptance of
+// continuous-copy evidence drives advancement. Pure
 // application service: no DOM or storage.
 
 import {
-  checkpointReadiness,
   newestCharacter,
   recentAccuracy,
   recordAttempt,
@@ -13,7 +12,6 @@ import {
   reviewCharacters,
   unlockedCharacters,
   type CurriculumState,
-  type Readiness,
 } from "../core/curriculum.ts";
 import type { Rng } from "../core/rng.ts";
 import { gradeCopy, gradeCopyAligned, normalizeCopy } from "../core/scoring.ts";
@@ -145,7 +143,6 @@ export type SessionSummary = {
   /** Assisted or replayed ordinary cards deliberately excluded from mastery. */
   excludedFromMastery: number;
   charactersNeedingReview: string[];
-  checkpointReadiness: Readiness;
   charactersPracticed: string[];
   /** True when the session meets the minimum active time and attempt count. */
   valid: boolean;
@@ -604,7 +601,6 @@ export class LearnSession {
           : this.alignedCorrectCharacters / this.alignedTargetCharacters,
       excludedFromMastery: this.excludedFromMastery,
       charactersNeedingReview: reviewCharacters(this.state),
-      checkpointReadiness: checkpointReadiness(this.state),
       charactersPracticed: [...this.practiced],
       valid: this.activeMs >= this.config.minActiveMs && this.attempts > 0,
       ...(this.lastContinuousCopyResult

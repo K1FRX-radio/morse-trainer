@@ -174,7 +174,9 @@ describe("LearnSession practice", () => {
     expect(summary.alignedCharacterAccuracy).toBe(1);
     expect(summary.excludedFromMastery).toBe(0);
     expect(summary.charactersNeedingReview).toEqual([]);
-    expect(summary.checkpointReadiness.reason).toBe("READY");
+    expect(summary.advancementAssessment?.reason).toBe(
+      "INSUFFICIENT_TOTAL_EVIDENCE",
+    );
   });
 
   it("inserts an immediate repeat after a missed isolated card", () => {

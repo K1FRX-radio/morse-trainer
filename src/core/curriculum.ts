@@ -1,11 +1,7 @@
 // Koch-style curriculum state and unlock rules. RX performance drives unlocks;
 // TX performance is tracked separately and never blocks progression.
 
-import {
-  DEFAULT_READINESS_CONFIG,
-  type CurriculumConfig,
-  type ReadinessConfig,
-} from "../content/curriculum-data.ts";
+import type { CurriculumConfig } from "../content/curriculum-data.ts";
 import type { CharacterProgress, Direction, SkillProgress } from "./types.ts";
 
 export type CurriculumState = {
@@ -117,43 +113,6 @@ export function nextLockedCharacter(
   return state.config.order[state.characters.length];
 }
 
-/**
- * Whether the newest character has met the RX unlock criteria: enough
- * observations and sufficient recent RX accuracy. TX is never consulted.
- */
-export function canUnlockNext(state: CurriculumState): boolean {
-  if (nextLockedCharacter(state) === undefined) {
-    return false;
-  }
-  const newest = newestCharacter(state);
-  if (!newest) {
-    return false;
-  }
-  if (newest.rx.recentResults.length < state.config.minNewCharObservations) {
-    return false;
-  }
-  return recentAccuracy(newest.rx) >= state.config.unlockAccuracy;
-}
-
-/**
- * Unlocks the next character when criteria are met. Returns the newly unlocked
- * character, or undefined if nothing was unlocked. Never relocks characters.
- */
-export function unlockNext(
-  state: CurriculumState,
-  at?: string,
-): string | undefined {
-  if (!canUnlockNext(state)) {
-    return undefined;
-  }
-  const next = nextLockedCharacter(state);
-  if (next === undefined) {
-    return undefined;
-  }
-  state.characters.push(unlockedProgress(next, at));
-  return next;
-}
-
 /** Characters currently unlocked, in curriculum order. */
 export function unlockedCharacters(state: CurriculumState): string[] {
   return state.characters.map((c) => c.character);
@@ -197,10 +156,7 @@ export function reviewCharacters(state: CurriculumState): string[] {
   return state.characters.filter((c) => c.needsReview).map((c) => c.character);
 }
 
-/**
- * Unlocks the next locked character unconditionally. Advancement is gated by a
- * passed checkpoint (see training/checkpoint), not by practice history.
- */
+/** Low-level mutation used after advancement validation and by test fixtures. */
 export function forceUnlockNext(
   state: CurriculumState,
   at?: string,
@@ -211,62 +167,4 @@ export function forceUnlockNext(
   }
   state.characters.push(unlockedProgress(next, at));
   return next;
-}
-
-export type ReadinessReason =
-  "READY" | "NEEDS_PRACTICE" | "NEEDS_REVIEW" | "COMPLETE";
-
-export type Readiness = {
-  ready: boolean;
-  reason: ReadinessReason;
-  /** The older character that must be reviewed before a checkpoint, if any. */
-  weakCharacter?: string;
-};
-
-/**
- * Whether the learner is ready to attempt a checkpoint, based on clean practice
- * history. A well-sampled but clearly weak older character vetoes readiness so a
- * forgotten character is not carried indefinitely.
- */
-export function checkpointReadiness(
-  state: CurriculumState,
-  config: ReadinessConfig = DEFAULT_READINESS_CONFIG,
-): Readiness {
-  if (nextLockedCharacter(state) === undefined) {
-    return { ready: false, reason: "COMPLETE" };
-  }
-  const newest = newestCharacter(state);
-  if (!newest) {
-    return { ready: false, reason: "NEEDS_PRACTICE" };
-  }
-  const unresolved = state.characters.find((progress) => progress.needsReview);
-  if (unresolved) {
-    return {
-      ready: false,
-      reason: "NEEDS_REVIEW",
-      weakCharacter: unresolved.character,
-    };
-  }
-  for (const progress of state.characters) {
-    if (progress.character === newest.character) {
-      continue;
-    }
-    if (
-      progress.rx.recentResults.length >= config.vetoMinObservations &&
-      recentAccuracy(progress.rx) < config.vetoAccuracy
-    ) {
-      return {
-        ready: false,
-        reason: "NEEDS_REVIEW",
-        weakCharacter: progress.character,
-      };
-    }
-  }
-  if (
-    newest.rx.recentResults.length < config.minNewestObservations ||
-    recentAccuracy(newest.rx) < config.minNewestAccuracy
-  ) {
-    return { ready: false, reason: "NEEDS_PRACTICE" };
-  }
-  return { ready: true, reason: "READY" };
 }

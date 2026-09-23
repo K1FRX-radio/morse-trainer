@@ -31,14 +31,13 @@ export function LearnScreen() {
     acceptIsolated,
     updateGroupWord,
     submitGroupWord,
-    acceptCheckpoint,
+    acceptAdvancement,
     replay,
     continueNow,
     continueTransition,
     continueNotification,
     begin,
     endSession,
-    startCheckpoint,
     physicalKeyDown,
     physicalKeyUp,
     clearHeldKeys,
@@ -53,23 +52,22 @@ export function LearnScreen() {
   const continuousInputRef = useRef<HTMLTextAreaElement>(null);
 
   const isCopy = exercise?.direction === "rx" && exercise.type !== "introduce";
-  const inCheckpoint = learn.phase === "checkpoint";
   const supportsTypeBehind =
     exercise?.type === "copy-group" || exercise?.type === "copy-word";
   const answerReady = supportsTypeBehind ? typingReady : inputReady;
   const introControlsReady = introStage === "ready" && !isPlaying;
 
-  // Clear the field for each new prompt (practice card or checkpoint item).
+  // Clear the field for each new practice prompt.
   useEffect(() => {
     setValue("");
-  }, [exercise, learn.checkpoint.position]);
+  }, [exercise]);
 
   // Groups and words focus when playback begins; isolated copy waits for audio.
   useEffect(() => {
-    if (answerReady && (isCopy || inCheckpoint)) {
+    if (answerReady && isCopy) {
       inputRef.current?.focus();
     }
-  }, [answerReady, isCopy, inCheckpoint]);
+  }, [answerReady, isCopy]);
 
   useEffect(() => {
     if (learn.continuousCopy.active) continuousInputRef.current?.focus();
@@ -117,16 +115,6 @@ export function LearnScreen() {
     clearHeldKeys,
   ]);
 
-  function processCheckpoint(raw: string) {
-    setValue("");
-    acceptCheckpoint(raw);
-  }
-
-  function onCheckpointChange(event: ChangeEvent<HTMLInputElement>) {
-    if (composingRef.current) return;
-    processCheckpoint(event.target.value);
-  }
-
   function processCopy(raw: string) {
     if (!exercise) return;
     if (exercise.type === "copy-character") {
@@ -147,8 +135,7 @@ export function LearnScreen() {
   function onCompositionEnd(event: CompositionEvent<HTMLInputElement>) {
     composingRef.current = false;
     const raw = event.currentTarget.value || event.data;
-    if (inCheckpoint) processCheckpoint(raw);
-    else processCopy(raw);
+    processCopy(raw);
   }
 
   function onInputKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
@@ -162,7 +149,7 @@ export function LearnScreen() {
 
   // Keep focus in the answer field, but never let a focus change unlock input.
   function retainFocus() {
-    if (answerReady && (isCopy || inCheckpoint)) {
+    if (answerReady && isCopy) {
       window.setTimeout(() => inputRef.current?.focus(), 0);
     }
   }
@@ -191,7 +178,7 @@ export function LearnScreen() {
 
   if (learn.phase === "summary" && learn.summary) {
     const s = learn.summary;
-    const { reason, weakCharacter } = learn.readiness;
+    const assessment = s.advancementAssessment;
     return (
       <section>
         <h2>Session complete</h2>
@@ -230,116 +217,82 @@ export function LearnScreen() {
           </li>
         </ul>
 
-        {s.continuousCopyResult?.abandoned && (
+        {assessment?.reason === "READY" && (
+          <div className="learn__intro">
+            <h2>Looks like you’re ready for a new character!</h2>
+            <p>
+              You copied {Math.round(assessment.overallAccuracy * 100)}% overall
+              and {Math.round(assessment.newestAccuracy * 100)}% of{" "}
+              {assessment.newestCharacter}.
+            </p>
+          </div>
+        )}
+        {assessment?.reason === "ABANDONED" && (
           <p className="feedback feedback--neutral">
             Continuous copy ended early and was not counted toward practice.
           </p>
         )}
-
-        {reason === "READY" && (
-          <p className="feedback feedback--ok">
-            You’re ready for a checkpoint to unlock the next character.
-          </p>
-        )}
-        {reason === "NEEDS_REVIEW" && (
+        {assessment?.reason === "NEEDS_REVIEW" && (
           <p className="feedback feedback--neutral">
-            Review {weakCharacter} a little more before the next checkpoint.
+            A little more practice with {assessment.weakCharacter} will help
+            before adding another character.
           </p>
         )}
-        {reason === "NEEDS_PRACTICE" && (
-          <p className="field__label">
-            Keep practicing the newest character to get checkpoint-ready.
+        {assessment?.reason === "INSUFFICIENT_TOTAL_EVIDENCE" && (
+          <p className="feedback feedback--neutral">
+            Keep copying a little longer so the app has enough information.
           </p>
         )}
-        {reason === "COMPLETE" && (
+        {assessment?.reason === "INCOMPLETE_ACTIVE_COVERAGE" && (
+          <p className="feedback feedback--neutral">
+            This session didn’t include enough of the full character set yet.
+          </p>
+        )}
+        {assessment?.reason === "INSUFFICIENT_NEWEST_COVERAGE" && (
+          <p className="feedback feedback--neutral">
+            Let’s hear {assessment.newestCharacter} a few more times before
+            adding another character.
+          </p>
+        )}
+        {assessment?.reason === "LOW_OVERALL_ACCURACY" && (
+          <p className="feedback feedback--neutral">
+            You copied {Math.round(assessment.overallAccuracy * 100)}% overall.
+            Keep practicing and aim for 90%.
+          </p>
+        )}
+        {assessment?.reason === "LOW_NEWEST_ACCURACY" && (
+          <p className="feedback feedback--neutral">
+            Keep practicing {assessment.newestCharacter}. You copied it
+            correctly {Math.round(assessment.newestAccuracy * 100)}% of the
+            time.
+          </p>
+        )}
+        {assessment?.reason === "COMPLETE" && (
           <p className="feedback feedback--ok">
             You’ve unlocked every character. Keep practicing to stay sharp.
           </p>
         )}
+        {!assessment && (
+          <p className="feedback feedback--neutral">
+            Complete continuous copy to see whether you’re ready for another
+            character.
+          </p>
+        )}
 
         <div className="practice__controls">
-          <button type="button" onClick={() => void begin()}>
-            Practice again
-          </button>
-          {reason !== "COMPLETE" && (
-            <button
-              type="button"
-              className={reason === "READY" ? "" : "tab"}
-              onClick={() => void startCheckpoint()}
-            >
-              {reason === "READY" ? "Start checkpoint" : "Try a checkpoint"}
+          {assessment?.eligible && assessment.nextCharacter && (
+            <button type="button" onClick={acceptAdvancement}>
+              Learn {assessment.nextCharacter}
             </button>
           )}
+          <button
+            type="button"
+            className={assessment?.eligible ? "tab" : undefined}
+            onClick={() => void begin()}
+          >
+            Practice these characters again
+          </button>
         </div>
-      </section>
-    );
-  }
-
-  if (learn.phase === "checkpoint") {
-    const pct = learn.checkpoint.length
-      ? Math.round((learn.checkpoint.position / learn.checkpoint.length) * 100)
-      : 0;
-    return (
-      <section>
-        <div className="learn__top">
-          <span className="field__label">Checkpoint</span>
-          <div className="learn__bar" aria-hidden>
-            <span style={{ width: `${pct}%` }} />
-          </div>
-          <span className="field__label">
-            {learn.checkpoint.position}/{learn.checkpoint.length}
-          </span>
-        </div>
-        <p className="field__label">
-          Copy each character you hear. No replay or hints during the
-          checkpoint.
-        </p>
-        <input
-          ref={inputRef}
-          className="learn__answer"
-          type="text"
-          inputMode="text"
-          autoComplete="off"
-          autoCapitalize="characters"
-          spellCheck={false}
-          maxLength={1}
-          placeholder={inputReady ? "type it" : "listen…"}
-          value={value}
-          onChange={onCheckpointChange}
-          onCompositionStart={() => (composingRef.current = true)}
-          onCompositionEnd={onCompositionEnd}
-          onBlur={retainFocus}
-          disabled={!inputReady}
-          aria-label="Checkpoint answer"
-        />
-      </section>
-    );
-  }
-
-  if (learn.phase === "checkpoint-result" && learn.checkpointResult) {
-    const { result, unlockedCharacter } = learn.checkpointResult;
-    return (
-      <section>
-        <h2>{result.pass ? "Checkpoint passed" : "Not yet"}</h2>
-        {result.pass && unlockedCharacter && (
-          <p className="feedback feedback--ok">
-            New character unlocked: {unlockedCharacter}
-          </p>
-        )}
-        <ul className="summary">
-          <li>Overall: {Math.round(result.overallAccuracy * 100)}%</li>
-          <li>Newest character: {Math.round(result.newestAccuracy * 100)}%</li>
-        </ul>
-        {!result.pass && (
-          <p className="feedback feedback--neutral">
-            {result.missedCharacters.length
-              ? `A little more practice on ${result.missedCharacters.join(" ")}.`
-              : "Close. A little more practice and try again."}
-          </p>
-        )}
-        <button type="button" onClick={() => void begin()}>
-          {result.pass ? "Keep going" : "Back to practice"}
-        </button>
       </section>
     );
   }

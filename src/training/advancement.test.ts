@@ -13,6 +13,7 @@ import type {
   ContinuousCopyResult,
 } from "./continuous-copy.ts";
 import {
+  acceptAdvancement,
   evaluateAdvancementEvidence,
   minimumAdvancementObservations,
 } from "./advancement.ts";
@@ -63,7 +64,7 @@ function stream(
 }
 
 describe("minimumAdvancementObservations", () => {
-  it("preserves scaled checkpoint evidence sizing", () => {
+  it("scales evidence sizing with the active set", () => {
     expect(minimumAdvancementObservations(2)).toBe(24);
     expect(minimumAdvancementObservations(5)).toBe(30);
     expect(minimumAdvancementObservations(10)).toBe(50);
@@ -189,6 +190,20 @@ describe("evaluateAdvancementEvidence", () => {
     });
   });
 
+  it("ignores TX history when evaluating advancement", () => {
+    const state = stateWith();
+    state.characters[0].tx.totalAttempts = 20;
+    state.characters[0].tx.recentResults = new Array(20).fill(false);
+    state.characters[1].tx.totalAttempts = 20;
+    state.characters[1].tx.recentResults = new Array(20).fill(false);
+    const result = stream([...observations("K", 16), ...observations("M", 8)]);
+
+    expect(evaluateAdvancementEvidence(state, result)).toMatchObject({
+      eligible: true,
+      reason: "READY",
+    });
+  });
+
   it("reports complete when every curriculum character is unlocked", () => {
     const state = stateWith(DEFAULT_CURRICULUM_CONFIG.order.length);
     const result = stream(
@@ -255,5 +270,58 @@ describe("evaluateAdvancementEvidence", () => {
     evaluateAdvancementEvidence(state, result);
     expect(state).toEqual(stateBefore);
     expect(result).toEqual(resultBefore);
+  });
+});
+
+describe("acceptAdvancement", () => {
+  function qualifyingOffer(state: CurriculumState) {
+    const result = stream([...observations("K", 16), ...observations("M", 8)]);
+    return {
+      result,
+      assessment: evaluateAdvancementEvidence(state, result),
+    };
+  }
+
+  it("unlocks exactly the offered next character", () => {
+    const state = stateWith();
+    const { result, assessment } = qualifyingOffer(state);
+
+    expect(acceptAdvancement(state, result, assessment)).toBe("U");
+    expect(state.characters.map(({ character }) => character)).toEqual([
+      "K",
+      "M",
+      "U",
+    ]);
+  });
+
+  it("rejects duplicate acceptance", () => {
+    const state = stateWith();
+    const { result, assessment } = qualifyingOffer(state);
+
+    expect(acceptAdvancement(state, result, assessment)).toBe("U");
+    expect(acceptAdvancement(state, result, assessment)).toBeUndefined();
+    expect(state.characters.map(({ character }) => character)).toEqual([
+      "K",
+      "M",
+      "U",
+    ]);
+  });
+
+  it("rejects an offer when the active set changed", () => {
+    const state = stateWith();
+    const { result, assessment } = qualifyingOffer(state);
+    forceUnlockNext(state);
+
+    expect(acceptAdvancement(state, result, assessment)).toBeUndefined();
+    expect(state.characters).toHaveLength(3);
+  });
+
+  it("rejects an offer invalidated by live review state", () => {
+    const state = stateWith();
+    const { result, assessment } = qualifyingOffer(state);
+    state.characters[0].needsReview = true;
+
+    expect(acceptAdvancement(state, result, assessment)).toBeUndefined();
+    expect(state.characters).toHaveLength(2);
   });
 });

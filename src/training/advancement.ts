@@ -3,6 +3,7 @@ import {
   type AdvancementConfig,
 } from "../content/curriculum-data.ts";
 import {
+  forceUnlockNext,
   newestCharacter,
   nextLockedCharacter,
   unlockedCharacters,
@@ -161,4 +162,29 @@ export function evaluateAdvancementEvidence(
     return { ...base, eligible: false, reason: "LOW_NEWEST_ACCURACY" };
   }
   return { ...base, eligible: true, reason: "READY" };
+}
+
+export function acceptAdvancement(
+  state: CurriculumState,
+  result: ContinuousCopyResult,
+  offeredAssessment: AdvancementAssessment,
+  at?: string,
+  config: AdvancementConfig = DEFAULT_ADVANCEMENT_CONFIG,
+): string | undefined {
+  const currentAssessment = evaluateAdvancementEvidence(state, result, config);
+  if (!currentAssessment.eligible || !offeredAssessment.eligible) {
+    return undefined;
+  }
+  if (
+    currentAssessment.nextCharacter !== offeredAssessment.nextCharacter ||
+    currentAssessment.activeCharacters.length !==
+      offeredAssessment.activeCharacters.length ||
+    currentAssessment.activeCharacters.some(
+      (character, index) =>
+        character !== offeredAssessment.activeCharacters[index],
+    )
+  ) {
+    return undefined;
+  }
+  return forceUnlockNext(state, at);
 }
