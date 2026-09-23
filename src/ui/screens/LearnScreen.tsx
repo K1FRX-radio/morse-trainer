@@ -21,6 +21,7 @@ export function LearnScreen() {
   const {
     exercise,
     feedback,
+    introStage,
     awaitingContinue,
     inputReady,
     typingReady,
@@ -56,6 +57,7 @@ export function LearnScreen() {
   const supportsTypeBehind =
     exercise?.type === "copy-group" || exercise?.type === "copy-word";
   const answerReady = supportsTypeBehind ? typingReady : inputReady;
+  const introControlsReady = introStage === "ready" && !isPlaying;
 
   // Clear the field for each new prompt (practice card or checkpoint item).
   useEffect(() => {
@@ -516,17 +518,23 @@ export function LearnScreen() {
           <code className="learn__morse">
             {encodeCharacter(exercise.target) ?? ""}
           </code>
-          <p className="field__label">Listen…</p>
+          <p className="field__label">
+            {introStage === "ready" ? "Your turn next…" : "Listen…"}
+          </p>
           <div className="practice__controls">
             <button
               type="button"
               className="tab"
               onClick={replay}
-              disabled={isPlaying}
+              disabled={!introControlsReady}
             >
               Replay
             </button>
-            <button type="button" onClick={continueNow} disabled={isPlaying}>
+            <button
+              type="button"
+              onClick={continueNow}
+              disabled={!introControlsReady}
+            >
               Continue
             </button>
           </div>

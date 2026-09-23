@@ -33,7 +33,8 @@ const CURRICULUM_STORAGE_KEY = "k1frx.curriculum.v2";
 const INTRODUCED_STORAGE_KEY = "k1frx.introduced.v1";
 
 // Brief holds (ms). Introductions and misses are otherwise paced by audio.
-const INTRO_GAP = 400;
+const INTRO_REPEAT_GAP_MS = 700;
+const INTRO_READY_HOLD_MS = 900;
 const HOLD_AFTER_CORRECT = 450;
 const HOLD_AFTER_MISS = 500;
 
@@ -46,9 +47,16 @@ export type Feedback = {
   morse: string;
 };
 
+export type IntroStage = "first-play" | "repeat-gap" | "second-play" | "ready";
+
 type QueuedSubmission = {
   token: number;
   kind: "automatic" | "explicit";
+};
+
+type PendingIntroDelay = {
+  timeoutId: number;
+  resolve: (completed: boolean) => void;
 };
 
 function loadCurriculum(): CurriculumState {
@@ -141,6 +149,8 @@ export function useLearnSession() {
   const playbackGeneration = useRef(0);
   const heldKeysRef = useRef(new Set<string>());
   const introDoneToken = useRef<number | null>(null);
+  const introStageRef = useRef<IntroStage | undefined>(undefined);
+  const introDelayRef = useRef<PendingIntroDelay | undefined>(undefined);
   const queuedSubmissionRef = useRef<QueuedSubmission | null>(null);
   const currentAnswerRef = useRef("");
   const flushQueuedSubmissionRef = useRef<(token: number) => void>(() => {});
@@ -160,6 +170,9 @@ export function useLearnSession() {
   exerciseRef.current = exercise;
 
   const [feedback, setFeedback] = useState<Feedback | undefined>(undefined);
+  const [introStage, setIntroStage] = useState<IntroStage | undefined>(
+    undefined,
+  );
   const [awaitingContinue, setAwaitingContinue] = useState(false);
   const [summary, setSummary] = useState<SessionSummary | undefined>(undefined);
   const [checkpointResult, setCheckpointResult] = useState<
@@ -233,13 +246,54 @@ export function useLearnSession() {
 
   const advanceRef = useRef<() => void>(() => {});
 
-  const completeIntro = useCallback((token: number) => {
-    if (introDoneToken.current === token) return;
-    introDoneToken.current = token;
-    sessionRef.current?.submit("");
-    saveCurriculum(stateRef.current);
-    advanceRef.current();
+  const updateIntroStage = useCallback((stage: IntroStage | undefined) => {
+    introStageRef.current = stage;
+    setIntroStage(stage);
   }, []);
+
+  const cancelIntroDelay = useCallback(() => {
+    const pending = introDelayRef.current;
+    if (!pending) return;
+    introDelayRef.current = undefined;
+    window.clearTimeout(pending.timeoutId);
+    pending.resolve(false);
+  }, []);
+
+  const waitForIntroDelay = useCallback(
+    (ms: number): Promise<boolean> => {
+      cancelIntroDelay();
+      return new Promise((resolve) => {
+        const timeoutId = window.setTimeout(() => {
+          if (introDelayRef.current?.timeoutId === timeoutId) {
+            introDelayRef.current = undefined;
+          }
+          resolve(true);
+        }, ms);
+        introDelayRef.current = { timeoutId, resolve };
+      });
+    },
+    [cancelIntroDelay],
+  );
+
+  const nextFlowToken = useCallback(() => {
+    cancelIntroDelay();
+    return (flowToken.current += 1);
+  }, [cancelIntroDelay]);
+
+  const completeIntro = useCallback(
+    (token: number) => {
+      if (token !== flowToken.current || introStageRef.current !== "ready") {
+        return;
+      }
+      if (introDoneToken.current === token) return;
+      cancelIntroDelay();
+      introDoneToken.current = token;
+      sessionRef.current?.submit("");
+      saveCurriculum(stateRef.current);
+      advanceRef.current();
+    },
+    [cancelIntroDelay],
+  );
 
   const clearHeldKeys = useCallback(() => {
     heldKeysRef.current.clear();
@@ -250,22 +304,28 @@ export function useLearnSession() {
       lockedRef.current = true;
       setInputReady(false);
       setTypingReady(false);
+      updateIntroStage("first-play");
       await play(target);
       if (token !== flowToken.current) return;
-      await delay(INTRO_GAP);
+      updateIntroStage("repeat-gap");
+      if (!(await waitForIntroDelay(INTRO_REPEAT_GAP_MS))) return;
       if (token !== flowToken.current) return;
+      updateIntroStage("second-play");
       await play(target);
       if (token !== flowToken.current) return;
-      if (auto) completeIntro(token);
-      else setAwaitingContinue(true);
+      updateIntroStage("ready");
+      setAwaitingContinue(true);
+      if (auto && (await waitForIntroDelay(INTRO_READY_HOLD_MS))) {
+        completeIntro(token);
+      }
     },
-    [auto, play, completeIntro],
+    [auto, play, completeIntro, updateIntroStage, waitForIntroDelay],
   );
 
   const endSession = useCallback(() => {
     continuousCopy.abandon();
     continuousCopy.reset();
-    flowToken.current += 1;
+    nextFlowToken();
     queuedSubmissionRef.current = null;
     currentAnswerRef.current = "";
     playbackGeneration.current += 1;
@@ -282,12 +342,13 @@ export function useLearnSession() {
     setTransition(undefined);
     setNotification(undefined);
     setPhaseLabel(undefined);
+    updateIntroStage(undefined);
     setPhase("summary");
-  }, [audio, clearHeldKeys, continuousCopy]);
+  }, [audio, clearHeldKeys, continuousCopy, nextFlowToken, updateIntroStage]);
 
   const showEvent = useCallback(
     (event: LessonEvent) => {
-      const token = (flowToken.current += 1);
+      const token = nextFlowToken();
       acceptedTokenRef.current = null;
       queuedSubmissionRef.current = null;
       currentAnswerRef.current = "";
@@ -296,6 +357,7 @@ export function useLearnSession() {
       setTypingReady(false);
       setFeedback(undefined);
       setAwaitingContinue(false);
+      updateIntroStage(undefined);
       setPhaseLabel(sessionRef.current?.phaseLabel);
       if (event.type === "transition") {
         setExercise(undefined);
@@ -335,7 +397,14 @@ export function useLearnSession() {
         );
       }
     },
-    [runIntro, presentPrompt, clearHeldKeys, continuousCopy],
+    [
+      runIntro,
+      presentPrompt,
+      clearHeldKeys,
+      continuousCopy,
+      nextFlowToken,
+      updateIntroStage,
+    ],
   );
 
   const advance = useCallback(() => {
@@ -354,7 +423,7 @@ export function useLearnSession() {
     continuousCopy.reset();
     clearHeldKeys();
     await audio.cancel();
-    flowToken.current += 1;
+    nextFlowToken();
     queuedSubmissionRef.current = null;
     currentAnswerRef.current = "";
     playbackGeneration.current += 1;
@@ -383,6 +452,7 @@ export function useLearnSession() {
     endSession,
     clearHeldKeys,
     continuousCopy,
+    nextFlowToken,
     settings.continuousCopyDurationMs,
     timing,
   ]);
@@ -508,8 +578,17 @@ export function useLearnSession() {
 
   const replay = useCallback(() => {
     const ex = exerciseRef.current;
-    if (!ex || ex.type === "introduce") {
-      if (ex?.type === "introduce" && !playingRef.current) void play(ex.target);
+    if (!ex) return;
+    if (ex.type === "introduce") {
+      if (introStageRef.current !== "ready" || playingRef.current) return;
+      const token = flowToken.current;
+      cancelIntroDelay();
+      void play(ex.target).then(async () => {
+        if (token !== flowToken.current) return;
+        if (auto && (await waitForIntroDelay(INTRO_READY_HOLD_MS))) {
+          completeIntro(token);
+        }
+      });
       return;
     }
     if (playingRef.current) return;
@@ -524,12 +603,14 @@ export function useLearnSession() {
       setInputReady(true);
       flushQueuedSubmissionRef.current(token);
     });
-  }, [play]);
+  }, [auto, play, cancelIntroDelay, completeIntro, waitForIntroDelay]);
 
   const continueNow = useCallback(() => {
     const ex = exerciseRef.current;
-    if (ex?.type === "introduce") completeIntro(flowToken.current);
-    else advanceRef.current();
+    if (ex?.type === "introduce") {
+      if (introStageRef.current !== "ready" || playingRef.current) return;
+      completeIntro(flowToken.current);
+    } else advanceRef.current();
   }, [completeIntro]);
 
   const continueTransition = useCallback(() => {
@@ -553,7 +634,7 @@ export function useLearnSession() {
   const finishCheckpoint = useCallback(() => {
     const cp = checkpointRef.current;
     if (!cp) return;
-    flowToken.current += 1;
+    nextFlowToken();
     queuedSubmissionRef.current = null;
     currentAnswerRef.current = "";
     playbackGeneration.current += 1;
@@ -565,13 +646,13 @@ export function useLearnSession() {
     saveCurriculum(stateRef.current);
     setCheckpointResult(applied);
     setPhase("checkpoint-result");
-  }, [audio, clearHeldKeys]);
+  }, [audio, clearHeldKeys, nextFlowToken]);
 
   const startCheckpoint = useCallback(async () => {
     continuousCopy.reset();
     clearHeldKeys();
     await audio.cancel();
-    flowToken.current += 1;
+    nextFlowToken();
     queuedSubmissionRef.current = null;
     currentAnswerRef.current = "";
     playbackGeneration.current += 1;
@@ -585,12 +666,19 @@ export function useLearnSession() {
     });
     setCheckpointResult(undefined);
     setPhase("checkpoint");
-    const token = (flowToken.current += 1);
+    const token = nextFlowToken();
     acceptedTokenRef.current = null;
     const first = checkpointRef.current.current();
     if (first) void presentPrompt(first, token);
     else finishCheckpoint();
-  }, [audio, presentPrompt, finishCheckpoint, clearHeldKeys, continuousCopy]);
+  }, [
+    audio,
+    presentPrompt,
+    finishCheckpoint,
+    clearHeldKeys,
+    continuousCopy,
+    nextFlowToken,
+  ]);
 
   const acceptCheckpoint = useCallback(
     (raw: string) => {
@@ -607,13 +695,13 @@ export function useLearnSession() {
         return;
       }
       const next = cp.current();
-      const nextToken = (flowToken.current += 1);
+      const nextToken = nextFlowToken();
       acceptedTokenRef.current = null;
       queuedSubmissionRef.current = null;
       currentAnswerRef.current = "";
       if (next) void presentPrompt(next, nextToken);
     },
-    [claimPrompt, presentPrompt, finishCheckpoint],
+    [claimPrompt, presentPrompt, finishCheckpoint, nextFlowToken],
   );
 
   const physicalKeyDown = useCallback(
@@ -662,6 +750,7 @@ export function useLearnSession() {
   // Invalidate pending async work and stop audio on unmount.
   useEffect(
     () => () => {
+      cancelIntroDelay();
       flowToken.current += 1;
       queuedSubmissionRef.current = null;
       currentAnswerRef.current = "";
@@ -669,7 +758,7 @@ export function useLearnSession() {
       heldKeysRef.current.clear();
       void audio.cancelAndSuspend();
     },
-    [audio],
+    [audio, cancelIntroDelay],
   );
 
   const current: CharacterProgress | undefined = newestCharacter(
@@ -698,6 +787,7 @@ export function useLearnSession() {
     },
     phaseLabel,
     feedback,
+    introStage,
     awaitingContinue,
     summary,
     auto,
