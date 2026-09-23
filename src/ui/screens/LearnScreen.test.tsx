@@ -8,7 +8,9 @@ import {
 } from "@testing-library/react";
 import { DEFAULT_CURRICULUM_CONFIG } from "../../content/curriculum-data.ts";
 import { createInitialState, forceUnlockNext } from "../../core/curriculum.ts";
+import { createRng } from "../../core/rng.ts";
 import type { Schedule } from "../../core/timing.ts";
+import { buildCheckpoint } from "../../training/checkpoint.ts";
 import { DEFAULT_LESSON_CONFIG } from "../../training/lesson-plan.ts";
 import { sanitizeCopyInput } from "../copy-input.ts";
 import { LearnAudioContext, type LearnAudio } from "../learn-audio-context.ts";
@@ -86,6 +88,16 @@ async function tick(ms: number) {
     await Promise.resolve();
   });
   await flush();
+}
+
+function checkpointSeedFor(prefix: readonly string[]): number {
+  for (let seed = 0; seed < 10000; seed++) {
+    const targets = buildCheckpoint(["K", "M"], "M", createRng(seed));
+    if (prefix.every((target, index) => targets[index] === target)) {
+      return seed;
+    }
+  }
+  throw new Error(`No checkpoint seed starts with ${prefix.join("")}`);
 }
 
 /** Drives from onboarding to the first isolated copy card (acquire of K). */
@@ -233,7 +245,7 @@ describe("LearnScreen input gating", () => {
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
-  it("does not let a held physical key answer the next prompt", async () => {
+  it("rejects held repeats but accepts a fresh same-key press next prompt", async () => {
     const fake = makeFakeAudio();
     renderLearn(fake.audio);
     await toFirstCopy(fake);
@@ -241,6 +253,7 @@ describe("LearnScreen input gating", () => {
     fireEvent.keyDown(window, { key: "k", code: "KeyK" });
     await flush();
     await tick(450);
+    expect(fake.pending[0]?.text).toBe("K");
     await resolvePlay(fake);
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
 
@@ -248,9 +261,62 @@ describe("LearnScreen input gating", () => {
     await flush();
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
 
-    fireEvent.keyUp(window, { key: "k", code: "KeyK" });
     fireEvent.keyDown(window, { key: "k", code: "KeyK" });
     await flush();
+    expect(screen.getByRole("status")).toBeInTheDocument();
+  });
+
+  it("lets multiple physical events claim a prompt only once", async () => {
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+    await toFirstCopy(fake);
+
+    fireEvent.keyDown(window, { key: "k", code: "KeyK" });
+    fireEvent.keyDown(window, { key: "m", code: "KeyM" });
+    fireEvent.keyDown(window, { key: "k", code: "KeyK", repeat: true });
+    await flush();
+
+    expect(screen.getByRole("status")).toBeInTheDocument();
+    await tick(450);
+    expect(fake.playCount()).toBe(1);
+    expect(fake.pending[0]?.text).toBe("K");
+  });
+
+  it("clears physical-key membership on blur", async () => {
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+    fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
+    await flush();
+    await resolvePlay(fake);
+    await tick(700);
+    await resolvePlay(fake);
+    await tick(900);
+
+    fireEvent.keyDown(window, { key: "k", code: "KeyK" });
+    fireEvent.blur(window);
+    await resolvePlay(fake);
+    fireEvent.keyDown(window, { key: "k", code: "KeyK" });
+    await flush();
+
+    expect(screen.getByRole("status")).toBeInTheDocument();
+  });
+
+  it("does not carry physical-key state across unmount", async () => {
+    const firstFake = makeFakeAudio();
+    const firstView = renderLearn(firstFake.audio);
+    await toFirstCopy(firstFake);
+    fireEvent.keyDown(window, { key: "k", code: "KeyK" });
+    await flush();
+    firstView.unmount();
+    await tick(1000);
+    expect(firstFake.playCount()).toBe(0);
+
+    const secondFake = makeFakeAudio();
+    renderLearn(secondFake.audio);
+    await toFirstCopy(secondFake);
+    fireEvent.keyDown(window, { key: "k", code: "KeyK" });
+    await flush();
+
     expect(screen.getByRole("status")).toBeInTheDocument();
   });
 
@@ -926,12 +992,17 @@ describe("LearnScreen audio sequencing", () => {
 });
 
 describe("LearnScreen checkpoint", () => {
-  async function toCheckpoint(fake: ReturnType<typeof makeFakeAudio>) {
+  async function toCheckpoint(
+    fake: ReturnType<typeof makeFakeAudio>,
+    prefix?: readonly string[],
+  ) {
     await toFirstCopy(fake);
     fireEvent.click(screen.getByRole("button", { name: "End session" }));
     await flush();
+    if (prefix) vi.setSystemTime(checkpointSeedFor(prefix));
     fireEvent.click(screen.getByRole("button", { name: /checkpoint/i }));
     await flush(); // startCheckpoint: unlock + present first item -> play
+    if (prefix) expect(fake.pending[0]?.text).toBe(prefix[0]);
     await resolvePlay(fake); // first item audio done -> input enabled
   }
 
@@ -1000,23 +1071,43 @@ describe("LearnScreen checkpoint", () => {
     ).toBe(false);
   });
 
-  it("requires keyup before the same physical key answers a later item", async () => {
+  it("accepts fresh same-key presses without keyup between checkpoint items", async () => {
     const fake = makeFakeAudio();
     renderLearn(fake.audio);
-    await toCheckpoint(fake);
+    await toCheckpoint(fake, ["K", "K"]);
 
     fireEvent.keyDown(window, { key: "k", code: "KeyK" });
     await flush();
     expect(screen.getByText(/^1\//)).toBeInTheDocument();
+    expect(fake.pending[0]?.text).toBe("K");
     await resolvePlay(fake);
 
     fireEvent.keyDown(window, { key: "k", code: "KeyK", repeat: true });
     await flush();
     expect(screen.getByText(/^1\//)).toBeInTheDocument();
 
-    fireEvent.keyUp(window, { key: "k", code: "KeyK" });
     fireEvent.keyDown(window, { key: "k", code: "KeyK" });
     await flush();
     expect(screen.getByText(/^2\//)).toBeInTheDocument();
+  });
+
+  it("accepts an alternating K M K checkpoint with one press per item", async () => {
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+    await toCheckpoint(fake, ["K", "M", "K"]);
+
+    fireEvent.keyDown(window, { key: "k", code: "KeyK" });
+    await flush();
+    expect(fake.pending[0]?.text).toBe("M");
+    await resolvePlay(fake);
+
+    fireEvent.keyDown(window, { key: "m", code: "KeyM" });
+    await flush();
+    expect(fake.pending[0]?.text).toBe("K");
+    await resolvePlay(fake);
+
+    fireEvent.keyDown(window, { key: "k", code: "KeyK" });
+    await flush();
+    expect(screen.getByText(/^3\//)).toBeInTheDocument();
   });
 });

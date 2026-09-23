@@ -148,6 +148,7 @@ export function useLearnSession() {
   const playingRef = useRef(false);
   const playbackGeneration = useRef(0);
   const heldKeysRef = useRef(new Set<string>());
+  const heldKeysTokenRef = useRef<number | null>(null);
   const introDoneToken = useRef<number | null>(null);
   const introStageRef = useRef<IntroStage | undefined>(undefined);
   const introDelayRef = useRef<PendingIntroDelay | undefined>(undefined);
@@ -297,6 +298,12 @@ export function useLearnSession() {
 
   const clearHeldKeys = useCallback(() => {
     heldKeysRef.current.clear();
+    heldKeysTokenRef.current = null;
+  }, []);
+
+  const bindHeldKeysToPrompt = useCallback((token: number) => {
+    heldKeysRef.current.clear();
+    heldKeysTokenRef.current = token;
   }, []);
 
   const runIntro = useCallback(
@@ -388,6 +395,7 @@ export function useLearnSession() {
       setTransition(undefined);
       setNotification(undefined);
       setExercise(event);
+      bindHeldKeysToPrompt(token);
       if (event.type === "introduce") void runIntro(event.target, token);
       else {
         void presentPrompt(
@@ -404,6 +412,7 @@ export function useLearnSession() {
       continuousCopy,
       nextFlowToken,
       updateIntroStage,
+      bindHeldKeysToPrompt,
     ],
   );
 
@@ -668,6 +677,7 @@ export function useLearnSession() {
     setPhase("checkpoint");
     const token = nextFlowToken();
     acceptedTokenRef.current = null;
+    bindHeldKeysToPrompt(token);
     const first = checkpointRef.current.current();
     if (first) void presentPrompt(first, token);
     else finishCheckpoint();
@@ -678,6 +688,7 @@ export function useLearnSession() {
     clearHeldKeys,
     continuousCopy,
     nextFlowToken,
+    bindHeldKeysToPrompt,
   ]);
 
   const acceptCheckpoint = useCallback(
@@ -699,9 +710,16 @@ export function useLearnSession() {
       acceptedTokenRef.current = null;
       queuedSubmissionRef.current = null;
       currentAnswerRef.current = "";
+      bindHeldKeysToPrompt(nextToken);
       if (next) void presentPrompt(next, nextToken);
     },
-    [claimPrompt, presentPrompt, finishCheckpoint, nextFlowToken],
+    [
+      claimPrompt,
+      presentPrompt,
+      finishCheckpoint,
+      nextFlowToken,
+      bindHeldKeysToPrompt,
+    ],
   );
 
   const physicalKeyDown = useCallback(
@@ -721,6 +739,10 @@ export function useLearnSession() {
       if ([...character].length !== 1 || !isSupportedCharacter(character)) {
         return false;
       }
+      const token = flowToken.current;
+      if (heldKeysTokenRef.current !== token) {
+        bindHeldKeysToPrompt(token);
+      }
       const physicalKey = code || key.toUpperCase();
       if (repeat || heldKeysRef.current.has(physicalKey)) return true;
 
@@ -729,7 +751,7 @@ export function useLearnSession() {
       else acceptIsolated(character);
       return true;
     },
-    [phase, acceptCheckpoint, acceptIsolated],
+    [phase, acceptCheckpoint, acceptIsolated, bindHeldKeysToPrompt],
   );
 
   const physicalKeyUp = useCallback((key: string, code: string) => {
