@@ -32,9 +32,7 @@ import { useContinuousCopy } from "./useContinuousCopy.ts";
 const CURRICULUM_STORAGE_KEY = "k1frx.curriculum.v2";
 const INTRODUCED_STORAGE_KEY = "k1frx.introduced.v1";
 
-// Brief holds (ms). Introductions and misses are otherwise paced by audio.
-const INTRO_REPEAT_GAP_MS = 700;
-const INTRO_READY_HOLD_MS = 900;
+// Brief holds (ms). Introductions are paced only by completed audio and input.
 const HOLD_AFTER_CORRECT = 450;
 const HOLD_AFTER_MISS = 500;
 
@@ -47,16 +45,11 @@ export type Feedback = {
   morse: string;
 };
 
-export type IntroStage = "first-play" | "repeat-gap" | "second-play" | "ready";
+export type IntroStage = "playing" | "ready";
 
 type QueuedSubmission = {
   token: number;
   kind: "automatic" | "explicit";
-};
-
-type PendingIntroDelay = {
-  timeoutId: number;
-  resolve: (completed: boolean) => void;
 };
 
 function loadCurriculum(): CurriculumState {
@@ -151,7 +144,6 @@ export function useLearnSession() {
   const heldKeysTokenRef = useRef<number | null>(null);
   const introDoneToken = useRef<number | null>(null);
   const introStageRef = useRef<IntroStage | undefined>(undefined);
-  const introDelayRef = useRef<PendingIntroDelay | undefined>(undefined);
   const queuedSubmissionRef = useRef<QueuedSubmission | null>(null);
   const currentAnswerRef = useRef("");
   const flushQueuedSubmissionRef = useRef<(token: number) => void>(() => {});
@@ -252,49 +244,20 @@ export function useLearnSession() {
     setIntroStage(stage);
   }, []);
 
-  const cancelIntroDelay = useCallback(() => {
-    const pending = introDelayRef.current;
-    if (!pending) return;
-    introDelayRef.current = undefined;
-    window.clearTimeout(pending.timeoutId);
-    pending.resolve(false);
+  const nextFlowToken = useCallback(() => {
+    return (flowToken.current += 1);
   }, []);
 
-  const waitForIntroDelay = useCallback(
-    (ms: number): Promise<boolean> => {
-      cancelIntroDelay();
-      return new Promise((resolve) => {
-        const timeoutId = window.setTimeout(() => {
-          if (introDelayRef.current?.timeoutId === timeoutId) {
-            introDelayRef.current = undefined;
-          }
-          resolve(true);
-        }, ms);
-        introDelayRef.current = { timeoutId, resolve };
-      });
-    },
-    [cancelIntroDelay],
-  );
-
-  const nextFlowToken = useCallback(() => {
-    cancelIntroDelay();
-    return (flowToken.current += 1);
-  }, [cancelIntroDelay]);
-
-  const completeIntro = useCallback(
-    (token: number) => {
-      if (token !== flowToken.current || introStageRef.current !== "ready") {
-        return;
-      }
-      if (introDoneToken.current === token) return;
-      cancelIntroDelay();
-      introDoneToken.current = token;
-      sessionRef.current?.submit("");
-      saveCurriculum(stateRef.current);
-      advanceRef.current();
-    },
-    [cancelIntroDelay],
-  );
+  const completeIntro = useCallback((token: number) => {
+    if (token !== flowToken.current || introStageRef.current !== "ready") {
+      return;
+    }
+    if (introDoneToken.current === token) return;
+    introDoneToken.current = token;
+    sessionRef.current?.submit("");
+    saveCurriculum(stateRef.current);
+    advanceRef.current();
+  }, []);
 
   const clearHeldKeys = useCallback(() => {
     heldKeysRef.current.clear();
@@ -311,22 +274,12 @@ export function useLearnSession() {
       lockedRef.current = true;
       setInputReady(false);
       setTypingReady(false);
-      updateIntroStage("first-play");
-      await play(target);
-      if (token !== flowToken.current) return;
-      updateIntroStage("repeat-gap");
-      if (!(await waitForIntroDelay(INTRO_REPEAT_GAP_MS))) return;
-      if (token !== flowToken.current) return;
-      updateIntroStage("second-play");
+      updateIntroStage("playing");
       await play(target);
       if (token !== flowToken.current) return;
       updateIntroStage("ready");
-      setAwaitingContinue(true);
-      if (auto && (await waitForIntroDelay(INTRO_READY_HOLD_MS))) {
-        completeIntro(token);
-      }
     },
-    [auto, play, completeIntro, updateIntroStage, waitForIntroDelay],
+    [play, updateIntroStage],
   );
 
   const endSession = useCallback(() => {
@@ -591,12 +544,10 @@ export function useLearnSession() {
     if (ex.type === "introduce") {
       if (introStageRef.current !== "ready" || playingRef.current) return;
       const token = flowToken.current;
-      cancelIntroDelay();
-      void play(ex.target).then(async () => {
+      updateIntroStage("playing");
+      void play(ex.target).then(() => {
         if (token !== flowToken.current) return;
-        if (auto && (await waitForIntroDelay(INTRO_READY_HOLD_MS))) {
-          completeIntro(token);
-        }
+        updateIntroStage("ready");
       });
       return;
     }
@@ -612,7 +563,7 @@ export function useLearnSession() {
       setInputReady(true);
       flushQueuedSubmissionRef.current(token);
     });
-  }, [auto, play, cancelIntroDelay, completeIntro, waitForIntroDelay]);
+  }, [play, updateIntroStage]);
 
   const continueNow = useCallback(() => {
     const ex = exerciseRef.current;
@@ -772,7 +723,6 @@ export function useLearnSession() {
   // Invalidate pending async work and stop audio on unmount.
   useEffect(
     () => () => {
-      cancelIntroDelay();
       flowToken.current += 1;
       queuedSubmissionRef.current = null;
       currentAnswerRef.current = "";
@@ -780,7 +730,7 @@ export function useLearnSession() {
       heldKeysRef.current.clear();
       void audio.cancelAndSuspend();
     },
-    [audio, cancelIntroDelay],
+    [audio],
   );
 
   const current: CharacterProgress | undefined = newestCharacter(

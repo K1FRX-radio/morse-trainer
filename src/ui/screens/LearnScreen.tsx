@@ -519,7 +519,9 @@ export function LearnScreen() {
             {encodeCharacter(exercise.target) ?? ""}
           </code>
           <p className="field__label">
-            {introStage === "ready" ? "Your turn next…" : "Listen…"}
+            {introStage === "ready"
+              ? "Replay it as often as you like. Start practice when the sound feels familiar."
+              : "Listen…"}
           </p>
           <div className="practice__controls">
             <button
@@ -535,7 +537,7 @@ export function LearnScreen() {
               onClick={continueNow}
               disabled={!introControlsReady}
             >
-              Continue
+              Start practice
             </button>
           </div>
         </div>

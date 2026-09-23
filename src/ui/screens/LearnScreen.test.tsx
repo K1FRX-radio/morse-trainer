@@ -6,6 +6,8 @@ import {
   render,
   screen,
 } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
+import { App } from "../../App.tsx";
 import { DEFAULT_CURRICULUM_CONFIG } from "../../content/curriculum-data.ts";
 import { createInitialState, forceUnlockNext } from "../../core/curriculum.ts";
 import { createRng } from "../../core/rng.ts";
@@ -67,6 +69,18 @@ function renderLearn(audio: LearnAudio) {
   );
 }
 
+function renderApp(audio: LearnAudio) {
+  return render(
+    <MemoryRouter initialEntries={["/learn"]}>
+      <SettingsProvider>
+        <LearnAudioContext.Provider value={audio}>
+          <App />
+        </LearnAudioContext.Provider>
+      </SettingsProvider>
+    </MemoryRouter>,
+  );
+}
+
 async function flush() {
   await act(async () => {
     await Promise.resolve();
@@ -104,10 +118,9 @@ function checkpointSeedFor(prefix: readonly string[]): number {
 async function toFirstCopy(fake: ReturnType<typeof makeFakeAudio>) {
   fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
   await flush(); // begin: unlock + intro K present -> play #1
-  await resolvePlay(fake); // intro play 1 -> intro gap timer
-  await tick(700); // INTRO_REPEAT_GAP_MS -> play #2
-  await resolvePlay(fake); // intro play 2 -> ready hold
-  await tick(900); // INTRO_READY_HOLD_MS -> acquire K present -> play #3
+  await resolvePlay(fake); // intro play -> explicit ready state
+  fireEvent.click(screen.getByRole("button", { name: "Start practice" }));
+  await flush(); // acquire K present -> play #2
   await resolvePlay(fake); // acquire audio done -> input unlocked
 }
 
@@ -192,9 +205,8 @@ describe("LearnScreen input gating", () => {
     fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
     await flush();
     await resolvePlay(fake);
-    await tick(700);
-    await resolvePlay(fake);
-    await tick(900); // acquire card presented, audio still playing (play #3 pending)
+    fireEvent.click(screen.getByRole("button", { name: "Start practice" }));
+    await flush(); // acquire card presented, audio still playing (play #2 pending)
 
     const input = screen.getByLabelText("Your copy") as HTMLInputElement;
     expect(input.disabled).toBe(true); // audio not yet finished
@@ -234,9 +246,8 @@ describe("LearnScreen input gating", () => {
     fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
     await flush();
     await resolvePlay(fake);
-    await tick(700);
-    await resolvePlay(fake);
-    await tick(900); // acquire presented, audio pending
+    fireEvent.click(screen.getByRole("button", { name: "Start practice" }));
+    await flush(); // acquire presented, audio pending
 
     const input = screen.getByLabelText("Your copy") as HTMLInputElement;
     fireEvent.change(input, { target: { value: "K" } }); // too early
@@ -288,9 +299,8 @@ describe("LearnScreen input gating", () => {
     fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
     await flush();
     await resolvePlay(fake);
-    await tick(700);
-    await resolvePlay(fake);
-    await tick(900);
+    fireEvent.click(screen.getByRole("button", { name: "Start practice" }));
+    await flush();
 
     fireEvent.keyDown(window, { key: "k", code: "KeyK" });
     fireEvent.blur(window);
@@ -395,149 +405,231 @@ describe("LearnScreen input gating", () => {
 });
 
 describe("LearnScreen audio sequencing", () => {
-  it("separates both introduction plays from the first drill", async () => {
+  it.each(["auto", "manual"])(
+    "plays one introduction and waits indefinitely with %s pacing",
+    async (pacing) => {
+      localStorage.setItem("k1frx.settings.v1", JSON.stringify({ pacing }));
+      const fake = makeFakeAudio();
+      renderLearn(fake.audio);
+
+      fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
+      await flush();
+
+      expect(fake.played).toEqual(["K"]);
+      expect(screen.getByText("K")).toBeInTheDocument();
+      expect(screen.getByText("-.-")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Replay" })).toBeDisabled();
+      expect(
+        screen.getByRole("button", { name: "Start practice" }),
+      ).toBeDisabled();
+
+      await tick(60000);
+      expect(fake.played).toEqual(["K"]);
+      expect(screen.queryByLabelText("Your copy")).not.toBeInTheDocument();
+
+      await resolvePlay(fake);
+      expect(
+        screen.getByText(
+          "Replay it as often as you like. Start practice when the sound feels familiar.",
+        ),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Replay" })).toBeEnabled();
+      expect(
+        screen.getByRole("button", { name: "Start practice" }),
+      ).toBeEnabled();
+
+      await tick(60000);
+      expect(fake.played).toEqual(["K"]);
+      expect(screen.getByText("K")).toBeInTheDocument();
+      expect(screen.getByText("-.-")).toBeInTheDocument();
+      expect(screen.queryByLabelText("Your copy")).not.toBeInTheDocument();
+    },
+  );
+
+  it("serializes unlimited introduction replays", async () => {
     const fake = makeFakeAudio();
     renderLearn(fake.audio);
-
-    fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
-    await flush();
-
-    expect(fake.played).toEqual(["K"]);
-    expect(screen.getByText("-.-")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Replay" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
-
-    await tick(5000);
-    expect(fake.played).toEqual(["K"]);
-
-    await resolvePlay(fake);
-    await tick(699);
-    expect(fake.played).toEqual(["K"]);
-    expect(screen.getByText("-.-")).toBeInTheDocument();
-
-    await tick(1);
-    expect(fake.played).toEqual(["K", "K"]);
-    await tick(5000);
-    expect(fake.played).toEqual(["K", "K"]);
-
-    await resolvePlay(fake);
-    expect(screen.getByText("-.-")).toBeInTheDocument();
-    expect(screen.getByText("Your turn next…")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Replay" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
-
-    await tick(899);
-    expect(fake.played).toEqual(["K", "K"]);
-    expect(screen.queryByLabelText("Your copy")).not.toBeInTheDocument();
-
-    await tick(1);
-    expect(screen.getByLabelText("Your copy")).toBeInTheDocument();
-    expect(fake.played).toEqual(["K", "K", "K"]);
-    expect(fake.playCount()).toBe(1);
-  });
-
-  it("waits for Continue after a manual introduction", async () => {
-    localStorage.setItem(
-      "k1frx.settings.v1",
-      JSON.stringify({ pacing: "manual" }),
-    );
-    const fake = makeFakeAudio();
-    renderLearn(fake.audio);
-
     fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
     await flush();
     await resolvePlay(fake);
-    await tick(700);
-    await resolvePlay(fake);
-    await tick(5000);
 
-    expect(screen.getByText("Your turn next…")).toBeInTheDocument();
-    expect(fake.played).toEqual(["K", "K"]);
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    await flush();
-    expect(screen.getByLabelText("Your copy")).toBeInTheDocument();
-    expect(fake.played).toEqual(["K", "K", "K"]);
-  });
+    for (let replayNumber = 1; replayNumber <= 3; replayNumber++) {
+      const replay = screen.getByRole("button", { name: "Replay" });
+      const startPractice = screen.getByRole("button", {
+        name: "Start practice",
+      });
+      fireEvent.click(replay);
+      fireEvent.click(replay);
+      await flush();
+      expect(fake.played).toHaveLength(replayNumber + 1);
+      expect(fake.playCount()).toBe(1);
+      expect(replay).toBeDisabled();
+      expect(startPractice).toBeDisabled();
+      await tick(10000);
+      expect(fake.played).toHaveLength(replayNumber + 1);
+      await resolvePlay(fake);
+      expect(screen.getByRole("button", { name: "Replay" })).toBeEnabled();
+      expect(
+        screen.getByRole("button", { name: "Start practice" }),
+      ).toBeEnabled();
+    }
 
-  it("serializes introduction Replay and restarts the ready hold", async () => {
-    const fake = makeFakeAudio();
-    renderLearn(fake.audio);
-
-    fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
-    await flush();
-    await resolvePlay(fake);
-    await tick(700);
-    await resolvePlay(fake);
-
-    const replay = screen.getByRole("button", { name: "Replay" });
-    fireEvent.click(replay);
-    fireEvent.click(replay);
-    await flush();
-    expect(fake.played).toEqual(["K", "K", "K"]);
-    expect(fake.playCount()).toBe(1);
-    await tick(2000);
-    expect(screen.queryByLabelText("Your copy")).not.toBeInTheDocument();
-
-    await resolvePlay(fake);
-    await tick(899);
-    expect(screen.queryByLabelText("Your copy")).not.toBeInTheDocument();
-    await tick(1);
-    expect(screen.getByLabelText("Your copy")).toBeInTheDocument();
     expect(fake.played).toEqual(["K", "K", "K", "K"]);
-    expect(fake.playCount()).toBe(1);
+    expect(screen.queryByLabelText("Your copy")).not.toBeInTheDocument();
   });
 
-  it.each(["repeat gap", "ready hold"])(
-    "ending during the introduction %s prevents late advancement",
+  it("advances only through Start practice and plays acquisition once", async () => {
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+    fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
+    await flush();
+    await resolvePlay(fake);
+    await tick(60000);
+
+    expect(fake.played).toEqual(["K"]);
+    fireEvent.click(screen.getByRole("button", { name: "Start practice" }));
+    await flush();
+
+    expect(screen.getByLabelText("Your copy")).toBeDisabled();
+    expect(fake.played).toEqual(["K", "K"]);
+    expect(fake.playCount()).toBe(1);
+    await tick(60000);
+    expect(fake.played).toEqual(["K", "K"]);
+    await resolvePlay(fake);
+    expect(screen.getByLabelText("Your copy")).toBeEnabled();
+  });
+
+  it.each(["initial play", "replay"])(
+    "ending during an introduction %s prevents stale advancement",
     async (stage) => {
       const fake = makeFakeAudio();
+      fake.audio.cancelAndSuspend = () => Promise.resolve();
       renderLearn(fake.audio);
       fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
       await flush();
-      await resolvePlay(fake);
-      if (stage === "ready hold") {
-        await tick(700);
+      if (stage === "replay") {
         await resolvePlay(fake);
+        fireEvent.click(screen.getByRole("button", { name: "Replay" }));
+        await flush();
       }
-      const playedBeforeEnd = [...fake.played];
+      const staleIndex = fake.pending.length - 1;
 
       fireEvent.click(screen.getByRole("button", { name: "End session" }));
       await flush();
-      await tick(5000);
+      fake.resolveAt(staleIndex);
+      await flush();
+      await tick(60000);
 
       expect(
         screen.getByRole("heading", { name: "Session complete" }),
       ).toBeInTheDocument();
-      expect(fake.played).toEqual(playedBeforeEnd);
-      expect(fake.playCount()).toBe(0);
+      expect(screen.queryByLabelText("Your copy")).not.toBeInTheDocument();
     },
   );
 
-  it("keeps slow introduction playback completion-driven", async () => {
-    localStorage.setItem(
-      "k1frx.settings.v1",
-      JSON.stringify({ charWpm: 8, effectiveWpm: 5 }),
-    );
+  it("does not persist an introduction until Start practice", async () => {
     const fake = makeFakeAudio();
     renderLearn(fake.audio);
     fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
     await flush();
+    await resolvePlay(fake);
+    fireEvent.click(screen.getByRole("button", { name: "End session" }));
+    await flush();
+    expect(
+      JSON.parse(localStorage.getItem("k1frx.introduced.v1") ?? "[]"),
+    ).not.toContain("K");
 
-    await tick(5000);
-    expect(fake.played).toEqual(["K"]);
-    expect(fake.playCount()).toBe(1);
+    fireEvent.click(screen.getByRole("button", { name: "Practice again" }));
+    await flush();
+    expect(screen.getByText("K")).toBeInTheDocument();
     await resolvePlay(fake);
-    await tick(700);
-    expect(fake.played).toEqual(["K", "K"]);
-    expect(fake.playCount()).toBe(1);
-    await tick(5000);
-    expect(fake.played).toEqual(["K", "K"]);
-    expect(fake.playCount()).toBe(1);
-    await resolvePlay(fake);
-    await tick(900);
-    expect(fake.played).toEqual(["K", "K", "K"]);
-    expect(fake.playCount()).toBe(1);
+    fireEvent.click(screen.getByRole("button", { name: "Start practice" }));
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: "End session" }));
+    await flush();
+    expect(
+      JSON.parse(localStorage.getItem("k1frx.introduced.v1") ?? "[]"),
+    ).toContain("K");
   });
+
+  it.each(["initial play", "replay"])(
+    "does not let stale %s completion affect a restarted lesson",
+    async (stage) => {
+      const fake = makeFakeAudio();
+      fake.audio.cancel = () => Promise.resolve();
+      fake.audio.cancelAndSuspend = () => Promise.resolve();
+      renderLearn(fake.audio);
+      fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
+      await flush();
+      if (stage === "replay") {
+        await resolvePlay(fake);
+        fireEvent.click(screen.getByRole("button", { name: "Replay" }));
+        await flush();
+      }
+      const staleIndex = fake.pending.length - 1;
+
+      fireEvent.click(screen.getByRole("button", { name: "End session" }));
+      await flush();
+      fireEvent.click(screen.getByRole("button", { name: "Practice again" }));
+      await flush();
+      fake.resolveAt(staleIndex);
+      await flush();
+
+      expect(screen.getByRole("button", { name: "Replay" })).toBeDisabled();
+      expect(
+        screen.getByRole("button", { name: "Start practice" }),
+      ).toBeDisabled();
+      expect(screen.getByText("K")).toBeInTheDocument();
+      expect(screen.queryByLabelText("Your copy")).not.toBeInTheDocument();
+    },
+  );
+
+  it.each(["initial play", "replay"])(
+    "prevents stale %s completion after navigating away",
+    async (stage) => {
+      const fake = makeFakeAudio();
+      fake.audio.cancelAndSuspend = () => Promise.resolve();
+      renderApp(fake.audio);
+      fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
+      await flush();
+      if (stage === "replay") {
+        await resolvePlay(fake);
+        fireEvent.click(screen.getByRole("button", { name: "Replay" }));
+        await flush();
+      }
+      const staleIndex = fake.pending.length - 1;
+
+      fireEvent.click(screen.getByRole("link", { name: "Practice" }));
+      await flush();
+      fake.resolveAt(staleIndex);
+      await flush();
+      await tick(60000);
+
+      expect(
+        screen.getByRole("heading", { name: "Practice" }),
+      ).toBeInTheDocument();
+      expect(screen.queryByLabelText("Your copy")).not.toBeInTheDocument();
+    },
+  );
+
+  it.each(["initial play", "replay"])(
+    "settles an active introduction %s when unmounted",
+    async (stage) => {
+      const fake = makeFakeAudio();
+      const view = renderLearn(fake.audio);
+      fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
+      await flush();
+      if (stage === "replay") {
+        await resolvePlay(fake);
+        fireEvent.click(screen.getByRole("button", { name: "Replay" }));
+        await flush();
+      }
+
+      view.unmount();
+      await flush();
+      expect(fake.playCount()).toBe(0);
+    },
+  );
 
   it("does not present the next card until corrective replay resolves", async () => {
     const fake = makeFakeAudio();
@@ -627,7 +719,9 @@ describe("LearnScreen audio sequencing", () => {
       fake.resolveAt(0);
       await Promise.resolve();
     });
-    expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Start practice" }),
+    ).toBeDisabled();
   });
 
   it("settles active playback when the screen unmounts", async () => {
