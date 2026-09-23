@@ -92,28 +92,35 @@ export const DEFAULT_READINESS_CONFIG: ReadinessConfig = {
   vetoAccuracy: 0.7,
 };
 
-export type CheckpointConfig = {
+export type AdvancementConfig = {
   /** Overall accuracy required across the active set. */
   overallAccuracy: number;
   /** Accuracy required on the newest character. */
   newestAccuracy: number;
-  /** Newest-character items required in the checkpoint (coverage). */
+  /** Newest-character observations required in the completed stream. */
   minNewestObservations: number;
-  /** Fraction of the checkpoint devoted to the newest character. */
-  newestShare: number;
-  /** Checkpoint length grows with the active set, within these bounds. */
+  /** Evidence length grows with the active set, within these bounds. */
   minLength: number;
   maxLength: number;
-  /** Target items per active character before clamping to the length bounds. */
+  /** Target observations per active character before clamping. */
   itemsPerActive: number;
 };
 
-export const DEFAULT_CHECKPOINT_CONFIG: CheckpointConfig = {
+export const DEFAULT_ADVANCEMENT_CONFIG: AdvancementConfig = {
   overallAccuracy: 0.9,
   newestAccuracy: 0.85,
   minNewestObservations: 8,
-  newestShare: 0.35,
   minLength: 24,
   maxLength: 50,
   itemsPerActive: 6,
+};
+
+export type CheckpointConfig = AdvancementConfig & {
+  /** Fraction of the checkpoint devoted to the newest character. */
+  newestShare: number;
+};
+
+export const DEFAULT_CHECKPOINT_CONFIG: CheckpointConfig = {
+  ...DEFAULT_ADVANCEMENT_CONFIG,
+  newestShare: 0.35,
 };

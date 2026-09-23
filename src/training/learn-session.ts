@@ -26,6 +26,10 @@ import {
   type ContinuousCopyResult,
 } from "./continuous-copy.ts";
 import {
+  evaluateAdvancementEvidence,
+  type AdvancementAssessment,
+} from "./advancement.ts";
+import {
   DEFAULT_LESSON_CONFIG,
   LessonPlan,
   buildWordCopyExercises,
@@ -146,6 +150,7 @@ export type SessionSummary = {
   /** True when the session meets the minimum active time and attempt count. */
   valid: boolean;
   continuousCopyResult?: ContinuousCopyResult;
+  advancementAssessment?: AdvancementAssessment;
 };
 
 type SessionOptions = {
@@ -566,6 +571,9 @@ export class LearnSession {
   }
 
   summary(): SessionSummary {
+    const advancementAssessment = this.lastContinuousCopyResult
+      ? evaluateAdvancementEvidence(this.state, this.lastContinuousCopyResult)
+      : undefined;
     return {
       activeMs: this.activeMs,
       cards: this.cards,
@@ -602,6 +610,7 @@ export class LearnSession {
       ...(this.lastContinuousCopyResult
         ? { continuousCopyResult: this.lastContinuousCopyResult }
         : {}),
+      ...(advancementAssessment ? { advancementAssessment } : {}),
     };
   }
 

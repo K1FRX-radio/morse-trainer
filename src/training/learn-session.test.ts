@@ -614,7 +614,44 @@ describe("LearnSession transitions", () => {
     expect(state.characters[0].needsReview).toBe(true);
     expect(state.characters[0].reviewStreak).toBe(2);
     expect(session.summary().continuousCopyResult).toBe(result);
+    expect(session.summary().advancementAssessment).toMatchObject({
+      eligible: false,
+      reason: "NEEDS_REVIEW",
+      weakCharacter: "K",
+    });
     expect(session.next()).toBeUndefined();
+  });
+
+  it("assesses a qualifying completed stream without unlocking", () => {
+    const { session, state } = freshSession({
+      introduced: ["K", "M"],
+      continuousCopyDurationMs: 60000,
+    });
+    session.start(0);
+
+    let event = session.next();
+    while (event?.type !== "continuous-copy") {
+      if (!event) throw new Error("expected continuous copy");
+      completeCorrect(session, event);
+      event = session.next();
+    }
+    const unlockedBefore = state.characters.map(
+      (character) => character.character,
+    );
+    session.completeContinuousCopy(
+      event.plan.gradingTarget,
+      event.plan.scheduledDurationMs,
+    );
+
+    expect(session.summary().advancementAssessment).toMatchObject({
+      eligible: true,
+      reason: "READY",
+      activeCharacters: ["K", "M"],
+      nextCharacter: "U",
+    });
+    expect(state.characters.map((character) => character.character)).toEqual(
+      unlockedBefore,
+    );
   });
 
   it("records an abandoned stream without mastery observations", () => {
@@ -641,6 +678,7 @@ describe("LearnSession transitions", () => {
       state.characters.map((character) => character.rx.totalAttempts),
     ).toEqual(attemptsBefore);
     expect(session.summary().continuousCopyResult).toBe(result);
+    expect(session.summary().advancementAssessment?.reason).toBe("ABANDONED");
   });
 
   it("omits word copy when the active vocabulary pool is too small", () => {
