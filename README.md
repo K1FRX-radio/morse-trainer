@@ -65,3 +65,18 @@ VITE_BASE=/morse-trainer/ npm run build
 - Advancement uses only the latest completed continuous-copy stream.
 - Accepting a valid advancement offer unlocks exactly one character.
 - Spaces in continuous-copy input are optional and excluded from grading.
+
+## Learn input guarantees
+
+- Copy fields are available while prompt audio plays, but grading waits for the
+  matching playback to finish.
+- Isolated copy accepts at most one prompt-bound answer and keeps the same input
+  mounted, enabled, and focused through playback, feedback, and Replay.
+- Physical auto-repeat and genuinely held keys cannot answer later prompts; a
+  fresh same-key press after `keyup` can.
+- Prompt changes, replacement playback, session end, navigation, and unmount
+  discard queued input so stale answers cannot reach another prompt.
+
+Real-device checks remain necessary for perceived audio quality, hardware
+keyboard behavior, and mobile soft-keyboard persistence. Automated tests and
+synthetic browser events cannot fully establish those device-level properties.

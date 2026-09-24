@@ -4,6 +4,10 @@ Milestone 2: audio, input, and legacy feature parity. Compares the legacy
 `morse-trainer.html` prototype (see `legacy-behavior.md`) with the new
 implementation.
 
+**Document status:** Historical Phase 2 acceptance record. Later Learn-mode
+changes, including learner-controlled advancement and prompt-bound type-behind
+input, are outside this parity table and are documented in the README.
+
 ## Feature parity
 
 | Legacy behavior                                                     | New behavior                                                                                                        | Test coverage                                                                           | Intentional change                                                    |

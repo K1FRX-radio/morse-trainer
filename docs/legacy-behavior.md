@@ -3,6 +3,10 @@
 Source: `k1frx-radio.github.io/morse-trainer.html` (single Jekyll page).
 Captured as a behavioral reference for the migration, not a desired design.
 
+**Document status:** Historical prototype inventory. Current Learn progression,
+advancement, and input guarantees are documented in the repository README; this
+file intentionally preserves the legacy behavior that the migration replaced.
+
 ## Modes
 
 - **Key practice** — user sends with a straight key; the app decodes.
