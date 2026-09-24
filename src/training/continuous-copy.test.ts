@@ -14,9 +14,78 @@ import {
   buildContinuousCopyPlan,
   gradeContinuousCopy,
 } from "./continuous-copy.ts";
+import { selectGroupCharacter } from "./continuous-copy-selector.ts";
 import { focusedWordEligibility } from "./lesson-plan.ts";
 
 const timing = { charWpm: 20, effectiveWpm: 12 };
+const kmActive = ["K", "M"];
+
+function expectValidKmSelection(
+  generated: ReturnType<typeof buildContinuousCopyPlan>,
+): void {
+  const remainingCoverage = new Map([
+    ["K", 1],
+    ["M", DEFAULT_ADVANCEMENT_CONFIG.minNewestObservations],
+  ]);
+  let previousToken: string | undefined;
+
+  for (const token of generated.tokens) {
+    expect(token.kind).toBe("random-group");
+    expect(
+      [...token.text].every((character) => kmActive.includes(character)),
+    ).toBe(true);
+    expect(token.text).not.toMatch(/(.)\1\1/);
+
+    const prefix: string[] = [];
+    for (const selected of token.text) {
+      const satisfiesRunLimit = (candidate: string) => {
+        const run = prefix.slice(
+          -DEFAULT_CONTINUOUS_COPY_CONFIG.maxIdenticalRun,
+        );
+        return !(
+          run.length === DEFAULT_CONTINUOUS_COPY_CONFIG.maxIdenticalRun &&
+          run.every((character) => character === candidate)
+        );
+      };
+      const avoidsRepeatedToken = (candidate: string) =>
+        !(
+          previousToken?.length === token.text.length &&
+          prefix.length === token.text.length - 1 &&
+          prefix.every(
+            (character, index) => character === previousToken?.[index],
+          ) &&
+          candidate === previousToken[prefix.length]
+        );
+      const runSafe = kmActive.filter(satisfiesRunLimit);
+      const coverage = runSafe.filter(
+        (candidate) => (remainingCoverage.get(candidate) ?? 0) > 0,
+      );
+      const tiers = [
+        coverage.filter(avoidsRepeatedToken),
+        coverage,
+        runSafe.filter(avoidsRepeatedToken),
+        runSafe,
+      ];
+      const selectedTier = tiers.find((candidates) => candidates.length > 0);
+
+      expect(selectedTier).toBeDefined();
+      expect(selectedTier).toContain(selected);
+      if (
+        prefix.length === token.text.length - 1 &&
+        token.text === previousToken
+      ) {
+        expect(tiers[0]).toHaveLength(0);
+        if (coverage.length === 0) expect(tiers[2]).toHaveLength(0);
+      }
+
+      prefix.push(selected);
+      const remaining = remainingCoverage.get(selected) ?? 0;
+      if (remaining > 0) remainingCoverage.set(selected, remaining - 1);
+    }
+
+    previousToken = token.text;
+  }
+}
 
 function plan(seed = 1, durationMs = 60000) {
   return buildContinuousCopyPlan({
@@ -31,6 +100,26 @@ function plan(seed = 1, durationMs = 60000) {
 }
 
 const wordEligibleActive = ["K", "M", "U", "R", "E", "S", "N", "A"];
+
+describe("selectGroupCharacter", () => {
+  it("relaxes token uniqueness rather than the hard run limit", () => {
+    const selected = selectGroupCharacter({
+      active: ["K", "M"],
+      prefix: ["M", "M"],
+      tokenLength: 3,
+      previousToken: "MMK",
+      remainingCoverage: new Map([
+        ["K", 1],
+        ["M", 8],
+      ]),
+      maxIdenticalRun: 2,
+      weight: () => 1,
+      rng: createRng(1),
+    });
+
+    expect(selected).toBe("K");
+  });
+});
 
 function mixedPlan(seed = 1, durationMs = 60000) {
   return buildContinuousCopyPlan({
@@ -115,12 +204,10 @@ describe("buildContinuousCopyPlan", () => {
             rng: createRng(seed),
             wordEligibility: focusedWordEligibility(active),
           });
-          if (
-            generated.gradingTarget.length <
-            minimumAdvancementObservations(activeCount)
-          ) {
-            continue;
-          }
+          expect(
+            generated.gradingTarget.length,
+            `active=${activeCount}, timing=${selectedTiming.charWpm}/${selectedTiming.effectiveWpm}, seed=${seed}`,
+          ).toBeGreaterThanOrEqual(minimumAdvancementObservations(activeCount));
           const counts = new Map<string, number>();
           for (const character of generated.gradingTarget) {
             counts.set(character, (counts.get(character) ?? 0) + 1);
@@ -136,6 +223,48 @@ describe("buildContinuousCopyPlan", () => {
     }
   });
 
+  it("preserves selector priorities across seeded K/M streams", () => {
+    const timings = [
+      { charWpm: 20, effectiveWpm: 12 },
+      { charWpm: 8, effectiveWpm: 5 },
+    ];
+    const oneMinuteSeeds = Array.from(
+      { length: 1000 },
+      (_, index) => index + 1,
+    );
+    const longerDurationSeeds = [1, 17, 101, 251, 509, 751, 997, 1000];
+    const durationSamples = [
+      { durationMs: 60000, seeds: oneMinuteSeeds },
+      { durationMs: 180000, seeds: longerDurationSeeds },
+      { durationMs: 300000, seeds: longerDurationSeeds },
+      { durationMs: 600000, seeds: longerDurationSeeds },
+    ];
+
+    for (const selectedTiming of timings) {
+      for (const sample of durationSamples) {
+        for (const seed of sample.seeds) {
+          const options = {
+            active: kmActive,
+            newest: "M",
+            durationMs: sample.durationMs,
+            timing: selectedTiming,
+          };
+          const generated = buildContinuousCopyPlan({
+            ...options,
+            rng: createRng(seed),
+          });
+          const repeated = buildContinuousCopyPlan({
+            ...options,
+            rng: createRng(seed),
+          });
+
+          expect(generated).toEqual(repeated);
+          expectValidKmSelection(generated);
+        }
+      }
+    }
+  }, 20000);
+
   it("prevents excessive identical runs", () => {
     for (let seed = 1; seed <= 100; seed++) {
       for (const token of plan(seed).tokens) {
@@ -144,17 +273,12 @@ describe("buildContinuousCopyPlan", () => {
     }
   });
 
-  it("uses variable group lengths without identical adjacent tokens", () => {
+  it("uses variable group lengths and respects selector priorities", () => {
     for (let seed = 1; seed <= 100; seed++) {
       const generated = plan(seed);
       expect(
         new Set(generated.tokens.map((token) => token.text.length)).size,
       ).toBeGreaterThan(1);
-      for (let index = 1; index < generated.tokens.length; index++) {
-        expect(generated.tokens[index].text).not.toBe(
-          generated.tokens[index - 1].text,
-        );
-      }
     }
   });
 

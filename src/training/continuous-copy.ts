@@ -7,6 +7,7 @@ import {
 import { isSupportedCharacter } from "../core/morse.ts";
 import type { Rng } from "../core/rng.ts";
 import { weightedIndex } from "../core/rng.ts";
+import { recommendedContinuousCopyDurationMs } from "../core/settings.ts";
 import { gradeCopyDetailed, normalizeCopy } from "../core/scoring.ts";
 import {
   buildSchedule,
@@ -17,6 +18,8 @@ import {
   wordSelectionWeight,
   type FocusedWordEligibility,
 } from "./word-selection.ts";
+import { minimumAdvancementObservations } from "./advancement.ts";
+import { selectGroupCharacter } from "./continuous-copy-selector.ts";
 
 export type ContinuousCopyConfig = {
   newestWeight: number;
@@ -173,42 +176,18 @@ function buildRandomGroup(
   rng: Rng,
 ): string {
   const characters: string[] = [];
-  for (let index = 0; index < length; index++) {
-    const run = characters.slice(-config.maxIdenticalRun);
-    const isAllowed = (candidate: string) => {
-      if (
-        active.length > 1 &&
-        run.length === config.maxIdenticalRun &&
-        run.every((value) => value === candidate)
-      ) {
-        return false;
-      }
-      return !(
-        active.length > 1 &&
-        previousToken?.length === length &&
-        index === length - 1 &&
-        characters.every(
-          (value, characterIndex) => value === previousToken[characterIndex],
-        ) &&
-        candidate === previousToken[index]
-      );
-    };
-    const weights = active.map((candidate) => {
-      if (!isAllowed(candidate)) return 0;
-      const remaining = remainingCoverage.get(candidate) ?? 0;
-      return remaining > 0
-        ? remaining * characterWeight(candidate, newest, review, weak, config)
-        : 0;
+  while (characters.length < length) {
+    const character = selectGroupCharacter({
+      active,
+      prefix: characters,
+      tokenLength: length,
+      previousToken,
+      remainingCoverage,
+      maxIdenticalRun: config.maxIdenticalRun,
+      weight: (candidate) =>
+        characterWeight(candidate, newest, review, weak, config),
+      rng,
     });
-    const hasEligibleCoverage = weights.some((weight) => weight > 0);
-    const selectionWeights = hasEligibleCoverage
-      ? weights
-      : active.map((candidate) =>
-          isAllowed(candidate)
-            ? characterWeight(candidate, newest, review, weak, config)
-            : 0,
-        );
-    const character = active[weightedIndex(selectionWeights, rng)];
     characters.push(character);
     const remaining = remainingCoverage.get(character) ?? 0;
     if (remaining > 0) {
@@ -268,10 +247,18 @@ export function buildContinuousCopyPlan(
   );
   const tokens: ContinuousCopyToken[] = [];
   const groupLengths: number[] = [];
+  const minimumEvidence =
+    options.durationMs >= recommendedContinuousCopyDurationMs(active.length)
+      ? minimumAdvancementObservations(active.length)
+      : 0;
   let consecutiveWords = 0;
+  let generatedCharacters = 0;
   let scheduledDurationMs = 0;
 
-  while (scheduledDurationMs < options.durationMs) {
+  while (
+    scheduledDurationMs < options.durationMs ||
+    generatedCharacters < minimumEvidence
+  ) {
     const coverageComplete = [...remainingCoverage.values()].every(
       (remaining) => remaining === 0,
     );
@@ -323,6 +310,7 @@ export function buildContinuousCopyPlan(
     const tokenDurationMs = buildSchedule(text, options.timing).totalMs;
     if (tokens.length > 0) scheduledDurationMs += boundaryGapMs;
     tokens.push(token);
+    generatedCharacters += text.length;
     scheduledDurationMs += tokenDurationMs;
   }
 
