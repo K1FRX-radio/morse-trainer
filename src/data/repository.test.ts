@@ -1,5 +1,6 @@
+import Dexie from "dexie";
 import { IDBKeyRange, indexedDB } from "fake-indexeddb";
-import { TrainerDatabase } from "./indexeddb.ts";
+import { SCHEMA_V1, TrainerDatabase } from "./indexeddb.ts";
 import { DexieTrainingRepository } from "./repository.ts";
 
 describe("DexieTrainingRepository", () => {
@@ -33,6 +34,52 @@ describe("DexieTrainingRepository", () => {
       expect(second).toEqual(first);
       expect(idCalls).toBe(1);
       expect(await database.metadata.count()).toBe(1);
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
+  it("reconciles version 1 metadata while preserving its dataset generation", async () => {
+    const name = crypto.randomUUID();
+    const version1 = new Dexie(name, { indexedDB, IDBKeyRange });
+    version1.version(1).stores(SCHEMA_V1);
+    await version1.open();
+    await version1.table("metadata").add({
+      id: "schema-metadata",
+      schemaVersion: 1,
+      updatedAt: "2026-09-23T18:00:00.000Z",
+      databaseVersion: 1,
+      datasetGeneration: "existing-generation",
+    });
+    version1.close();
+
+    const database = new TrainerDatabase({
+      name,
+      indexedDB,
+      IDBKeyRange,
+    });
+    let idCalls = 0;
+    const repository = new DexieTrainingRepository(database, {
+      now: () => new Date("2026-09-24T18:00:00.000Z"),
+      createId: () => {
+        idCalls += 1;
+        return "replacement-generation";
+      },
+    });
+
+    try {
+      const metadata = await repository.open();
+
+      expect(metadata).toEqual({
+        id: "schema-metadata",
+        schemaVersion: 1,
+        updatedAt: "2026-09-24T18:00:00.000Z",
+        databaseVersion: 2,
+        datasetGeneration: "existing-generation",
+      });
+      expect(await database.metadata.get("schema-metadata")).toEqual(metadata);
+      expect(idCalls).toBe(0);
     } finally {
       repository.close();
       await database.delete();

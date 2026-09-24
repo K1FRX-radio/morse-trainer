@@ -240,4 +240,49 @@ describe("TrainerDatabase", () => {
     const cleanup = new Dexie(name, { indexedDB, IDBKeyRange });
     await cleanup.delete();
   });
+
+  it.each([
+    {
+      name: "a future record version",
+      malformed: attempt({ schemaVersion: 2 }),
+    },
+    {
+      name: "contradictory alignment evidence",
+      malformed: attempt({
+        observations: [
+          {
+            kind: "substitution",
+            correct: true,
+            targetIndex: 0,
+            target: "K",
+            answerIndex: 0,
+            answer: "M",
+          },
+        ],
+      }),
+    },
+  ])("rolls back upgrade for $name", async ({ malformed }) => {
+    const name = crypto.randomUUID();
+    const version1 = new Dexie(name, { indexedDB, IDBKeyRange });
+    version1.version(1).stores(SCHEMA_V1);
+    await version1.open();
+    await version1.table("sessions").add(session());
+    await version1.table("attempts").add(malformed);
+    version1.close();
+
+    const upgraded = new TrainerDatabase(options(name));
+    await expect(upgraded.open()).rejects.toThrow();
+    upgraded.close();
+
+    const stillVersion1 = new Dexie(name, { indexedDB, IDBKeyRange });
+    stillVersion1.version(1).stores(SCHEMA_V1);
+    await stillVersion1.open();
+    expect(stillVersion1.verno).toBe(1);
+    expect(await stillVersion1.table("attempts").count()).toBe(1);
+    expect(stillVersion1.tables.map(({ name: table }) => table)).not.toContain(
+      "dailyProjections",
+    );
+    stillVersion1.close();
+    await stillVersion1.delete();
+  });
 });
