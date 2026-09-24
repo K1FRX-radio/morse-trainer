@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { normalizeCopy } from "../core/scoring.ts";
+import { isValidTrainingSession } from "../core/session-validity.ts";
 import type { TrainingAttemptRecord, TrainingSessionRecord } from "./models.ts";
 import {
   RECORD_SCHEMA_VERSION,
@@ -85,6 +86,15 @@ export const trainingSessionRecordSchema = persistedRecordSchema
         code: "custom",
         path: ["effectiveWpm"],
         message: "effective WPM cannot exceed character WPM",
+      });
+    }
+    const expectedValidity = isValidTrainingSession(session);
+    if (session.valid !== expectedValidity) {
+      context.addIssue({
+        code: "custom",
+        path: ["valid"],
+        message:
+          "valid must require at least 30 seconds active and one finalized attempt",
       });
     }
     const bucketTotal = session.activeDateBuckets.reduce(
@@ -378,6 +388,71 @@ export const schemaMetadataRecordSchema = persistedRecordSchema
   })
   .strict();
 
+const trainingDatasetSchema = z
+  .object({
+    sessions: z.array(trainingSessionRecordSchema),
+    attempts: z.array(trainingAttemptRecordSchema),
+  })
+  .strict()
+  .superRefine((dataset, context) => {
+    const sessionsById = new Map<string, (typeof dataset.sessions)[number]>();
+    for (const [index, session] of dataset.sessions.entries()) {
+      if (sessionsById.has(session.id)) {
+        context.addIssue({
+          code: "custom",
+          path: ["sessions", index, "id"],
+          message: `duplicate session id ${session.id}`,
+        });
+      }
+      sessionsById.set(session.id, session);
+    }
+
+    const attemptIds = new Set<string>();
+    const attemptsPerSession = new Map<string, number>();
+    for (const [index, attempt] of dataset.attempts.entries()) {
+      if (attemptIds.has(attempt.id)) {
+        context.addIssue({
+          code: "custom",
+          path: ["attempts", index, "id"],
+          message: `duplicate attempt id ${attempt.id}`,
+        });
+      }
+      attemptIds.add(attempt.id);
+
+      const session = sessionsById.get(attempt.sessionId);
+      if (!session) {
+        context.addIssue({
+          code: "custom",
+          path: ["attempts", index, "sessionId"],
+          message: `attempt references unknown session ${attempt.sessionId}`,
+        });
+        continue;
+      }
+      if (attempt.source !== session.source) {
+        context.addIssue({
+          code: "custom",
+          path: ["attempts", index, "source"],
+          message: "attempt source must match its session source",
+        });
+      }
+      attemptsPerSession.set(
+        attempt.sessionId,
+        (attemptsPerSession.get(attempt.sessionId) ?? 0) + 1,
+      );
+    }
+
+    dataset.sessions.forEach((session, index) => {
+      const storedAttempts = attemptsPerSession.get(session.id) ?? 0;
+      if (session.attemptCount !== storedAttempts) {
+        context.addIssue({
+          code: "custom",
+          path: ["sessions", index, "attemptCount"],
+          message: `attemptCount ${session.attemptCount} does not match ${storedAttempts} stored attempts`,
+        });
+      }
+    });
+  });
+
 export function parseTrainingSessions(value: unknown): TrainingSessionRecord[] {
   return z
     .array(trainingSessionRecordSchema)
@@ -388,6 +463,19 @@ export function parseTrainingAttempts(value: unknown): TrainingAttemptRecord[] {
   return z
     .array(trainingAttemptRecordSchema)
     .parse(value) as TrainingAttemptRecord[];
+}
+
+export function parseTrainingDataset(
+  sessions: unknown,
+  attempts: unknown,
+): {
+  sessions: TrainingSessionRecord[];
+  attempts: TrainingAttemptRecord[];
+} {
+  return trainingDatasetSchema.parse({ sessions, attempts }) as {
+    sessions: TrainingSessionRecord[];
+    attempts: TrainingAttemptRecord[];
+  };
 }
 
 export function parseSchemaMetadata(value: unknown): SchemaMetadataRecord {

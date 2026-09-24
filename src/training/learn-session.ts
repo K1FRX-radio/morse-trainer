@@ -15,6 +15,10 @@ import {
 } from "../core/curriculum.ts";
 import type { Rng } from "../core/rng.ts";
 import { gradeCopy, gradeCopyAligned, normalizeCopy } from "../core/scoring.ts";
+import {
+  isValidTrainingSession,
+  MIN_VALID_SESSION_ACTIVE_MS,
+} from "../core/session-validity.ts";
 import type { TimingOptions } from "../core/timing.ts";
 import {
   applyContinuousCopyResult,
@@ -46,7 +50,7 @@ export type SessionConfig = {
 
 export const DEFAULT_SESSION_CONFIG: SessionConfig = {
   idleThresholdMs: 60000,
-  minActiveMs: 30000,
+  minActiveMs: MIN_VALID_SESSION_ACTIVE_MS,
 };
 
 export type AttemptOutcome = {
@@ -602,7 +606,10 @@ export class LearnSession {
       excludedFromMastery: this.excludedFromMastery,
       charactersNeedingReview: reviewCharacters(this.state),
       charactersPracticed: [...this.practiced],
-      valid: this.activeMs >= this.config.minActiveMs && this.attempts > 0,
+      valid: isValidTrainingSession(
+        { activeMs: this.activeMs, attemptCount: this.attempts },
+        this.config.minActiveMs,
+      ),
       ...(this.lastContinuousCopyResult
         ? { continuousCopyResult: this.lastContinuousCopyResult }
         : {}),

@@ -1,11 +1,7 @@
 import { DATABASE_VERSION, TrainerDatabase } from "./indexeddb.ts";
 import { RECORD_SCHEMA_VERSION, type SchemaMetadataRecord } from "./models.ts";
 import { buildProjectionRows } from "./projections.ts";
-import {
-  parseSchemaMetadata,
-  parseTrainingAttempts,
-  parseTrainingSessions,
-} from "./validation.ts";
+import { parseSchemaMetadata, parseTrainingDataset } from "./validation.ts";
 
 export type RepositoryDependencies = {
   now?: () => Date;
@@ -86,13 +82,15 @@ export class DexieTrainingRepository implements TrainingDataRepository {
       this.database.characterProjections,
       this.database.confusionProjections,
       async () => {
-        const sessions = parseTrainingSessions(
+        const dataset = parseTrainingDataset(
           await this.database.sessions.toArray(),
-        );
-        const attempts = parseTrainingAttempts(
           await this.database.attempts.toArray(),
         );
-        const rows = buildProjectionRows(sessions, attempts, generatedAt);
+        const rows = buildProjectionRows(
+          dataset.sessions,
+          dataset.attempts,
+          generatedAt,
+        );
 
         await this.database.dailyProjections.clear();
         await this.database.characterProjections.clear();

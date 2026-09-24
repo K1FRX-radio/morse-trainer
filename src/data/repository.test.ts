@@ -124,4 +124,84 @@ describe("DexieTrainingRepository", () => {
       await database.delete();
     }
   });
+
+  it("rolls back a rebuild when session attemptCount disagrees with attempts", async () => {
+    const database = new TrainerDatabase({
+      name: crypto.randomUUID(),
+      indexedDB,
+      IDBKeyRange,
+    });
+    const repository = new DexieTrainingRepository(database, {
+      createId: () => "dataset-generation-1",
+      now: () => new Date("2026-09-24T18:00:00.000Z"),
+    });
+
+    try {
+      await repository.open();
+      await database.sessions.put({
+        id: "session-1",
+        schemaVersion: 1,
+        updatedAt: "2026-09-24T17:05:00.000Z",
+        source: "learn",
+        mode: "learn",
+        status: "completed",
+        startedAt: {
+          utc: "2026-09-24T17:00:00.000Z",
+          localDate: "2026-09-24",
+          utcOffsetMinutes: -240,
+          timeZone: "America/New_York",
+        },
+        endedAt: {
+          utc: "2026-09-24T17:05:00.000Z",
+          localDate: "2026-09-24",
+          utcOffsetMinutes: -240,
+          timeZone: "America/New_York",
+        },
+        activeMs: 45000,
+        activeDateBuckets: [
+          {
+            localDate: "2026-09-24",
+            utcOffsetMinutes: -240,
+            timeZone: "America/New_York",
+            activeMs: 45000,
+          },
+        ],
+        attemptCount: 1,
+        completedCards: 1,
+        valid: true,
+        charWpm: 20,
+        effectiveWpm: 12,
+        toneHz: 600,
+        noiseLevel: 0,
+        unlockedAtStart: ["K", "M"],
+        unlockedAtEnd: ["K", "M"],
+        appVersion: "0.0.0",
+        revision: 1,
+      });
+      await database.dailyProjections.put({
+        id: "daily:stale",
+        schemaVersion: 1,
+        updatedAt: "2026-09-24T18:00:00.000Z",
+        projectionVersion: 1,
+        localDate: "stale",
+        activeMs: 1,
+        sessionCount: 1,
+        attemptCount: 1,
+        rxCorrect: 1,
+        rxTotal: 1,
+        txCorrect: 0,
+        txTotal: 0,
+        effectiveWpmTotal: 12,
+        effectiveWpmSamples: 1,
+      });
+
+      await expect(repository.rebuildProjections()).rejects.toThrow(
+        /attemptCount 1 does not match 0 stored attempts/,
+      );
+      expect(await database.dailyProjections.get("daily:stale")).toBeDefined();
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
 });

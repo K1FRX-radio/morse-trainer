@@ -1,5 +1,9 @@
 import type { TrainingAttemptRecord, TrainingSessionRecord } from "./models.ts";
-import { parseTrainingAttempts, parseTrainingSessions } from "./validation.ts";
+import {
+  parseTrainingAttempts,
+  parseTrainingDataset,
+  parseTrainingSessions,
+} from "./validation.ts";
 
 const captured = {
   utc: "2026-09-24T17:00:00.000Z",
@@ -175,5 +179,50 @@ describe("persisted record semantics", () => {
     },
   ])("rejects session when $name", ({ session }) => {
     expect(() => parseTrainingSessions([session])).toThrow();
+  });
+
+  it.each([
+    {
+      name: "valid below 30 seconds",
+      session: validSession({
+        activeMs: 29999,
+        activeDateBuckets: [
+          {
+            localDate: "2026-09-24",
+            utcOffsetMinutes: -240,
+            timeZone: "America/New_York",
+            activeMs: 29999,
+          },
+        ],
+      }),
+    },
+    {
+      name: "valid with zero attempts",
+      session: validSession({ attemptCount: 0 }),
+    },
+    {
+      name: "qualifying work marked invalid",
+      session: validSession({ valid: false }),
+    },
+  ])("rejects $name", ({ session }) => {
+    expect(() => parseTrainingSessions([session])).toThrow();
+  });
+
+  it.each(["completed", "interrupted"] as const)(
+    "accepts a qualifying %s session",
+    (status) => {
+      expect(parseTrainingSessions([validSession({ status })])).toEqual([
+        validSession({ status }),
+      ]);
+    },
+  );
+
+  it("rejects session attempt counts that disagree with stored attempts", () => {
+    expect(() =>
+      parseTrainingDataset(
+        [validSession({ attemptCount: 2 })],
+        [validAttempt()],
+      ),
+    ).toThrow(/attemptCount 2 does not match 1 stored attempts/);
   });
 });

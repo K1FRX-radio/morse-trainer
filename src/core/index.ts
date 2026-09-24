@@ -6,5 +6,6 @@ export * from "./curriculum.ts";
 export * from "./scheduler.ts";
 export * from "./exercises.ts";
 export * from "./scoring.ts";
+export * from "./session-validity.ts";
 export * from "./rng.ts";
 export * from "./types.ts";

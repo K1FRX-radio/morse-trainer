@@ -13,7 +13,7 @@ import type {
   TrainingSessionRecord,
 } from "./models.ts";
 import { buildProjectionRows } from "./projections.ts";
-import { parseTrainingAttempts, parseTrainingSessions } from "./validation.ts";
+import { parseTrainingDataset } from "./validation.ts";
 
 export const DATABASE_NAME = "k1frx-morse-trainer";
 export const DATABASE_VERSION = 2;
@@ -81,19 +81,17 @@ export class TrainerDatabase extends Dexie {
   }
 
   private async upgradeToVersion2(transaction: Transaction): Promise<void> {
-    const sessions = parseTrainingSessions(
+    const dataset = parseTrainingDataset(
       await transaction
         .table<TrainingSessionRecord, string>("sessions")
         .toArray(),
-    );
-    const attempts = parseTrainingAttempts(
       await transaction
         .table<TrainingAttemptRecord, string>("attempts")
         .toArray(),
     );
     const rows = buildProjectionRows(
-      sessions,
-      attempts,
+      dataset.sessions,
+      dataset.attempts,
       this.clock().toISOString(),
     );
 
