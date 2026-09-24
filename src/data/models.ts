@@ -187,6 +187,15 @@ export type OperationLedgerRecord = PersistedRecord & {
 export type MetadataRecord =
   SchemaMetadataRecord | MigrationLedgerRecord | OperationLedgerRecord;
 
+export type LegacyMigrationBundle = {
+  settings: PortableSettingsRecord;
+  curriculum: CurriculumStateRecord;
+  introductions: IntroductionsRecord;
+  progressionEvents: ProgressionEventRecord[];
+  milestones: MilestoneRecord[];
+  ledger: MigrationLedgerRecord;
+};
+
 export type DailyProjectionRecord = PersistedRecord & {
   projectionVersion: number;
   localDate: string;

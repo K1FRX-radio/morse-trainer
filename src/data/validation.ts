@@ -1,7 +1,15 @@
 import { z } from "zod";
+import { KOCH_ORDER } from "../content/curriculum-data.ts";
 import { normalizeCopy } from "../core/scoring.ts";
 import { isValidTrainingSession } from "../core/session-validity.ts";
-import type { TrainingAttemptRecord, TrainingSessionRecord } from "./models.ts";
+import { SETTING_RANGES } from "../core/settings.ts";
+import type {
+  CurriculumStateRecord,
+  IntroductionsRecord,
+  LegacyMigrationBundle,
+  TrainingAttemptRecord,
+  TrainingSessionRecord,
+} from "./models.ts";
 import {
   RECORD_SCHEMA_VERSION,
   SCORING_ALGORITHM_VERSION,
@@ -388,6 +396,274 @@ export const schemaMetadataRecordSchema = persistedRecordSchema
   })
   .strict();
 
+const practiceSettingsSchema = z
+  .object({
+    charWpm: z
+      .number()
+      .finite()
+      .min(SETTING_RANGES.charWpm.min)
+      .max(SETTING_RANGES.charWpm.max),
+    effectiveWpm: z
+      .number()
+      .finite()
+      .min(SETTING_RANGES.effectiveWpm.min)
+      .max(SETTING_RANGES.effectiveWpm.max),
+    toneHz: z
+      .number()
+      .finite()
+      .min(SETTING_RANGES.toneHz.min)
+      .max(SETTING_RANGES.toneHz.max),
+    volume: z
+      .number()
+      .finite()
+      .min(SETTING_RANGES.volume.min)
+      .max(SETTING_RANGES.volume.max),
+    noiseLevel: z
+      .number()
+      .finite()
+      .min(SETTING_RANGES.noiseLevel.min)
+      .max(SETTING_RANGES.noiseLevel.max),
+    pacing: z.enum(["auto", "manual"]),
+    continuousCopyDurationMs: z.union([
+      z.literal(60000),
+      z.literal(180000),
+      z.literal(300000),
+      z.literal(600000),
+    ]),
+  })
+  .strict()
+  .refine((settings) => settings.effectiveWpm <= settings.charWpm, {
+    path: ["effectiveWpm"],
+    message: "effective WPM cannot exceed character WPM",
+  });
+
+const skillProgressSchema = z
+  .object({
+    totalAttempts: z.number().int().nonnegative(),
+    recentResults: z.array(z.boolean()),
+  })
+  .strict();
+
+const characterProgressSchema = z
+  .object({
+    character: z.string().min(1),
+    state: z.enum(["locked", "learning", "mastered"]),
+    needsReview: z.boolean(),
+    reviewStreak: z.number().int().nonnegative().optional(),
+    rx: skillProgressSchema,
+    tx: skillProgressSchema,
+    unlockedAt: utcTimestampSchema.optional(),
+    masteredAt: utcTimestampSchema.optional(),
+    lastPracticedAt: utcTimestampSchema.optional(),
+  })
+  .strict();
+
+const portableSettingsRecordSchema = persistedRecordSchema
+  .extend({
+    id: z.literal("portable-settings"),
+    value: practiceSettingsSchema,
+  })
+  .strict();
+
+const curriculumStateRecordSchema = persistedRecordSchema
+  .extend({
+    id: z.literal("curriculum-state"),
+    order: z.array(z.string()).min(1),
+    startCount: z.number().int().positive(),
+    windowSize: z.number().int().positive(),
+    minNewCharObservations: z.number().int().positive(),
+    reviewDecayAccuracy: z.number().finite().min(0).max(1),
+    characters: z.array(characterProgressSchema),
+  })
+  .strict()
+  .superRefine((curriculum, context) => {
+    if (
+      curriculum.order.length !== KOCH_ORDER.length ||
+      curriculum.order.some(
+        (character, index) => character !== KOCH_ORDER[index],
+      )
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["order"],
+        message: "curriculum order must match the supported Koch order",
+      });
+    }
+    if (
+      curriculum.startCount > curriculum.order.length ||
+      curriculum.characters.length < curriculum.startCount ||
+      curriculum.characters.length > curriculum.order.length
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["characters"],
+        message: "curriculum character count is outside its configured bounds",
+      });
+    }
+    curriculum.characters.forEach((progress, index) => {
+      if (progress.character !== curriculum.order[index]) {
+        context.addIssue({
+          code: "custom",
+          path: ["characters", index, "character"],
+          message: "curriculum characters must be an ordered prefix",
+        });
+      }
+      if (progress.state === "locked") {
+        context.addIssue({
+          code: "custom",
+          path: ["characters", index, "state"],
+          message: "persisted curriculum characters must be unlocked",
+        });
+      }
+      for (const direction of ["rx", "tx"] as const) {
+        const skill = progress[direction];
+        if (skill.recentResults.length > curriculum.windowSize) {
+          context.addIssue({
+            code: "custom",
+            path: ["characters", index, direction, "recentResults"],
+            message: "recent results exceed the curriculum window",
+          });
+        }
+        if (skill.totalAttempts < skill.recentResults.length) {
+          context.addIssue({
+            code: "custom",
+            path: ["characters", index, direction, "totalAttempts"],
+            message: "total attempts cannot be smaller than recent results",
+          });
+        }
+      }
+    });
+  });
+
+const introductionsRecordSchema = persistedRecordSchema
+  .extend({
+    id: z.literal("completed-introductions"),
+    characters: z.array(z.string()),
+  })
+  .strict();
+
+const progressionEventRecordSchema = persistedRecordSchema
+  .extend({
+    idempotencyKey: z.string().min(1),
+    type: z.enum([
+      "advancement-accepted",
+      "mastery-recorded",
+      "curriculum-completed",
+    ]),
+    occurredAt: capturedDateTimeSchema,
+    sessionId: z.string().min(1).optional(),
+    evidenceAttemptId: z.string().min(1).optional(),
+    activeCharacters: z.array(z.string()),
+    masteredCharacters: z.array(z.string()),
+    unlockedCharacter: z.string().optional(),
+    migrationDerived: z.boolean(),
+  })
+  .strict();
+
+const milestoneRecordSchema = persistedRecordSchema
+  .extend({
+    idempotencyKey: z.string().min(1),
+    eventId: z.string().min(1),
+    type: z.enum([
+      "character-mastered",
+      "character-unlocked",
+      "curriculum-completed",
+    ]),
+    occurredAt: capturedDateTimeSchema,
+    character: z.string().optional(),
+    migrationDerived: z.boolean(),
+  })
+  .strict();
+
+const migrationLedgerRecordSchema = persistedRecordSchema
+  .extend({
+    kind: z.literal("migration"),
+    migration: z.string().min(1),
+    completedAt: utcTimestampSchema,
+  })
+  .strict();
+
+const legacyMigrationBundleSchema = z
+  .object({
+    settings: portableSettingsRecordSchema,
+    curriculum: curriculumStateRecordSchema,
+    introductions: introductionsRecordSchema,
+    progressionEvents: z.array(progressionEventRecordSchema),
+    milestones: z.array(milestoneRecordSchema),
+    ledger: migrationLedgerRecordSchema,
+  })
+  .strict()
+  .superRefine((bundle, context) => {
+    const eventIds = new Set<string>();
+    const eventKeys = new Set<string>();
+    bundle.progressionEvents.forEach((event, index) => {
+      if (eventIds.has(event.id)) {
+        context.addIssue({
+          code: "custom",
+          path: ["progressionEvents", index, "id"],
+          message: `duplicate progression event id ${event.id}`,
+        });
+      }
+      if (eventKeys.has(event.idempotencyKey)) {
+        context.addIssue({
+          code: "custom",
+          path: ["progressionEvents", index, "idempotencyKey"],
+          message: `duplicate progression event key ${event.idempotencyKey}`,
+        });
+      }
+      eventIds.add(event.id);
+      eventKeys.add(event.idempotencyKey);
+    });
+
+    const milestoneIds = new Set<string>();
+    const milestoneKeys = new Set<string>();
+    bundle.milestones.forEach((milestone, index) => {
+      if (milestoneIds.has(milestone.id)) {
+        context.addIssue({
+          code: "custom",
+          path: ["milestones", index, "id"],
+          message: `duplicate milestone id ${milestone.id}`,
+        });
+      }
+      if (milestoneKeys.has(milestone.idempotencyKey)) {
+        context.addIssue({
+          code: "custom",
+          path: ["milestones", index, "idempotencyKey"],
+          message: `duplicate milestone key ${milestone.idempotencyKey}`,
+        });
+      }
+      if (!eventIds.has(milestone.eventId)) {
+        context.addIssue({
+          code: "custom",
+          path: ["milestones", index, "eventId"],
+          message: `milestone references unknown event ${milestone.eventId}`,
+        });
+      }
+      milestoneIds.add(milestone.id);
+      milestoneKeys.add(milestone.idempotencyKey);
+    });
+
+    const activeCharacters = new Set(
+      bundle.curriculum.characters.map((progress) => progress.character),
+    );
+    bundle.introductions.characters.forEach((character, index) => {
+      if (!activeCharacters.has(character)) {
+        context.addIssue({
+          code: "custom",
+          path: ["introductions", "characters", index],
+          message: `introduced character ${character} is not unlocked`,
+        });
+      }
+      if (bundle.introductions.characters.indexOf(character) !== index) {
+        context.addIssue({
+          code: "custom",
+          path: ["introductions", "characters", index],
+          message: `introduced character ${character} is duplicated`,
+        });
+      }
+    });
+  });
+
 const trainingDatasetSchema = z
   .object({
     sessions: z.array(trainingSessionRecordSchema),
@@ -459,10 +735,18 @@ export function parseTrainingSessions(value: unknown): TrainingSessionRecord[] {
     .parse(value) as TrainingSessionRecord[];
 }
 
+export function parseTrainingSession(value: unknown): TrainingSessionRecord {
+  return trainingSessionRecordSchema.parse(value) as TrainingSessionRecord;
+}
+
 export function parseTrainingAttempts(value: unknown): TrainingAttemptRecord[] {
   return z
     .array(trainingAttemptRecordSchema)
     .parse(value) as TrainingAttemptRecord[];
+}
+
+export function parseTrainingAttempt(value: unknown): TrainingAttemptRecord {
+  return trainingAttemptRecordSchema.parse(value) as TrainingAttemptRecord;
 }
 
 export function parseTrainingDataset(
@@ -480,4 +764,24 @@ export function parseTrainingDataset(
 
 export function parseSchemaMetadata(value: unknown): SchemaMetadataRecord {
   return schemaMetadataRecordSchema.parse(value) as SchemaMetadataRecord;
+}
+
+export function parseLegacyMigrationBundle(
+  value: unknown,
+): LegacyMigrationBundle {
+  return legacyMigrationBundleSchema.parse(value) as LegacyMigrationBundle;
+}
+
+export function parseMigrationLedger(value: unknown) {
+  return migrationLedgerRecordSchema.parse(value);
+}
+
+export function parseCurriculumStateRecord(
+  value: unknown,
+): CurriculumStateRecord {
+  return curriculumStateRecordSchema.parse(value) as CurriculumStateRecord;
+}
+
+export function parseIntroductionsRecord(value: unknown): IntroductionsRecord {
+  return introductionsRecordSchema.parse(value) as IntroductionsRecord;
 }

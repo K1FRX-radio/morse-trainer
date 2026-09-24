@@ -1,16 +1,62 @@
 import { DATABASE_VERSION, TrainerDatabase } from "./indexeddb.ts";
-import { RECORD_SCHEMA_VERSION, type SchemaMetadataRecord } from "./models.ts";
+import { isValidTrainingSession } from "../core/session-validity.ts";
+import {
+  LEGACY_MIGRATION_ID,
+  type LegacyMigrationRepository,
+} from "./legacy-migration.ts";
+import {
+  RECORD_SCHEMA_VERSION,
+  type CurriculumStateRecord,
+  type IntroductionsRecord,
+  type LegacyMigrationBundle,
+  type OperationLedgerRecord,
+  type SchemaMetadataRecord,
+  type TrainingAttemptRecord,
+  type TrainingSessionRecord,
+} from "./models.ts";
 import { buildProjectionRows } from "./projections.ts";
-import { parseSchemaMetadata, parseTrainingDataset } from "./validation.ts";
+import { captureDateTime } from "./time.ts";
+import {
+  parseCurriculumStateRecord,
+  parseIntroductionsRecord,
+  parseLegacyMigrationBundle,
+  parseMigrationLedger,
+  parseSchemaMetadata,
+  parseTrainingAttempt,
+  parseTrainingDataset,
+  parseTrainingSession,
+} from "./validation.ts";
 
 export type RepositoryDependencies = {
   now?: () => Date;
   createId?: () => string;
 };
 
-export interface TrainingDataRepository {
+export type PersistenceResult<T extends object = object> = {
+  committed: boolean;
+  session: TrainingSessionRecord;
+} & T;
+
+export type AttemptCommit = {
+  expectedSessionRevision: number;
+  session: TrainingSessionRecord;
+  attempt: TrainingAttemptRecord;
+  curriculum?: CurriculumStateRecord;
+  introductions?: IntroductionsRecord;
+};
+
+export interface TrainingDataRepository extends LegacyMigrationRepository {
   open(): Promise<SchemaMetadataRecord>;
   close(): void;
+  createSession(session: TrainingSessionRecord): Promise<PersistenceResult>;
+  commitAttempt(
+    commit: AttemptCommit,
+  ): Promise<PersistenceResult<{ attempt: TrainingAttemptRecord }>>;
+  finalizeSession(
+    session: TrainingSessionRecord,
+    expectedRevision: number,
+  ): Promise<PersistenceResult>;
+  recoverInterruptedSessions(): Promise<TrainingSessionRecord[]>;
   rebuildProjections(): Promise<void>;
 }
 
@@ -19,6 +65,35 @@ function defaultId(): string {
     throw new Error("secure UUID generation is unavailable");
   }
   return crypto.randomUUID();
+}
+
+function recordsEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function assertSessionIdentity(
+  current: TrainingSessionRecord,
+  next: TrainingSessionRecord,
+): void {
+  if (
+    current.id !== next.id ||
+    current.source !== next.source ||
+    current.mode !== next.mode ||
+    current.appVersion !== next.appVersion ||
+    !recordsEqual(current.startedAt, next.startedAt) ||
+    !recordsEqual(current.unlockedAtStart, next.unlockedAtStart)
+  ) {
+    throw new Error("session identity fields cannot change");
+  }
+  if (next.activeMs < current.activeMs) {
+    throw new Error("session active time cannot decrease");
+  }
+  if (next.completedCards < current.completedCards) {
+    throw new Error("session completed-card count cannot decrease");
+  }
+  if (next.updatedAt < current.updatedAt) {
+    throw new Error("session updatedAt cannot move backward");
+  }
 }
 
 export class DexieTrainingRepository implements TrainingDataRepository {
@@ -70,6 +145,315 @@ export class DexieTrainingRepository implements TrainingDataRepository {
 
   close(): void {
     this.database.close();
+  }
+
+  async createSession(
+    value: TrainingSessionRecord,
+  ): Promise<PersistenceResult> {
+    const session = parseTrainingSession(value);
+    if (
+      session.status !== "active" ||
+      session.revision !== 0 ||
+      session.attemptCount !== 0
+    ) {
+      throw new Error(
+        "new sessions must be active at revision zero with no attempts",
+      );
+    }
+    return this.database.transaction("rw", this.database.sessions, async () => {
+      const existing = await this.database.sessions.get(session.id);
+      if (existing !== undefined) {
+        if (!recordsEqual(existing, session)) {
+          throw new Error("session ID already exists with different data");
+        }
+        return { session: parseTrainingSession(existing), committed: false };
+      }
+      await this.database.sessions.add(session);
+      return { session, committed: true };
+    });
+  }
+
+  async commitAttempt(
+    commit: AttemptCommit,
+  ): Promise<PersistenceResult<{ attempt: TrainingAttemptRecord }>> {
+    const nextSession = parseTrainingSession(commit.session);
+    const attempt = parseTrainingAttempt(commit.attempt);
+    const curriculum =
+      commit.curriculum === undefined
+        ? undefined
+        : parseCurriculumStateRecord(commit.curriculum);
+    const introductions =
+      commit.introductions === undefined
+        ? undefined
+        : parseIntroductionsRecord(commit.introductions);
+
+    return this.database.transaction(
+      "rw",
+      this.database.sessions,
+      this.database.attempts,
+      this.database.curriculum,
+      this.database.introductions,
+      async () => {
+        const current = await this.database.sessions.get(nextSession.id);
+        if (current === undefined) throw new Error("session does not exist");
+
+        const existingAttempt = await this.database.attempts.get(attempt.id);
+        if (existingAttempt !== undefined) {
+          if (!recordsEqual(existingAttempt, attempt)) {
+            throw new Error("attempt ID already exists with different data");
+          }
+          return {
+            session: parseTrainingSession(current),
+            attempt: parseTrainingAttempt(existingAttempt),
+            committed: false,
+          };
+        }
+        if (current.status !== "active") {
+          throw new Error("cannot commit an attempt to a finalized session");
+        }
+        if (current.revision !== commit.expectedSessionRevision) {
+          throw new Error("session revision changed before attempt commit");
+        }
+        assertSessionIdentity(current, nextSession);
+        if (
+          nextSession.status !== "active" ||
+          nextSession.revision !== current.revision + 1 ||
+          nextSession.attemptCount !== current.attemptCount + 1
+        ) {
+          throw new Error(
+            "attempt commit requires the next active session revision",
+          );
+        }
+        if (
+          attempt.sessionId !== current.id ||
+          attempt.source !== current.source
+        ) {
+          throw new Error("attempt does not belong to the active session");
+        }
+        const storedAttemptCount = await this.database.attempts
+          .where("sessionId")
+          .equals(current.id)
+          .count();
+        if (storedAttemptCount !== current.attemptCount) {
+          throw new Error(
+            `attemptCount ${current.attemptCount} does not match ${storedAttemptCount} stored attempts`,
+          );
+        }
+
+        await this.database.attempts.add(attempt);
+        await this.database.sessions.put(nextSession);
+        if (curriculum !== undefined) {
+          await this.database.curriculum.put(curriculum);
+        }
+        if (introductions !== undefined) {
+          await this.database.introductions.put(introductions);
+        }
+        return { session: nextSession, attempt, committed: true };
+      },
+    );
+  }
+
+  async finalizeSession(
+    value: TrainingSessionRecord,
+    expectedRevision: number,
+  ): Promise<PersistenceResult> {
+    const nextSession = parseTrainingSession(value);
+    if (
+      nextSession.status !== "completed" ||
+      nextSession.finalizationKey === undefined
+    ) {
+      throw new Error(
+        "normal finalization requires a completed session and key",
+      );
+    }
+    const finalizationKey = nextSession.finalizationKey;
+
+    return this.database.transaction(
+      "rw",
+      [
+        this.database.metadata,
+        this.database.sessions,
+        this.database.attempts,
+        this.database.dailyProjections,
+        this.database.characterProjections,
+        this.database.confusionProjections,
+      ],
+      async () => {
+        const current = await this.database.sessions.get(nextSession.id);
+        if (current === undefined) throw new Error("session does not exist");
+        if (current.status !== "active") {
+          if (current.finalizationKey === finalizationKey) {
+            return { session: parseTrainingSession(current), committed: false };
+          }
+          throw new Error("session was already finalized by another operation");
+        }
+        if (current.revision !== expectedRevision) {
+          throw new Error("session revision changed before finalization");
+        }
+        assertSessionIdentity(current, nextSession);
+        if (
+          nextSession.revision !== current.revision + 1 ||
+          nextSession.attemptCount !== current.attemptCount
+        ) {
+          throw new Error("finalization requires the next session revision");
+        }
+
+        const sessions = await this.database.sessions.toArray();
+        const attempts = await this.database.attempts.toArray();
+        const validated = parseTrainingDataset(
+          sessions.map((session) =>
+            session.id === nextSession.id ? nextSession : session,
+          ),
+          attempts,
+        );
+        const rows = buildProjectionRows(
+          validated.sessions,
+          validated.attempts,
+          nextSession.updatedAt,
+        );
+        const operation: OperationLedgerRecord = {
+          id: `operation:${finalizationKey}`,
+          schemaVersion: RECORD_SCHEMA_VERSION,
+          updatedAt: nextSession.updatedAt,
+          kind: "operation",
+          operation: "finalize-session",
+          idempotencyKey: finalizationKey,
+          completedAt: nextSession.updatedAt,
+          resultRecordId: nextSession.id,
+        };
+
+        await this.database.sessions.put(nextSession);
+        await this.database.metadata.add(operation);
+        await this.database.dailyProjections.clear();
+        await this.database.characterProjections.clear();
+        await this.database.confusionProjections.clear();
+        await this.database.dailyProjections.bulkPut(rows.daily);
+        await this.database.characterProjections.bulkPut(rows.characters);
+        await this.database.confusionProjections.bulkPut(rows.confusions);
+        return { session: nextSession, committed: true };
+      },
+    );
+  }
+
+  async isMigrationComplete(): Promise<boolean> {
+    const record = await this.database.metadata.get(
+      `migration:${LEGACY_MIGRATION_ID}`,
+    );
+    if (record === undefined) return false;
+    const ledger = parseMigrationLedger(record);
+    if (ledger.migration !== LEGACY_MIGRATION_ID) {
+      throw new Error("legacy migration ledger has an unexpected migration ID");
+    }
+    return true;
+  }
+
+  async commitLegacyMigration(bundle: LegacyMigrationBundle): Promise<boolean> {
+    const records = parseLegacyMigrationBundle(bundle);
+    return this.database.transaction(
+      "rw",
+      [
+        this.database.metadata,
+        this.database.settings,
+        this.database.curriculum,
+        this.database.introductions,
+        this.database.progressionEvents,
+        this.database.milestones,
+      ],
+      async () => {
+        if (await this.database.metadata.get(records.ledger.id)) return false;
+
+        await this.database.settings.put(records.settings);
+        await this.database.curriculum.put(records.curriculum);
+        await this.database.introductions.put(records.introductions);
+        await this.database.progressionEvents.bulkAdd(
+          records.progressionEvents,
+        );
+        await this.database.milestones.bulkAdd(records.milestones);
+        await this.database.metadata.add(records.ledger);
+        return true;
+      },
+    );
+  }
+
+  async recoverInterruptedSessions(): Promise<TrainingSessionRecord[]> {
+    const now = this.now();
+    const capturedNow = captureDateTime(now);
+    return this.database.transaction(
+      "rw",
+      [
+        this.database.metadata,
+        this.database.sessions,
+        this.database.attempts,
+        this.database.dailyProjections,
+        this.database.characterProjections,
+        this.database.confusionProjections,
+      ],
+      async () => {
+        const dataset = parseTrainingDataset(
+          await this.database.sessions.toArray(),
+          await this.database.attempts.toArray(),
+        );
+        const activeSessions = dataset.sessions.filter(
+          (session) => session.status === "active",
+        );
+        if (activeSessions.length === 0) return [];
+
+        const recovered = activeSessions.map((session) => {
+          const endedAt =
+            capturedNow.utc < session.startedAt.utc
+              ? session.startedAt
+              : capturedNow;
+          const finalizationKey = `recovery:${session.id}:${session.revision}`;
+          const record: TrainingSessionRecord = {
+            ...session,
+            status: "interrupted",
+            endedAt,
+            updatedAt: [session.updatedAt, endedAt.utc].sort().at(-1)!,
+            valid: isValidTrainingSession(session),
+            revision: session.revision + 1,
+            finalizationKey,
+          };
+          delete record.ownerTabId;
+          delete record.leaseExpiresAt;
+          return record;
+        });
+        const recoveredById = new Map(
+          recovered.map((session) => [session.id, session]),
+        );
+        const sessions = dataset.sessions.map(
+          (session) => recoveredById.get(session.id) ?? session,
+        );
+        const validated = parseTrainingDataset(sessions, dataset.attempts);
+        const generatedAt = now.toISOString();
+        const rows = buildProjectionRows(
+          validated.sessions,
+          validated.attempts,
+          generatedAt,
+        );
+        const operations: OperationLedgerRecord[] = recovered.map(
+          (session) => ({
+            id: `operation:${session.finalizationKey}`,
+            schemaVersion: RECORD_SCHEMA_VERSION,
+            updatedAt: session.updatedAt,
+            kind: "operation",
+            operation: "recover-interrupted-session",
+            idempotencyKey: session.finalizationKey!,
+            completedAt: session.updatedAt,
+            resultRecordId: session.id,
+          }),
+        );
+
+        await this.database.sessions.bulkPut(recovered);
+        await this.database.metadata.bulkAdd(operations);
+        await this.database.dailyProjections.clear();
+        await this.database.characterProjections.clear();
+        await this.database.confusionProjections.clear();
+        await this.database.dailyProjections.bulkPut(rows.daily);
+        await this.database.characterProjections.bulkPut(rows.characters);
+        await this.database.confusionProjections.bulkPut(rows.confusions);
+        return recovered;
+      },
+    );
   }
 
   async rebuildProjections(): Promise<void> {
