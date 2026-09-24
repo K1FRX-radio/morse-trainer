@@ -130,6 +130,43 @@ async function toFirstCopy(fake: ReturnType<typeof makeFakeAudio>) {
   await resolvePlay(fake); // acquire audio done -> input unlocked
 }
 
+async function answerIsolatedWithPhysicalKey(
+  fake: ReturnType<typeof makeFakeAudio>,
+  expected: string,
+) {
+  expect(fake.pending[0]?.text).toBe(expected);
+  fireEvent.keyDown(window, {
+    key: expected.toLowerCase(),
+    code: `Key${expected}`,
+  });
+  fireEvent.keyUp(window, {
+    key: expected.toLowerCase(),
+    code: `Key${expected}`,
+  });
+  await resolvePlay(fake);
+  expect(screen.getByRole("status")).toHaveTextContent("✓");
+  await tick(450);
+}
+
+async function answerIsolatedWithMobileInput(
+  fake: ReturnType<typeof makeFakeAudio>,
+  expected: string,
+  input: HTMLInputElement,
+) {
+  expect(fake.pending[0]?.text).toBe(expected);
+  expect(screen.getByLabelText("Your copy")).toBe(input);
+  expect(input).toBeEnabled();
+  fireEvent.change(input, { target: { value: expected } });
+  await flush();
+  expect(input).toHaveValue("");
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  await resolvePlay(fake);
+  expect(screen.getByRole("status")).toHaveTextContent("✓");
+  expect(screen.getByLabelText("Your copy")).toBe(input);
+  expect(input).toBeEnabled();
+  await tick(450);
+}
+
 async function toMultiCharacterTransition(
   fake: ReturnType<typeof makeFakeAudio>,
   manual = false,
@@ -205,7 +242,7 @@ describe("LearnScreen input gating", () => {
     expect(sanitizeCopyInput("a .,-=/ ?~")).toBe("A.,-=/?");
   });
 
-  it("locks input until the prompt audio finishes, then unlocks", async () => {
+  it("keeps isolated input enabled and defers mobile input until playback completes", async () => {
     const fake = makeFakeAudio();
     renderLearn(fake.audio);
     fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
@@ -215,9 +252,20 @@ describe("LearnScreen input gating", () => {
     await flush(); // acquire card presented, audio still playing (play #2 pending)
 
     const input = screen.getByLabelText("Your copy") as HTMLInputElement;
-    expect(input.disabled).toBe(true); // audio not yet finished
+    input.focus();
+    expect(input).toBeEnabled();
+    fireEvent.change(input, { target: { value: "K" } });
+    fireEvent.change(input, { target: { value: "M" } });
+    fireEvent.change(input, { target: { value: "K" } });
+    await flush();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(input).toHaveValue("");
+
     await resolvePlay(fake); // finish acquire audio
-    expect(input.disabled).toBe(false);
+    expect(screen.getByRole("status")).toHaveTextContent("✓");
+    expect(screen.getByLabelText("Your copy")).toBe(input);
+    expect(input).toBeEnabled();
+    expect(input).toHaveFocus();
   });
 
   it("accepts only one answer despite repeated input events", async () => {
@@ -246,23 +294,103 @@ describe("LearnScreen input gating", () => {
     expect(counterAfter).not.toBe(counterBefore);
   });
 
-  it("ignores input while the prompt audio is still playing", async () => {
+  it("accepts one fresh same-key press during the next identical prompt playback", async () => {
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+    await toFirstCopy(fake);
+
+    fireEvent.keyDown(window, { key: "k", code: "KeyK" });
+    fireEvent.keyUp(window, { key: "k", code: "KeyK" });
+    await flush();
+    expect(screen.getByRole("status")).toHaveTextContent("✓");
+
+    await tick(450);
+    expect(fake.pending[0]?.text).toBe("K");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "k", code: "KeyK" });
+    fireEvent.keyUp(window, { key: "k", code: "KeyK" });
+    await flush();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+    await resolvePlay(fake);
+    expect(screen.getByRole("status")).toHaveTextContent("✓");
+  });
+
+  it("accepts K K K and M M from one physical keypress per prompt", async () => {
     const fake = makeFakeAudio();
     renderLearn(fake.audio);
     fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
     await flush();
     await resolvePlay(fake);
     fireEvent.click(screen.getByRole("button", { name: "Start practice" }));
-    await flush(); // acquire presented, audio pending
-
-    const input = screen.getByLabelText("Your copy") as HTMLInputElement;
-    fireEvent.change(input, { target: { value: "K" } }); // too early
     await flush();
-    // No feedback yet: the answer was ignored during playback.
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+    for (const expected of Array.from({ length: 8 }, () => "K")) {
+      await answerIsolatedWithPhysicalKey(fake, expected);
+    }
+
+    expect(fake.pending[0]?.text).toBe("M");
+    await resolvePlay(fake);
+    fireEvent.click(screen.getByRole("button", { name: "Start practice" }));
+    await flush();
+    for (const expected of ["M", "M"]) {
+      await answerIsolatedWithPhysicalKey(fake, expected);
+    }
   });
 
-  it("rejects held repeats but accepts a fresh same-key press next prompt", async () => {
+  it("keeps one focused mobile input through K K K and M M", async () => {
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+    fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
+    await flush();
+    await resolvePlay(fake);
+    fireEvent.click(screen.getByRole("button", { name: "Start practice" }));
+    await flush();
+
+    const kInput = screen.getByLabelText("Your copy") as HTMLInputElement;
+    kInput.focus();
+    for (let attempt = 0; attempt < 8; attempt++) {
+      await answerIsolatedWithMobileInput(fake, "K", kInput);
+      if (attempt < 7) expect(kInput).toHaveFocus();
+    }
+
+    expect(fake.pending[0]?.text).toBe("M");
+    await resolvePlay(fake);
+    fireEvent.click(screen.getByRole("button", { name: "Start practice" }));
+    await flush();
+    const mInput = screen.getByLabelText("Your copy") as HTMLInputElement;
+    mInput.focus();
+    for (const expected of ["M", "M"]) {
+      await answerIsolatedWithMobileInput(fake, expected, mInput);
+      expect(mInput).toHaveFocus();
+    }
+  });
+
+  it.each(["physical", "mobile"])(
+    "accepts seeded K M K contrast through %s events",
+    async (inputMode) => {
+      vi.setSystemTime(1);
+      localStorage.setItem("k1frx.introduced.v1", JSON.stringify(["K", "M"]));
+      const fake = makeFakeAudio();
+      renderLearn(fake.audio);
+      fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
+      await flush();
+
+      const input = screen.getByLabelText("Your copy") as HTMLInputElement;
+      input.focus();
+      for (const expected of ["M", "K", "M", "K"]) {
+        if (inputMode === "physical") {
+          await answerIsolatedWithPhysicalKey(fake, expected);
+        } else {
+          await answerIsolatedWithMobileInput(fake, expected, input);
+          expect(input).toHaveFocus();
+        }
+      }
+    },
+  );
+
+  it("rejects held repeats until keyup, then accepts a fresh same-key press", async () => {
     const fake = makeFakeAudio();
     renderLearn(fake.audio);
     await toFirstCopy(fake);
@@ -280,7 +408,13 @@ describe("LearnScreen input gating", () => {
 
     fireEvent.keyDown(window, { key: "k", code: "KeyK" });
     await flush();
-    expect(screen.getByRole("status")).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+    fireEvent.keyUp(window, { key: "k", code: "KeyK" });
+    fireEvent.keyDown(window, { key: "k", code: "KeyK" });
+    fireEvent.keyUp(window, { key: "k", code: "KeyK" });
+    await flush();
+    expect(screen.getByRole("status")).toHaveTextContent("✓");
   });
 
   it("lets multiple physical events claim a prompt only once", async () => {
@@ -293,7 +427,9 @@ describe("LearnScreen input gating", () => {
     fireEvent.keyDown(window, { key: "k", code: "KeyK", repeat: true });
     await flush();
 
+    fireEvent.keyUp(window, { key: "k", code: "KeyK" });
     expect(screen.getByRole("status")).toBeInTheDocument();
+    fireEvent.keyUp(window, { key: "k", code: "KeyK" });
     await tick(450);
     expect(fake.playCount()).toBe(1);
     expect(fake.pending[0]?.text).toBe("K");
@@ -360,6 +496,28 @@ describe("LearnScreen input gating", () => {
     fireEvent.compositionEnd(input, { data: "K" });
     await flush();
     expect(screen.getByRole("status")).toBeInTheDocument();
+  });
+
+  it("defers composition input during playback until composition and audio end", async () => {
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+    fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
+    await flush();
+    await resolvePlay(fake);
+    fireEvent.click(screen.getByRole("button", { name: "Start practice" }));
+    await flush();
+
+    const input = screen.getByLabelText("Your copy") as HTMLInputElement;
+    fireEvent.compositionStart(input);
+    fireEvent.change(input, { target: { value: "K" } });
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    fireEvent.compositionEnd(input, { data: "K" });
+    await flush();
+    expect(input).toHaveValue("");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+    await resolvePlay(fake);
+    expect(screen.getByRole("status")).toHaveTextContent("✓");
   });
 
   it("does not submit on a modifier-Enter", async () => {
@@ -496,7 +654,7 @@ describe("LearnScreen audio sequencing", () => {
     fireEvent.click(screen.getByRole("button", { name: "Start practice" }));
     await flush();
 
-    expect(screen.getByLabelText("Your copy")).toBeDisabled();
+    expect(screen.getByLabelText("Your copy")).toBeEnabled();
     expect(fake.played).toEqual(["K", "K"]);
     expect(fake.playCount()).toBe(1);
     await tick(60000);
@@ -680,6 +838,76 @@ describe("LearnScreen audio sequencing", () => {
     ).toBeInTheDocument();
   });
 
+  it("discards queued isolated input when the session ends", async () => {
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+    fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
+    await flush();
+    await resolvePlay(fake);
+    fireEvent.click(screen.getByRole("button", { name: "Start practice" }));
+    await flush();
+
+    fireEvent.change(screen.getByLabelText("Your copy"), {
+      target: { value: "K" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "End session" }));
+    await flush();
+    await tick(1000);
+
+    expect(
+      screen.getByRole("heading", { name: "Session complete" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Cards: 1 · scored attempts: 0/),
+    ).toBeInTheDocument();
+  });
+
+  it("discards queued isolated input after navigating away", async () => {
+    const fake = makeFakeAudio();
+    fake.audio.cancelAndSuspend = () => Promise.resolve();
+    renderApp(fake.audio);
+    fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
+    await flush();
+    await resolvePlay(fake);
+    fireEvent.click(screen.getByRole("button", { name: "Start practice" }));
+    await flush();
+    const staleIndex = fake.pending.length - 1;
+
+    fireEvent.change(screen.getByLabelText("Your copy"), {
+      target: { value: "K" },
+    });
+    fireEvent.click(screen.getByRole("link", { name: "Practice" }));
+    await flush();
+    fake.resolveAt(staleIndex);
+    await flush();
+    await tick(1000);
+
+    expect(
+      screen.getByRole("heading", { name: "Practice" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("discards queued isolated input when the screen unmounts", async () => {
+    const fake = makeFakeAudio();
+    const view = renderLearn(fake.audio);
+    fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
+    await flush();
+    await resolvePlay(fake);
+    fireEvent.click(screen.getByRole("button", { name: "Start practice" }));
+    await flush();
+
+    fireEvent.change(screen.getByLabelText("Your copy"), {
+      target: { value: "K" },
+    });
+    view.unmount();
+    await flush();
+    await tick(1000);
+
+    expect(fake.playCount()).toBe(0);
+  });
+
   it("plays a replay only once even with repeated clicks", async () => {
     const fake = makeFakeAudio();
     renderLearn(fake.audio);
@@ -695,21 +923,24 @@ describe("LearnScreen audio sequencing", () => {
     expect(fake.playCount()).toBe(1);
   });
 
-  it("locks input for Replay and unlocks only after it completes", async () => {
+  it("keeps isolated input enabled and defers its answer during Replay", async () => {
     const fake = makeFakeAudio();
     renderLearn(fake.audio);
     await toFirstCopy(fake);
 
+    const input = screen.getByLabelText("Your copy") as HTMLInputElement;
     fireEvent.click(screen.getByRole("button", { name: "Replay" }));
     await flush();
-    expect(
-      (screen.getByLabelText("Your copy") as HTMLInputElement).disabled,
-    ).toBe(true);
+    expect(input).toBeEnabled();
+    fireEvent.change(input, { target: { value: "K" } });
+    await flush();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(input).toHaveValue("");
 
     await resolvePlay(fake);
-    expect(
-      (screen.getByLabelText("Your copy") as HTMLInputElement).disabled,
-    ).toBe(false);
+    expect(screen.getByRole("status")).toHaveTextContent("✓");
+    expect(screen.getByLabelText("Your copy")).toBe(input);
+    expect(input).toBeEnabled();
   });
 
   it("does not let stale Replay completion clear newer playback state", async () => {
@@ -721,6 +952,11 @@ describe("LearnScreen audio sequencing", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Replay" }));
     await flush();
+    fireEvent.change(screen.getByLabelText("Your copy"), {
+      target: { value: "K" },
+    });
+    await flush();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "End session" }));
     await flush();
     fireEvent.click(

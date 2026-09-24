@@ -54,7 +54,9 @@ export function LearnScreen() {
   const isCopy = exercise?.direction === "rx" && exercise.type !== "introduce";
   const supportsTypeBehind =
     exercise?.type === "copy-group" || exercise?.type === "copy-word";
-  const answerReady = supportsTypeBehind ? typingReady : inputReady;
+  const isolatedCopy = exercise?.type === "copy-character";
+  const answerReady =
+    isolatedCopy || supportsTypeBehind ? typingReady : inputReady;
   const introControlsReady = introStage === "ready" && !isPlaying;
 
   // Clear the field for each new practice prompt.
@@ -62,12 +64,12 @@ export function LearnScreen() {
     setValue("");
   }, [exercise]);
 
-  // Groups and words focus when playback begins; isolated copy waits for audio.
+  // Keep the active copy field focused as each prompt begins.
   useEffect(() => {
     if (answerReady && isCopy) {
       inputRef.current?.focus();
     }
-  }, [answerReady, isCopy]);
+  }, [answerReady, exercise, isCopy]);
 
   useEffect(() => {
     if (learn.continuousCopy.active) continuousInputRef.current?.focus();
@@ -541,7 +543,7 @@ export function LearnScreen() {
             onCompositionStart={() => (composingRef.current = true)}
             onCompositionEnd={onCompositionEnd}
             onBlur={retainFocus}
-            disabled={!answerReady || !!feedback}
+            disabled={!answerReady || (!isolatedCopy && !!feedback)}
             aria-label="Your copy"
           />
           <div className="practice__controls">

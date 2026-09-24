@@ -39,10 +39,17 @@ export type Feedback = {
 
 export type IntroStage = "playing" | "ready";
 
-type QueuedSubmission = {
-  token: number;
-  kind: "automatic" | "explicit";
-};
+type QueuedSubmission =
+  | {
+      token: number;
+      kind: "automatic" | "explicit";
+    }
+  | {
+      token: number;
+      kind: "isolated";
+      value: string;
+      playbackGeneration: number;
+    };
 
 function loadCurriculum(): CurriculumState {
   try {
@@ -132,12 +139,13 @@ export function useLearnSession() {
   const playingRef = useRef(false);
   const playbackGeneration = useRef(0);
   const heldKeysRef = useRef(new Set<string>());
-  const heldKeysTokenRef = useRef<number | null>(null);
   const introDoneToken = useRef<number | null>(null);
   const introStageRef = useRef<IntroStage | undefined>(undefined);
   const queuedSubmissionRef = useRef<QueuedSubmission | null>(null);
   const currentAnswerRef = useRef("");
-  const flushQueuedSubmissionRef = useRef<(token: number) => void>(() => {});
+  const flushQueuedSubmissionRef = useRef<
+    (token: number, playbackGeneration: number) => void
+  >(() => {});
 
   const [phase, setPhase] = useState<LearnPhase>("onboarding");
   const [exercise, setExercise] = useState<PlannedExercise | undefined>(
@@ -205,22 +213,23 @@ export function useLearnSession() {
           setIsPlaying(false);
         }
       }
+      return generation;
     },
     [audio, timing, settings.toneHz],
   );
 
-  // Group and word fields permit typing during playback, but every prompt
-  // remains locked against grading until its audio completes.
+  // Copy fields permit typing during playback, but every prompt remains locked
+  // against grading until its audio completes.
   const presentPrompt = useCallback(
-    async (target: string, token: number, typeBehind = false) => {
+    async (target: string, token: number, allowTyping = false) => {
       lockedRef.current = true;
       setInputReady(false);
-      setTypingReady(typeBehind);
-      await play(target);
+      setTypingReady(allowTyping);
+      const generation = await play(target);
       if (token !== flowToken.current) return;
       lockedRef.current = false;
       setInputReady(true);
-      flushQueuedSubmissionRef.current(token);
+      flushQueuedSubmissionRef.current(token, generation);
     },
     [play],
   );
@@ -249,12 +258,6 @@ export function useLearnSession() {
 
   const clearHeldKeys = useCallback(() => {
     heldKeysRef.current.clear();
-    heldKeysTokenRef.current = null;
-  }, []);
-
-  const bindHeldKeysToPrompt = useCallback((token: number) => {
-    heldKeysRef.current.clear();
-    heldKeysTokenRef.current = token;
   }, []);
 
   const runIntro = useCallback(
@@ -336,14 +339,9 @@ export function useLearnSession() {
       setTransition(undefined);
       setNotification(undefined);
       setExercise(event);
-      bindHeldKeysToPrompt(token);
       if (event.type === "introduce") void runIntro(event.target, token);
       else {
-        void presentPrompt(
-          event.target,
-          token,
-          event.type === "copy-group" || event.type === "copy-word",
-        );
+        void presentPrompt(event.target, token, true);
       }
     },
     [
@@ -353,7 +351,6 @@ export function useLearnSession() {
       continuousCopy,
       nextFlowToken,
       updateIntroStage,
-      bindHeldKeysToPrompt,
     ],
   );
 
@@ -372,13 +369,13 @@ export function useLearnSession() {
   const begin = useCallback(async () => {
     continuousCopy.reset();
     clearHeldKeys();
-    await audio.cancel();
     nextFlowToken();
     queuedSubmissionRef.current = null;
     currentAnswerRef.current = "";
     playbackGeneration.current += 1;
     playingRef.current = false;
     setIsPlaying(false);
+    await audio.cancel();
     await audio.unlock();
     const session = new LearnSession({
       state: stateRef.current,
@@ -437,14 +434,14 @@ export function useLearnSession() {
   );
 
   // The single one-shot gate: returns the current token and locks, or null.
-  const claimPrompt = useCallback((): number | null => {
+  const claimPrompt = useCallback((keepTypingReady = false): number | null => {
     const token = flowToken.current;
     if (lockedRef.current) return null;
     if (acceptedTokenRef.current === token) return null;
     acceptedTokenRef.current = token;
     lockedRef.current = true;
     setInputReady(false);
-    setTypingReady(false);
+    if (!keepTypingReady) setTypingReady(false);
     return token;
   }, []);
 
@@ -454,9 +451,27 @@ export function useLearnSession() {
       if (!ex || ex.type !== "copy-character") return;
       const first = firstSupported(raw);
       if (!first) return;
-      const token = claimPrompt();
-      if (token === null) return;
-      void afterAnswer(first, token);
+      const token = flowToken.current;
+      if (
+        acceptedTokenRef.current === token ||
+        (queuedSubmissionRef.current?.token === token &&
+          queuedSubmissionRef.current.kind === "isolated")
+      ) {
+        return;
+      }
+      if (lockedRef.current) {
+        if (!playingRef.current) return;
+        queuedSubmissionRef.current = {
+          token,
+          kind: "isolated",
+          value: first,
+          playbackGeneration: playbackGeneration.current,
+        };
+        return;
+      }
+      const claimedToken = claimPrompt(true);
+      if (claimedToken === null) return;
+      void afterAnswer(first, claimedToken);
     },
     [claimPrompt, afterAnswer],
   );
@@ -512,13 +527,22 @@ export function useLearnSession() {
   );
 
   const flushQueuedSubmission = useCallback(
-    (token: number) => {
+    (token: number, completedPlaybackGeneration: number) => {
       const queued = queuedSubmissionRef.current;
       if (!queued || queued.token !== token) return;
+      if (
+        queued.kind === "isolated" &&
+        queued.playbackGeneration !== completedPlaybackGeneration
+      ) {
+        return;
+      }
       queuedSubmissionRef.current = null;
-      const claimedToken = claimPrompt();
+      const claimedToken = claimPrompt(queued.kind === "isolated");
       if (claimedToken !== null) {
-        void afterAnswer(currentAnswerRef.current, claimedToken);
+        void afterAnswer(
+          queued.kind === "isolated" ? queued.value : currentAnswerRef.current,
+          claimedToken,
+        );
       }
     },
     [claimPrompt, afterAnswer],
@@ -542,13 +566,17 @@ export function useLearnSession() {
     const token = flowToken.current;
     lockedRef.current = true;
     setInputReady(false);
-    setTypingReady(ex.type === "copy-group" || ex.type === "copy-word");
+    setTypingReady(
+      ex.type === "copy-character" ||
+        ex.type === "copy-group" ||
+        ex.type === "copy-word",
+    );
     sessionRef.current?.markReplayed();
-    void play(ex.target).then(() => {
+    void play(ex.target).then((generation) => {
       if (token !== flowToken.current) return;
       lockedRef.current = false;
       setInputReady(true);
-      flushQueuedSubmissionRef.current(token);
+      flushQueuedSubmissionRef.current(token, generation);
     });
   }, [play, updateIntroStage]);
 
@@ -607,10 +635,6 @@ export function useLearnSession() {
       if ([...character].length !== 1 || !isSupportedCharacter(character)) {
         return false;
       }
-      const token = flowToken.current;
-      if (heldKeysTokenRef.current !== token) {
-        bindHeldKeysToPrompt(token);
-      }
       const physicalKey = code || key.toUpperCase();
       if (repeat || heldKeysRef.current.has(physicalKey)) return true;
 
@@ -618,7 +642,7 @@ export function useLearnSession() {
       acceptIsolated(character);
       return true;
     },
-    [phase, acceptIsolated, bindHeldKeysToPrompt],
+    [phase, acceptIsolated],
   );
 
   const physicalKeyUp = useCallback((key: string, code: string) => {
