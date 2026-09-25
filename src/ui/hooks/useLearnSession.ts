@@ -13,6 +13,7 @@ import {
   type LessonEvent,
   type LessonNotification,
   type LessonTransition,
+  type LearnSessionMode,
   type SessionSummary,
 } from "../../training/learn-session.ts";
 import type { PlannedExercise } from "../../training/lesson-plan.ts";
@@ -333,43 +334,57 @@ export function useLearnSession() {
   }, [endSession, showEvent]);
   advanceRef.current = advance;
 
-  const begin = useCallback(async () => {
-    continuousCopy.reset();
-    clearHeldKeys();
-    nextFlowToken();
-    queuedSubmissionRef.current = null;
-    currentAnswerRef.current = "";
-    playbackGeneration.current += 1;
-    playingRef.current = false;
-    setIsPlaying(false);
-    await audio.cancel();
-    await audio.unlock();
-    const session = new LearnSession({
-      state: stateRef.current,
-      rng: createRng(Date.now() >>> 0),
-      introduced: loadIntroductions(),
-      continuousCopyDurationMs: settings.continuousCopyDurationMs,
-      continuousCopyTiming: timing,
-    });
-    session.start();
-    sessionRef.current = session;
-    introDoneToken.current = null;
-    setSummary(undefined);
-    setPhase("exercise");
-    const first = session.next();
-    if (first) showEvent(first);
-    else endSession();
-  }, [
-    audio,
-    showEvent,
-    endSession,
-    clearHeldKeys,
-    continuousCopy,
-    nextFlowToken,
-    settings.continuousCopyDurationMs,
-    timing,
-    loadIntroductions,
-  ]);
+  const startSession = useCallback(
+    async (mode: LearnSessionMode) => {
+      continuousCopy.reset();
+      clearHeldKeys();
+      nextFlowToken();
+      queuedSubmissionRef.current = null;
+      currentAnswerRef.current = "";
+      playbackGeneration.current += 1;
+      playingRef.current = false;
+      setIsPlaying(false);
+      await audio.cancel();
+      await audio.unlock();
+      const session = new LearnSession({
+        state: stateRef.current,
+        mode,
+        rng: createRng(Date.now() >>> 0),
+        introduced: loadIntroductions(),
+        continuousCopyDurationMs: settings.continuousCopyDurationMs,
+        continuousCopyTiming: timing,
+      });
+      session.start();
+      sessionRef.current = session;
+      introDoneToken.current = null;
+      setSummary(undefined);
+      setPhase("exercise");
+      const first = session.next();
+      if (first) showEvent(first);
+      else endSession();
+    },
+    [
+      audio,
+      showEvent,
+      endSession,
+      clearHeldKeys,
+      continuousCopy,
+      nextFlowToken,
+      settings.continuousCopyDurationMs,
+      timing,
+      loadIntroductions,
+    ],
+  );
+
+  const restartFullLesson = useCallback(
+    () => startSession("learn"),
+    [startSession],
+  );
+  const practiceLongCopy = useCallback(
+    () => startSession("review"),
+    [startSession],
+  );
+  const begin = restartFullLesson;
 
   // Records the answer, replays on a miss, and advances only after any
   // corrective playback finishes and while this prompt is still current.
@@ -696,6 +711,8 @@ export function useLearnSession() {
     },
     actions: {
       begin,
+      restartFullLesson,
+      practiceLongCopy,
       acceptIsolated,
       updateGroupWord,
       submitGroupWord,

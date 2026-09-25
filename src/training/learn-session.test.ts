@@ -201,6 +201,87 @@ describe("LearnSession practice", () => {
   });
 });
 
+describe("LearnSession modes", () => {
+  it("runs one continuous-copy event in review mode and still assesses readiness", () => {
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    const session = new LearnSession({
+      state,
+      mode: "review",
+      rng: createRng(17),
+      continuousCopyDurationMs: 60000,
+    });
+    session.start(0);
+
+    const event = session.next();
+    expect(event?.type).toBe("continuous-copy");
+    expect(session.next()).toBe(event);
+    expect(session.totalCards).toBe(0);
+    expect(session.newlyIntroduced).toEqual([]);
+    if (event?.type !== "continuous-copy") {
+      throw new Error("expected continuous copy");
+    }
+
+    session.completeContinuousCopy(
+      event.plan.gradingTarget,
+      event.plan.scheduledDurationMs,
+    );
+
+    expect(session.next()).toBeUndefined();
+    expect(session.summary()).toMatchObject({
+      mode: "review",
+      cards: 0,
+      attempts: 0,
+      isolatedPrompts: 0,
+      groups: 0,
+      words: 0,
+      advancementAssessment: {
+        eligible: true,
+        reason: "READY",
+        activeCharacters: ["K", "M"],
+      },
+    });
+    expect(state.characters.map(({ character }) => character)).toEqual([
+      "K",
+      "M",
+    ]);
+  });
+
+  it("generates a fresh continuous-copy stream for each review session", () => {
+    const reviewPlan = (seed: number) => {
+      const session = new LearnSession({
+        state: createInitialState(DEFAULT_CURRICULUM_CONFIG),
+        mode: "review",
+        rng: createRng(seed),
+        continuousCopyDurationMs: 60000,
+      });
+      session.start(0);
+      const event = session.next();
+      if (event?.type !== "continuous-copy") {
+        throw new Error("expected continuous copy");
+      }
+      return event.plan;
+    };
+
+    const first = reviewPlan(17);
+    const second = reviewPlan(18);
+    expect(first.gradingTarget).not.toBe(second.gradingTarget);
+    expect(new Set(first.gradingTarget)).toEqual(new Set(["K", "M"]));
+    expect(new Set(second.gradingTarget)).toEqual(new Set(["K", "M"]));
+  });
+
+  it("keeps a full lesson as the default mode", () => {
+    const session = new LearnSession({
+      state: createInitialState(DEFAULT_CURRICULUM_CONFIG),
+      rng: createRng(17),
+    });
+    session.start(0);
+
+    expect(session.next()?.type).toBe("introduce");
+    expect(session.summary().mode).toBe("learn");
+    expect(session.totalCards).toBeGreaterThan(0);
+  });
+});
+
 describe("LearnSession Stage A fixes", () => {
   it("persists only introductions actually completed", () => {
     const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);

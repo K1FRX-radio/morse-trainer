@@ -118,7 +118,10 @@ const DEFAULT_CONTINUOUS_COPY_TIMING: TimingOptions = {
   effectiveWpm: 12,
 };
 
+export type LearnSessionMode = "learn" | "review";
+
 export type SessionSummary = {
+  mode: LearnSessionMode;
   activeMs: number;
   /** Cards completed, including introductions. */
   cards: number;
@@ -156,6 +159,7 @@ export type SessionSummary = {
 
 type SessionOptions = {
   state: CurriculumState;
+  mode?: LearnSessionMode;
   rng: Rng;
   /** Characters already introduced in earlier sessions. */
   introduced?: Iterable<string>;
@@ -170,6 +174,7 @@ type SessionOptions = {
 
 export class LearnSession {
   private readonly state: CurriculumState;
+  private readonly mode: LearnSessionMode;
   private readonly now: () => number;
   private readonly config: SessionConfig;
   private readonly plan: LessonPlan;
@@ -215,6 +220,7 @@ export class LearnSession {
 
   constructor(options: SessionOptions) {
     this.state = options.state;
+    this.mode = options.mode ?? "learn";
     this.now =
       options.now ??
       (() =>
@@ -277,6 +283,14 @@ export class LearnSession {
     ) {
       return this.current;
     }
+    if (this.mode === "review") {
+      if (this.startedContinuousCopy || this.completedContinuousCopy) {
+        return undefined;
+      }
+      this.startedContinuousCopy = true;
+      this.current = this.buildContinuousCopyEvent();
+      return this.current;
+    }
     this.replayedThisCard = false;
     const exercise =
       this.pendingExercise ??
@@ -319,20 +333,7 @@ export class LearnSession {
       !this.completedContinuousCopy
     ) {
       this.startedContinuousCopy = true;
-      this.current = {
-        type: "continuous-copy",
-        id: "continuous-copy",
-        plan: buildContinuousCopyPlan({
-          active: this.activeCharacters,
-          newest: newestCharacter(this.state)?.character ?? "",
-          review: this.reviewCharacters,
-          weak: this.weakCharacters,
-          durationMs: this.continuousCopyDurationMs,
-          timing: this.continuousCopyTiming,
-          rng: this.rng,
-          wordEligibility: this.wordEligibility,
-        }),
-      };
+      this.current = this.buildContinuousCopyEvent();
       return this.current;
     }
     if (exercise?.phase === "words" && !this.showedWordTransition) {
@@ -550,6 +551,7 @@ export class LearnSession {
   }
 
   get totalCards(): number {
+    if (this.mode === "review") return 0;
     return this.plan.length + this.wordExercises.length;
   }
 
@@ -559,6 +561,7 @@ export class LearnSession {
 
   /** Characters newly introduced by this session's lesson. */
   get newlyIntroduced(): string[] {
+    if (this.mode === "review") return [];
     return this.plan.newlyIntroduced;
   }
 
@@ -576,6 +579,7 @@ export class LearnSession {
       ? evaluateAdvancementEvidence(this.state, this.lastContinuousCopyResult)
       : undefined;
     return {
+      mode: this.mode,
       activeMs: this.activeMs,
       cards: this.cards,
       attempts: this.attempts,
@@ -614,6 +618,23 @@ export class LearnSession {
         ? { continuousCopyResult: this.lastContinuousCopyResult }
         : {}),
       ...(advancementAssessment ? { advancementAssessment } : {}),
+    };
+  }
+
+  private buildContinuousCopyEvent(): ContinuousCopyEvent {
+    return {
+      type: "continuous-copy",
+      id: "continuous-copy",
+      plan: buildContinuousCopyPlan({
+        active: this.activeCharacters,
+        newest: newestCharacter(this.state)?.character ?? "",
+        review: this.reviewCharacters,
+        weak: this.weakCharacters,
+        durationMs: this.continuousCopyDurationMs,
+        timing: this.continuousCopyTiming,
+        rng: this.rng,
+        wordEligibility: this.wordEligibility,
+      }),
     };
   }
 
