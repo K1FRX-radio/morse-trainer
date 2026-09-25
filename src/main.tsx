@@ -42,6 +42,9 @@ async function start(): Promise<void> {
             persistIntroductions={(characters) =>
               bootstrap.repository.saveIntroductions(characters)
             }
+            getRetryClassification={(identity, threshold) =>
+              bootstrap.repository.getRetryClassification(identity, threshold)
+            }
           >
             <LearnAudioProvider>
               <App />

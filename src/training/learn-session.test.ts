@@ -155,6 +155,10 @@ describe("LearnSession practice", () => {
     const summary = session.summary();
 
     expect(summary.isolatedPrompts).toBe(32);
+    expect(summary.eligibleIsolatedObservations).toBe(32);
+    expect(summary.eligibleIsolatedCorrect).toBe(32);
+    expect(summary.isolatedAccuracy).toBe(1);
+    expect(summary.hasMinimumIsolatedSample).toBe(true);
     expect(summary.groups).toBe(16);
     expect(summary.words).toBe(0);
     expect(summary.continuousCopyDurationMs).toBeGreaterThanOrEqual(1000);

@@ -113,6 +113,7 @@ const WORD_COPY_TRANSITION: LessonTransition = {
 };
 
 export const DEFAULT_CONTINUOUS_COPY_DURATION_MS = 60000;
+export const MIN_RETRY_ISOLATED_OBSERVATIONS = 8;
 const DEFAULT_CONTINUOUS_COPY_TIMING: TimingOptions = {
   charWpm: 20,
   effectiveWpm: 12,
@@ -132,6 +133,10 @@ export type SessionSummary = {
   rxAttempts: number;
   txAttempts: number;
   isolatedPrompts: number;
+  eligibleIsolatedObservations: number;
+  eligibleIsolatedCorrect: number;
+  isolatedAccuracy: number;
+  hasMinimumIsolatedSample: boolean;
   groups: number;
   words: number;
   continuousCopyDurationMs: number;
@@ -208,6 +213,8 @@ export class LearnSession {
   private rxAttempts = 0;
   private txAttempts = 0;
   private isolatedPrompts = 0;
+  private eligibleIsolatedObservations = 0;
+  private eligibleIsolatedCorrect = 0;
   private groups = 0;
   private words = 0;
   private alignedTargetCharacters = 0;
@@ -476,6 +483,8 @@ export class LearnSession {
       const answer = typeof input === "string" ? input : "";
       correct = gradeCopy(exercise.target, answer).correct;
       if (!assisted) {
+        this.eligibleIsolatedObservations += 1;
+        if (correct) this.eligibleIsolatedCorrect += 1;
         recordAttempt(this.state, exercise.target, "rx", correct);
         recordReviewOutcome(this.state, exercise.target, correct);
         this.rxAttempts += 1;
@@ -588,6 +597,14 @@ export class LearnSession {
       rxAttempts: this.rxAttempts,
       txAttempts: this.txAttempts,
       isolatedPrompts: this.isolatedPrompts,
+      eligibleIsolatedObservations: this.eligibleIsolatedObservations,
+      eligibleIsolatedCorrect: this.eligibleIsolatedCorrect,
+      isolatedAccuracy:
+        this.eligibleIsolatedObservations === 0
+          ? 0
+          : this.eligibleIsolatedCorrect / this.eligibleIsolatedObservations,
+      hasMinimumIsolatedSample:
+        this.eligibleIsolatedObservations >= MIN_RETRY_ISOLATED_OBSERVATIONS,
       groups: this.groups,
       words: this.words,
       continuousCopyDurationMs:

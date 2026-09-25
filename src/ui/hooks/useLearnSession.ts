@@ -7,6 +7,7 @@ import { encodeText, isSupportedCharacter } from "../../core/morse.ts";
 import { createRng } from "../../core/rng.ts";
 import { recommendedContinuousCopyDurationMs } from "../../core/settings.ts";
 import type { CharacterProgress } from "../../core/types.ts";
+import type { RetryClassification } from "../../data/retry-history.ts";
 import { acceptAdvancement as acceptAdvancementOffer } from "../../training/advancement.ts";
 import {
   LearnSession,
@@ -17,6 +18,10 @@ import {
   type SessionSummary,
 } from "../../training/learn-session.ts";
 import type { PlannedExercise } from "../../training/lesson-plan.ts";
+import {
+  recommendRetry,
+  type RetryRecommendation,
+} from "../../training/retry-recommendation.ts";
 import { useLearnAudio } from "../learn-audio-context.ts";
 import { useSettings } from "../settings-context.ts";
 import { useTrainingData } from "../training-data-context.ts";
@@ -66,12 +71,13 @@ function delay(ms: number): Promise<void> {
 }
 
 export function useLearnSession() {
-  const { settings } = useSettings();
+  const { settings, update: updateSettings } = useSettings();
   const {
     loadCurriculum,
     saveCurriculum,
     loadIntroductions,
     saveIntroductions,
+    getRetryClassification,
   } = useTrainingData();
   const audio = useLearnAudio();
   const auto = settings.pacing === "auto";
@@ -120,6 +126,9 @@ export function useLearnSession() {
   );
   const [awaitingContinue, setAwaitingContinue] = useState(false);
   const [summary, setSummary] = useState<SessionSummary | undefined>(undefined);
+  const [retryClassification, setRetryClassification] = useState<
+    RetryClassification | undefined
+  >(undefined);
   const [inputReady, setInputReady] = useState(false);
   const [typingReady, setTypingReady] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -242,7 +251,32 @@ export function useLearnSession() {
     void audio.cancelAndSuspend();
     const session = sessionRef.current;
     if (!session) return;
-    setSummary(session.end());
+    const completedSummary = session.end();
+    setSummary(completedSummary);
+    setRetryClassification(undefined);
+    if (completedSummary.advancementAssessment) {
+      void getRetryClassification(
+        {
+          activeCharacters: session.unlockedNow,
+          charWpm: settings.charWpm,
+          effectiveWpm: settings.effectiveWpm,
+        },
+        settings.speedSuggestionAfterAttempts,
+      )
+        .then((classification) => {
+          if (sessionRef.current === session) {
+            setRetryClassification(classification);
+          }
+        })
+        .catch(() => {
+          if (sessionRef.current === session) {
+            setRetryClassification({
+              consecutiveAccuracyMisses: 0,
+              shouldSuggestSpacing: false,
+            });
+          }
+        });
+    }
     saveIntroductions([
       ...loadIntroductions(),
       ...session.completedIntroductions,
@@ -262,6 +296,10 @@ export function useLearnSession() {
     nextFlowToken,
     saveCurriculum,
     saveIntroductions,
+    getRetryClassification,
+    settings.charWpm,
+    settings.effectiveWpm,
+    settings.speedSuggestionAfterAttempts,
     updateIntroStage,
   ]);
 
@@ -335,7 +373,7 @@ export function useLearnSession() {
   advanceRef.current = advance;
 
   const startSession = useCallback(
-    async (mode: LearnSessionMode) => {
+    async (mode: LearnSessionMode, sessionTiming = timing) => {
       continuousCopy.reset();
       clearHeldKeys();
       nextFlowToken();
@@ -352,12 +390,13 @@ export function useLearnSession() {
         rng: createRng(Date.now() >>> 0),
         introduced: loadIntroductions(),
         continuousCopyDurationMs: settings.continuousCopyDurationMs,
-        continuousCopyTiming: timing,
+        continuousCopyTiming: sessionTiming,
       });
       session.start();
       sessionRef.current = session;
       introDoneToken.current = null;
       setSummary(undefined);
+      setRetryClassification(undefined);
       setPhase("exercise");
       const first = session.next();
       if (first) showEvent(first);
@@ -385,6 +424,27 @@ export function useLearnSession() {
     [startSession],
   );
   const begin = restartFullLesson;
+
+  const retryRecommendation: RetryRecommendation | undefined = useMemo(() => {
+    const assessment = summary?.advancementAssessment;
+    if (!assessment || assessment.eligible) return undefined;
+    return recommendRetry({
+      reason: assessment.reason,
+      isolatedObservations: summary.eligibleIsolatedObservations,
+      isolatedAccuracy: summary.isolatedAccuracy,
+      hasMinimumIsolatedSample: summary.hasMinimumIsolatedSample,
+      shouldSuggestSpacing: retryClassification?.shouldSuggestSpacing ?? false,
+      charWpm: settings.charWpm,
+      effectiveWpm: settings.effectiveWpm,
+    });
+  }, [retryClassification, settings.charWpm, settings.effectiveWpm, summary]);
+
+  const acceptSpacingSuggestion = useCallback(() => {
+    const spacing = retryRecommendation?.spacing;
+    if (!spacing) return;
+    updateSettings({ effectiveWpm: spacing.effectiveWpm });
+    void startSession("review", spacing);
+  }, [retryRecommendation, startSession, updateSettings]);
 
   // Records the answer, replays on a miss, and advances only after any
   // corrective playback finishes and while this prompt is still current.
@@ -698,6 +758,7 @@ export function useLearnSession() {
     introStage,
     awaitingContinue,
     summary,
+    retryRecommendation,
     auto,
     inputReady,
     typingReady,
@@ -713,6 +774,7 @@ export function useLearnSession() {
       begin,
       restartFullLesson,
       practiceLongCopy,
+      acceptSpacingSuggestion,
       acceptIsolated,
       updateGroupWord,
       submitGroupWord,

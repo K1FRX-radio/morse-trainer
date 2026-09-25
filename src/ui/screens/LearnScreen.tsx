@@ -37,6 +37,9 @@ export function LearnScreen() {
     continueTransition,
     continueNotification,
     begin,
+    restartFullLesson,
+    practiceLongCopy,
+    acceptSpacingSuggestion,
     endSession,
     physicalKeyDown,
     physicalKeyUp,
@@ -181,6 +184,35 @@ export function LearnScreen() {
   if (learn.phase === "summary" && learn.summary) {
     const s = learn.summary;
     const assessment = s.advancementAssessment;
+    const recommendation = learn.retryRecommendation;
+    const spacing = recommendation?.spacing;
+    const longCopyButton = (
+      <button
+        type="button"
+        className={
+          assessment?.eligible ||
+          recommendation?.emphasizedAction === "full-lesson"
+            ? "tab"
+            : undefined
+        }
+        onClick={() => void practiceLongCopy()}
+      >
+        {spacing
+          ? `Practice again at ${spacing.charWpm} / ${spacing.currentEffectiveWpm} WPM`
+          : "Practice long copy"}
+      </button>
+    );
+    const fullLessonButton = (
+      <button
+        type="button"
+        className={
+          recommendation?.emphasizedAction === "full-lesson" ? undefined : "tab"
+        }
+        onClick={() => void restartFullLesson()}
+      >
+        Restart full lesson
+      </button>
+    );
     return (
       <section>
         <h2>Session complete</h2>
@@ -281,7 +313,23 @@ export function LearnScreen() {
           </p>
         )}
 
-        <div className="practice__controls">
+        {assessment && !assessment.eligible && (
+          <p>
+            Not quite ready for a new character yet. What would you like to
+            practice?
+          </p>
+        )}
+
+        {spacing && (
+          <p className="feedback feedback--neutral">
+            Continuous copy is still feeling difficult. Want a little more space
+            between characters? The characters will still play at{" "}
+            {spacing.charWpm} WPM, but the overall pace will drop from{" "}
+            {spacing.currentEffectiveWpm} to {spacing.effectiveWpm} WPM.
+          </p>
+        )}
+
+        <div className="practice__controls retry-actions">
           {assessment?.eligible && assessment.nextCharacter && (
             <button type="button" onClick={acceptAdvancement}>
               Learn {assessment.nextCharacter}
@@ -292,13 +340,22 @@ export function LearnScreen() {
               Complete curriculum
             </button>
           )}
-          <button
-            type="button"
-            className={assessment?.eligible ? "tab" : undefined}
-            onClick={() => void begin()}
-          >
-            Practice these characters again
-          </button>
+          {spacing && (
+            <button type="button" onClick={acceptSpacingSuggestion}>
+              Try {spacing.charWpm} / {spacing.effectiveWpm} WPM
+            </button>
+          )}
+          {recommendation?.emphasizedAction === "full-lesson" && !spacing ? (
+            <>
+              {fullLessonButton}
+              {longCopyButton}
+            </>
+          ) : (
+            <>
+              {longCopyButton}
+              {fullLessonButton}
+            </>
+          )}
         </div>
       </section>
     );

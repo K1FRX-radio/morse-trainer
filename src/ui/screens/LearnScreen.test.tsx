@@ -17,6 +17,7 @@ import {
   type PracticeSettings,
 } from "../../core/settings.ts";
 import type { Schedule } from "../../core/timing.ts";
+import type { RetryClassification } from "../../data/retry-history.ts";
 import { DEFAULT_LESSON_CONFIG } from "../../training/lesson-plan.ts";
 import { sanitizeCopyInput } from "../copy-input.ts";
 import { LearnAudioContext, type LearnAudio } from "../learn-audio-context.ts";
@@ -94,7 +95,16 @@ function testIntroductions(): string[] {
   ) as string[];
 }
 
-function TrainingDataFixture({ children }: { children: ReactNode }) {
+function TrainingDataFixture({
+  children,
+  retryClassification = {
+    consecutiveAccuracyMisses: 0,
+    shouldSuggestSpacing: false,
+  },
+}: {
+  children: ReactNode;
+  retryClassification?: RetryClassification;
+}) {
   return (
     <TrainingDataContext.Provider
       value={{
@@ -110,6 +120,7 @@ function TrainingDataFixture({ children }: { children: ReactNode }) {
             "k1frx.introduced.v1",
             JSON.stringify(characters),
           ),
+        getRetryClassification: () => Promise.resolve(retryClassification),
       }}
     >
       {children}
@@ -120,10 +131,23 @@ function TrainingDataFixture({ children }: { children: ReactNode }) {
 function renderLearn(
   audio: LearnAudio,
   settings: Partial<PracticeSettings> = {},
+  options: {
+    retryClassification?: RetryClassification;
+    persistSettings?: (settings: PracticeSettings) => void;
+  } = {},
 ) {
   return render(
-    <SettingsProvider initialSettings={normalizeSettings(settings)}>
-      <TrainingDataFixture>
+    <SettingsProvider
+      initialSettings={normalizeSettings(settings)}
+      {...(options.persistSettings
+        ? { persistSettings: options.persistSettings }
+        : {})}
+    >
+      <TrainingDataFixture
+        {...(options.retryClassification
+          ? { retryClassification: options.retryClassification }
+          : {})}
+      >
         <LearnAudioContext.Provider value={audio}>
           <LearnScreen />
         </LearnAudioContext.Provider>
@@ -752,7 +776,7 @@ describe("LearnScreen audio sequencing", () => {
     ).not.toContain("K");
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Practice these characters again" }),
+      screen.getByRole("button", { name: "Restart full lesson" }),
     );
     await flush();
     expect(screen.getByText("K")).toBeInTheDocument();
@@ -786,7 +810,7 @@ describe("LearnScreen audio sequencing", () => {
       await flush();
       fireEvent.click(
         screen.getByRole("button", {
-          name: "Practice these characters again",
+          name: "Restart full lesson",
         }),
       );
       await flush();
@@ -1008,7 +1032,7 @@ describe("LearnScreen audio sequencing", () => {
     fireEvent.click(screen.getByRole("button", { name: "End session" }));
     await flush();
     fireEvent.click(
-      screen.getByRole("button", { name: "Practice these characters again" }),
+      screen.getByRole("button", { name: "Restart full lesson" }),
     );
     await flush();
     expect(fake.playCount()).toBe(2);
@@ -1429,7 +1453,7 @@ describe("LearnScreen advancement", () => {
     await completeContinuousCopy(fake);
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Practice these characters again" }),
+      screen.getByRole("button", { name: "Restart full lesson" }),
     );
     await flush();
 
@@ -1453,6 +1477,55 @@ describe("LearnScreen advancement", () => {
     expect(
       screen.queryByRole("button", { name: /^Learn / }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Practice long copy" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Restart full lesson" }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Practice long copy" }));
+    await flush();
+    expect(screen.getByLabelText("Continuous copy")).toHaveFocus();
+    expect(fake.pending[0]?.schedule).toBeDefined();
+  });
+
+  it("offers and applies more spacing after repeated accuracy misses", async () => {
+    const fake = makeFakeAudio();
+    const persistSettings = vi.fn();
+    renderLearn(
+      fake.audio,
+      {},
+      {
+        retryClassification: {
+          consecutiveAccuracyMisses: 3,
+          shouldSuggestSpacing: true,
+        },
+        persistSettings,
+      },
+    );
+    await completeContinuousCopy(fake, (target) =>
+      [...target]
+        .map((character, index) => (index < 11 ? "U" : character))
+        .join(""),
+    );
+
+    expect(
+      screen.getByText(/characters will still play at 20 WPM/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Practice again at 20 / 12 WPM" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Restart full lesson" }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Try 20 / 10 WPM" }));
+    await flush();
+    expect(persistSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({ charWpm: 20, effectiveWpm: 10 }),
+    );
+    expect(screen.getByLabelText("Continuous copy")).toHaveFocus();
   });
 
   it("gives unresolved review priority and never offers advancement", async () => {
