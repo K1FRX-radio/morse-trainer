@@ -7,15 +7,21 @@ import {
   screen,
 } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
+import type { ReactNode } from "react";
 import { App } from "../../App.tsx";
 import { DEFAULT_CURRICULUM_CONFIG } from "../../content/curriculum-data.ts";
 import { createInitialState, forceUnlockNext } from "../../core/curriculum.ts";
 import { decodePattern } from "../../core/morse.ts";
+import {
+  normalizeSettings,
+  type PracticeSettings,
+} from "../../core/settings.ts";
 import type { Schedule } from "../../core/timing.ts";
 import { DEFAULT_LESSON_CONFIG } from "../../training/lesson-plan.ts";
 import { sanitizeCopyInput } from "../copy-input.ts";
 import { LearnAudioContext, type LearnAudio } from "../learn-audio-context.ts";
 import { SettingsProvider } from "../settings-provider.tsx";
+import { TrainingDataContext } from "../training-data-context.ts";
 import { LearnScreen } from "./LearnScreen.tsx";
 
 type PendingPlay = {
@@ -75,12 +81,53 @@ function decodeSchedule(schedule: Schedule): string {
   return characters.join("");
 }
 
-function renderLearn(audio: LearnAudio) {
+function testCurriculum() {
+  const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+  const raw = localStorage.getItem("k1frx.curriculum.v2");
+  if (raw) state.characters = JSON.parse(raw) as typeof state.characters;
+  return state;
+}
+
+function testIntroductions(): string[] {
+  return JSON.parse(
+    localStorage.getItem("k1frx.introduced.v1") ?? "[]",
+  ) as string[];
+}
+
+function TrainingDataFixture({ children }: { children: ReactNode }) {
+  return (
+    <TrainingDataContext.Provider
+      value={{
+        loadCurriculum: testCurriculum,
+        saveCurriculum: (state) =>
+          localStorage.setItem(
+            "k1frx.curriculum.v2",
+            JSON.stringify(state.characters),
+          ),
+        loadIntroductions: testIntroductions,
+        saveIntroductions: (characters) =>
+          localStorage.setItem(
+            "k1frx.introduced.v1",
+            JSON.stringify(characters),
+          ),
+      }}
+    >
+      {children}
+    </TrainingDataContext.Provider>
+  );
+}
+
+function renderLearn(
+  audio: LearnAudio,
+  settings: Partial<PracticeSettings> = {},
+) {
   return render(
-    <SettingsProvider>
-      <LearnAudioContext.Provider value={audio}>
-        <LearnScreen />
-      </LearnAudioContext.Provider>
+    <SettingsProvider initialSettings={normalizeSettings(settings)}>
+      <TrainingDataFixture>
+        <LearnAudioContext.Provider value={audio}>
+          <LearnScreen />
+        </LearnAudioContext.Provider>
+      </TrainingDataFixture>
     </SettingsProvider>,
   );
 }
@@ -89,9 +136,11 @@ function renderApp(audio: LearnAudio) {
   return render(
     <MemoryRouter initialEntries={["/learn"]}>
       <SettingsProvider>
-        <LearnAudioContext.Provider value={audio}>
-          <App />
-        </LearnAudioContext.Provider>
+        <TrainingDataFixture>
+          <LearnAudioContext.Provider value={audio}>
+            <App />
+          </LearnAudioContext.Provider>
+        </TrainingDataFixture>
       </SettingsProvider>
     </MemoryRouter>,
   );
@@ -572,9 +621,8 @@ describe("LearnScreen audio sequencing", () => {
   it.each(["auto", "manual"])(
     "plays one introduction and waits indefinitely with %s pacing",
     async (pacing) => {
-      localStorage.setItem("k1frx.settings.v1", JSON.stringify({ pacing }));
       const fake = makeFakeAudio();
-      renderLearn(fake.audio);
+      renderLearn(fake.audio, { pacing: pacing as "auto" | "manual" });
 
       fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
       await flush();
@@ -1118,12 +1166,8 @@ describe("LearnScreen audio sequencing", () => {
   });
 
   it("keeps manual pacing coherent after queued group submission", async () => {
-    localStorage.setItem(
-      "k1frx.settings.v1",
-      JSON.stringify({ pacing: "manual" }),
-    );
     const fake = makeFakeAudio();
-    renderLearn(fake.audio);
+    renderLearn(fake.audio, { pacing: "manual" });
     await toMultiCharacterTransition(fake, true);
     fireEvent.click(screen.getByRole("button", { name: "Go" }));
     await flush();
@@ -1139,12 +1183,8 @@ describe("LearnScreen audio sequencing", () => {
   });
 
   it("waits for slow-setting audio before grading or corrective playback", async () => {
-    localStorage.setItem(
-      "k1frx.settings.v1",
-      JSON.stringify({ charWpm: 8, effectiveWpm: 5 }),
-    );
     const fake = makeFakeAudio();
-    renderLearn(fake.audio);
+    renderLearn(fake.audio, { charWpm: 8, effectiveWpm: 5 });
     await toMultiCharacterTransition(fake);
     fireEvent.click(screen.getByRole("button", { name: "Go" }));
     await flush();
@@ -1225,12 +1265,8 @@ describe("LearnScreen audio sequencing", () => {
   });
 
   it("uses the learner's selected continuous-copy duration", async () => {
-    localStorage.setItem(
-      "k1frx.settings.v1",
-      JSON.stringify({ continuousCopyDurationMs: 180000 }),
-    );
     const fake = makeFakeAudio();
-    renderLearn(fake.audio);
+    renderLearn(fake.audio, { continuousCopyDurationMs: 180000 });
     await toContinuousCopyTransition(fake);
 
     expect(screen.getByText(/Selected: 3 minutes/)).toBeInTheDocument();

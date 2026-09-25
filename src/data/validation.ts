@@ -7,6 +7,7 @@ import type {
   CurriculumStateRecord,
   IntroductionsRecord,
   LegacyMigrationBundle,
+  PortableSettingsRecord,
   TrainingAttemptRecord,
   TrainingSessionRecord,
 } from "./models.ts";
@@ -747,6 +748,12 @@ export function parseTrainingAttempts(value: unknown): TrainingAttemptRecord[] {
 
 export function parseTrainingAttempt(value: unknown): TrainingAttemptRecord {
   return trainingAttemptRecordSchema.parse(value) as TrainingAttemptRecord;
+}
+
+export function parsePortableSettingsRecord(
+  value: unknown,
+): PortableSettingsRecord {
+  return portableSettingsRecordSchema.parse(value) as PortableSettingsRecord;
 }
 
 export function parseTrainingDataset(

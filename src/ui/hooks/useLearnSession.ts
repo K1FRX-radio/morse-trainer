@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { DEFAULT_CURRICULUM_CONFIG } from "../../content/curriculum-data.ts";
 import {
-  createInitialState,
   newestCharacter,
   type CurriculumState,
 } from "../../core/curriculum.ts";
@@ -20,10 +18,8 @@ import {
 import type { PlannedExercise } from "../../training/lesson-plan.ts";
 import { useLearnAudio } from "../learn-audio-context.ts";
 import { useSettings } from "../settings-context.ts";
+import { useTrainingData } from "../training-data-context.ts";
 import { useContinuousCopy } from "./useContinuousCopy.ts";
-
-const CURRICULUM_STORAGE_KEY = "k1frx.curriculum.v2";
-const INTRODUCED_STORAGE_KEY = "k1frx.introduced.v1";
 
 // Brief holds (ms). Introductions are paced only by completed audio and input.
 const HOLD_AFTER_CORRECT = 450;
@@ -51,56 +47,6 @@ type QueuedSubmission =
       playbackGeneration: number;
     };
 
-function loadCurriculum(): CurriculumState {
-  try {
-    const raw = localStorage.getItem(CURRICULUM_STORAGE_KEY);
-    if (raw) {
-      const characters = JSON.parse(raw) as CharacterProgress[];
-      if (Array.isArray(characters) && characters.length >= 2) {
-        return { config: DEFAULT_CURRICULUM_CONFIG, characters };
-      }
-    }
-  } catch {
-    // Ignore malformed storage; start fresh.
-  }
-  return createInitialState(DEFAULT_CURRICULUM_CONFIG);
-}
-
-function saveCurriculum(state: CurriculumState): void {
-  try {
-    localStorage.setItem(
-      CURRICULUM_STORAGE_KEY,
-      JSON.stringify(state.characters),
-    );
-  } catch {
-    // Best-effort until the storage milestone.
-  }
-}
-
-function loadIntroduced(): string[] {
-  try {
-    const raw = localStorage.getItem(INTRODUCED_STORAGE_KEY);
-    if (raw) {
-      const chars = JSON.parse(raw) as string[];
-      if (Array.isArray(chars)) return chars;
-    }
-  } catch {
-    // Ignore malformed storage.
-  }
-  return [];
-}
-
-function saveIntroduced(chars: string[]): void {
-  try {
-    localStorage.setItem(
-      INTRODUCED_STORAGE_KEY,
-      JSON.stringify([...new Set(chars)]),
-    );
-  } catch {
-    // Best-effort.
-  }
-}
-
 function toMorse(target: string): string {
   return encodeText(target)
     .map((entry) => entry.pattern)
@@ -120,6 +66,12 @@ function delay(ms: number): Promise<void> {
 
 export function useLearnSession() {
   const { settings } = useSettings();
+  const {
+    loadCurriculum,
+    saveCurriculum,
+    loadIntroductions,
+    saveIntroductions,
+  } = useTrainingData();
   const audio = useLearnAudio();
   const auto = settings.pacing === "auto";
 
@@ -187,7 +139,7 @@ export function useLearnSession() {
       forceTick((value) => value + 1);
       return result;
     },
-    [],
+    [saveCurriculum],
   );
   const continuousCopy = useContinuousCopy({
     audio,
@@ -245,16 +197,19 @@ export function useLearnSession() {
     return (flowToken.current += 1);
   }, []);
 
-  const completeIntro = useCallback((token: number) => {
-    if (token !== flowToken.current || introStageRef.current !== "ready") {
-      return;
-    }
-    if (introDoneToken.current === token) return;
-    introDoneToken.current = token;
-    sessionRef.current?.submit("");
-    saveCurriculum(stateRef.current);
-    advanceRef.current();
-  }, []);
+  const completeIntro = useCallback(
+    (token: number) => {
+      if (token !== flowToken.current || introStageRef.current !== "ready") {
+        return;
+      }
+      if (introDoneToken.current === token) return;
+      introDoneToken.current = token;
+      sessionRef.current?.submit("");
+      saveCurriculum(stateRef.current);
+      advanceRef.current();
+    },
+    [saveCurriculum],
+  );
 
   const clearHeldKeys = useCallback(() => {
     heldKeysRef.current.clear();
@@ -287,7 +242,10 @@ export function useLearnSession() {
     const session = sessionRef.current;
     if (!session) return;
     setSummary(session.end());
-    saveIntroduced([...loadIntroduced(), ...session.completedIntroductions]);
+    saveIntroductions([
+      ...loadIntroductions(),
+      ...session.completedIntroductions,
+    ]);
     saveCurriculum(stateRef.current);
     setExercise(undefined);
     setTransition(undefined);
@@ -295,7 +253,16 @@ export function useLearnSession() {
     setPhaseLabel(undefined);
     updateIntroStage(undefined);
     setPhase("summary");
-  }, [audio, clearHeldKeys, continuousCopy, nextFlowToken, updateIntroStage]);
+  }, [
+    audio,
+    clearHeldKeys,
+    continuousCopy,
+    loadIntroductions,
+    nextFlowToken,
+    saveCurriculum,
+    saveIntroductions,
+    updateIntroStage,
+  ]);
 
   const showEvent = useCallback(
     (event: LessonEvent) => {
@@ -380,7 +347,7 @@ export function useLearnSession() {
     const session = new LearnSession({
       state: stateRef.current,
       rng: createRng(Date.now() >>> 0),
-      introduced: loadIntroduced(),
+      introduced: loadIntroductions(),
       continuousCopyDurationMs: settings.continuousCopyDurationMs,
       continuousCopyTiming: timing,
     });
@@ -401,6 +368,7 @@ export function useLearnSession() {
     nextFlowToken,
     settings.continuousCopyDurationMs,
     timing,
+    loadIntroductions,
   ]);
 
   // Records the answer, replays on a miss, and advances only after any
@@ -430,7 +398,7 @@ export function useLearnSession() {
         setAwaitingContinue(true);
       }
     },
-    [auto, play],
+    [auto, play, saveCurriculum],
   );
 
   // The single one-shot gate: returns the current token and locks, or null.
@@ -632,7 +600,7 @@ export function useLearnSession() {
           }
         : current,
     );
-  }, [begin, summary]);
+  }, [begin, saveCurriculum, summary]);
 
   const physicalKeyDown = useCallback(
     (

@@ -1,5 +1,7 @@
 import { DATABASE_VERSION, TrainerDatabase } from "./indexeddb.ts";
 import { isValidTrainingSession } from "../core/session-validity.ts";
+import type { PracticeSettings } from "../core/settings.ts";
+import type { CurriculumState } from "../core/curriculum.ts";
 import {
   LEGACY_MIGRATION_ID,
   type LegacyMigrationRepository,
@@ -10,6 +12,7 @@ import {
   type IntroductionsRecord,
   type LegacyMigrationBundle,
   type OperationLedgerRecord,
+  type PortableSettingsRecord,
   type SchemaMetadataRecord,
   type TrainingAttemptRecord,
   type TrainingSessionRecord,
@@ -21,6 +24,7 @@ import {
   parseIntroductionsRecord,
   parseLegacyMigrationBundle,
   parseMigrationLedger,
+  parsePortableSettingsRecord,
   parseSchemaMetadata,
   parseTrainingAttempt,
   parseTrainingDataset,
@@ -68,6 +72,14 @@ export interface TrainingDataRepository extends LegacyMigrationRepository {
   open(): Promise<SchemaMetadataRecord>;
   close(): void;
   createSession(session: TrainingSessionRecord): Promise<PersistenceResult>;
+  getPortableSettings(): Promise<PortableSettingsRecord | undefined>;
+  savePortableSettings(
+    settings: PracticeSettings,
+  ): Promise<PortableSettingsRecord>;
+  getCurriculumState(): Promise<CurriculumStateRecord | undefined>;
+  saveCurriculumState(state: CurriculumState): Promise<CurriculumStateRecord>;
+  getIntroductions(): Promise<IntroductionsRecord | undefined>;
+  saveIntroductions(characters: string[]): Promise<IntroductionsRecord>;
   commitLearnAttempt(
     commit: LearnAttemptCommit,
   ): Promise<PersistenceResult<{ attempt: TrainingAttemptRecord }>>;
@@ -233,6 +245,106 @@ export class DexieTrainingRepository implements TrainingDataRepository {
       await this.database.sessions.add(session);
       return { session, committed: true };
     });
+  }
+
+  async getPortableSettings(): Promise<PortableSettingsRecord | undefined> {
+    const record = await this.database.settings.get("portable-settings");
+    return record === undefined
+      ? undefined
+      : parsePortableSettingsRecord(record);
+  }
+
+  async savePortableSettings(
+    settings: PracticeSettings,
+  ): Promise<PortableSettingsRecord> {
+    return this.database.transaction("rw", this.database.settings, async () => {
+      const existing = await this.database.settings.get("portable-settings");
+      const record = parsePortableSettingsRecord({
+        id: "portable-settings",
+        schemaVersion: RECORD_SCHEMA_VERSION,
+        updatedAt:
+          existing === undefined
+            ? this.now().toISOString()
+            : laterTimestamp(
+                parsePortableSettingsRecord(existing).updatedAt,
+                this.now().toISOString(),
+              ),
+        value: settings,
+      });
+      await this.database.settings.put(record);
+      return record;
+    });
+  }
+
+  async getCurriculumState(): Promise<CurriculumStateRecord | undefined> {
+    const record = await this.database.curriculum.get("curriculum-state");
+    return record === undefined
+      ? undefined
+      : parseCurriculumStateRecord(record);
+  }
+
+  async saveCurriculumState(
+    state: CurriculumState,
+  ): Promise<CurriculumStateRecord> {
+    return this.database.transaction(
+      "rw",
+      this.database.curriculum,
+      async () => {
+        const existing = await this.database.curriculum.get("curriculum-state");
+        const record = parseCurriculumStateRecord({
+          id: "curriculum-state",
+          schemaVersion: RECORD_SCHEMA_VERSION,
+          updatedAt:
+            existing === undefined
+              ? this.now().toISOString()
+              : laterTimestamp(
+                  parseCurriculumStateRecord(existing).updatedAt,
+                  this.now().toISOString(),
+                ),
+          order: [...state.config.order],
+          startCount: state.config.startCount,
+          windowSize: state.config.windowSize,
+          minNewCharObservations: state.config.minNewCharObservations,
+          reviewDecayAccuracy: state.config.reviewDecayAccuracy,
+          characters: state.characters,
+        });
+        await this.database.curriculum.put(record);
+        return record;
+      },
+    );
+  }
+
+  async getIntroductions(): Promise<IntroductionsRecord | undefined> {
+    const record = await this.database.introductions.get(
+      "completed-introductions",
+    );
+    return record === undefined ? undefined : parseIntroductionsRecord(record);
+  }
+
+  async saveIntroductions(characters: string[]): Promise<IntroductionsRecord> {
+    return this.database.transaction(
+      "rw",
+      this.database.introductions,
+      async () => {
+        const existing = await this.database.introductions.get(
+          "completed-introductions",
+        );
+        const record = parseIntroductionsRecord({
+          id: "completed-introductions",
+          schemaVersion: RECORD_SCHEMA_VERSION,
+          updatedAt:
+            existing === undefined
+              ? this.now().toISOString()
+              : laterTimestamp(
+                  parseIntroductionsRecord(existing).updatedAt,
+                  this.now().toISOString(),
+                ),
+          characters: [...new Set(characters)],
+        });
+        await this.database.introductions.put(record);
+        return record;
+      },
+    );
   }
 
   async commitLearnAttempt(

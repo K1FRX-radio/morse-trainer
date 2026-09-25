@@ -1,9 +1,83 @@
 import Dexie from "dexie";
 import { IDBKeyRange, indexedDB } from "fake-indexeddb";
+import { DEFAULT_SETTINGS } from "../core/settings.ts";
+import { DEFAULT_CURRICULUM_CONFIG } from "../content/curriculum-data.ts";
+import { createInitialState } from "../core/curriculum.ts";
 import { SCHEMA_V1, TrainerDatabase } from "./indexeddb.ts";
 import { DexieTrainingRepository } from "./repository.ts";
 
 describe("DexieTrainingRepository", () => {
+  it("creates and updates portable settings through validated records", async () => {
+    const database = new TrainerDatabase({
+      name: crypto.randomUUID(),
+      indexedDB,
+      IDBKeyRange,
+    });
+    const repository = new DexieTrainingRepository(database, {
+      now: () => new Date("2026-09-24T18:00:00.000Z"),
+    });
+
+    try {
+      await repository.open();
+      await expect(repository.getPortableSettings()).resolves.toBeUndefined();
+      await expect(
+        repository.savePortableSettings(DEFAULT_SETTINGS),
+      ).resolves.toMatchObject({
+        id: "portable-settings",
+        updatedAt: "2026-09-24T18:00:00.000Z",
+        value: DEFAULT_SETTINGS,
+      });
+      await expect(
+        repository.savePortableSettings({
+          ...DEFAULT_SETTINGS,
+          effectiveWpm: 10,
+        }),
+      ).resolves.toMatchObject({ value: { effectiveWpm: 10 } });
+      await expect(repository.getPortableSettings()).resolves.toMatchObject({
+        value: { effectiveWpm: 10 },
+      });
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
+  it("creates and updates curriculum and introduction snapshots", async () => {
+    const database = new TrainerDatabase({
+      name: crypto.randomUUID(),
+      indexedDB,
+      IDBKeyRange,
+    });
+    const repository = new DexieTrainingRepository(database, {
+      now: () => new Date("2026-09-24T18:00:00.000Z"),
+    });
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+
+    try {
+      await repository.open();
+      await expect(repository.getCurriculumState()).resolves.toBeUndefined();
+      await expect(repository.getIntroductions()).resolves.toBeUndefined();
+      await expect(
+        repository.saveCurriculumState(state),
+      ).resolves.toMatchObject({
+        id: "curriculum-state",
+        characters: state.characters,
+      });
+      await expect(
+        repository.saveIntroductions(["K", "K", "M"]),
+      ).resolves.toMatchObject({ characters: ["K", "M"] });
+      await expect(repository.getCurriculumState()).resolves.toMatchObject({
+        characters: state.characters,
+      });
+      await expect(repository.getIntroductions()).resolves.toMatchObject({
+        characters: ["K", "M"],
+      });
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
   it("creates stable schema metadata once during bootstrap", async () => {
     const database = new TrainerDatabase({
       name: crypto.randomUUID(),

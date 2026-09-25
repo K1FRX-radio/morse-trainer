@@ -2,26 +2,63 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import { App } from "./App.tsx";
+import { createTrainingDataBootstrap } from "./data/bootstrap.ts";
+import type { PracticeSettings } from "./core/settings.ts";
 import { LearnAudioProvider } from "./ui/learn-audio.tsx";
 import { SettingsProvider } from "./ui/settings-provider.tsx";
+import { TrainingDataProvider } from "./ui/training-data-context.tsx";
 import "./global.css";
 
 const rootElement = document.getElementById("root");
 if (!rootElement) {
   throw new Error("Root element #root not found");
 }
+const root = createRoot(rootElement);
 
-// The router basename mirrors Vite's base so deep links work under a subpath.
-const basename = import.meta.env.BASE_URL.replace(/\/$/, "");
+async function start(): Promise<void> {
+  const bootstrap = await createTrainingDataBootstrap(localStorage);
+  const persistSettings = async (settings: PracticeSettings): Promise<void> => {
+    await bootstrap.repository.savePortableSettings(settings);
+  };
+  window.addEventListener("pagehide", () => bootstrap.repository.close(), {
+    once: true,
+  });
 
-createRoot(rootElement).render(
-  <StrictMode>
-    <BrowserRouter basename={basename}>
-      <SettingsProvider>
-        <LearnAudioProvider>
-          <App />
-        </LearnAudioProvider>
-      </SettingsProvider>
-    </BrowserRouter>
-  </StrictMode>,
-);
+  // The router basename mirrors Vite's base so deep links work under a subpath.
+  const basename = import.meta.env.BASE_URL.replace(/\/$/, "");
+  root.render(
+    <StrictMode>
+      <BrowserRouter basename={basename}>
+        <SettingsProvider
+          initialSettings={bootstrap.settings}
+          persistSettings={persistSettings}
+        >
+          <TrainingDataProvider
+            initialCurriculum={bootstrap.curriculum}
+            initialIntroductions={bootstrap.introductions}
+            persistCurriculum={(state) =>
+              bootstrap.repository.saveCurriculumState(state)
+            }
+            persistIntroductions={(characters) =>
+              bootstrap.repository.saveIntroductions(characters)
+            }
+          >
+            <LearnAudioProvider>
+              <App />
+            </LearnAudioProvider>
+          </TrainingDataProvider>
+        </SettingsProvider>
+      </BrowserRouter>
+    </StrictMode>,
+  );
+}
+
+void start().catch((error: unknown) => {
+  const message = error instanceof Error ? error.message : "Unknown error";
+  root.render(
+    <main role="alert">
+      <h1>K1FRX Morse Trainer</h1>
+      <p>Unable to open training data: {message}</p>
+    </main>,
+  );
+});
