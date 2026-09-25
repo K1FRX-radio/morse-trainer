@@ -37,6 +37,7 @@ const HOLD_AFTER_CORRECT = 450;
 const HOLD_AFTER_MISS = 500;
 
 export type LearnPhase = "onboarding" | "exercise" | "summary";
+export type PersistenceStatus = "pending" | "ready" | "error";
 
 export type Feedback = {
   correct: boolean;
@@ -57,6 +58,12 @@ type QueuedSubmission =
       value: string;
       playbackGeneration: number;
     };
+
+type FinalizationWork = {
+  persistence: LearnSessionPersistence;
+  session: LearnSession;
+  snapshot: LearnPersistenceSnapshot;
+};
 
 function toMorse(target: string): string {
   return encodeText(target)
@@ -96,6 +103,8 @@ export function useLearnSession() {
   }
   const sessionRef = useRef<LearnSession | undefined>(undefined);
   const persistenceRef = useRef<LearnSessionPersistence | undefined>(undefined);
+  const finalizationRef = useRef<FinalizationWork | undefined>(undefined);
+  const persistenceOperation = useRef(0);
 
   // Flow tokens invalidate stale async transitions; the one-shot lock guarantees
   // exactly one accepted answer per presented prompt.
@@ -139,6 +148,11 @@ export function useLearnSession() {
   const [inputReady, setInputReady] = useState(false);
   const [typingReady, setTypingReady] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [persistenceStatus, setPersistenceStatus] =
+    useState<PersistenceStatus>("ready");
+  const [persistenceError, setPersistenceError] = useState<string | undefined>(
+    undefined,
+  );
   const [, forceTick] = useState(0);
 
   const persistenceSnapshot = useCallback(
@@ -152,6 +166,82 @@ export function useLearnSession() {
       ],
     }),
     [loadIntroductions],
+  );
+
+  const setPersistenceFailed = useCallback(() => {
+    setPersistenceStatus("error");
+    setPersistenceError(
+      "Your session could not be saved. Check storage access and try again.",
+    );
+  }, []);
+
+  const trackPersistence = useCallback(
+    (persistence: LearnSessionPersistence, operation: Promise<void>) => {
+      const token = ++persistenceOperation.current;
+      setPersistenceStatus("pending");
+      setPersistenceError(undefined);
+      void operation
+        .then(() => {
+          if (
+            persistenceRef.current === persistence &&
+            persistenceOperation.current === token
+          ) {
+            setPersistenceStatus("ready");
+          }
+        })
+        .catch(() => {
+          if (
+            persistenceRef.current === persistence &&
+            persistenceOperation.current === token
+          ) {
+            setPersistenceFailed();
+          }
+        });
+    },
+    [setPersistenceFailed],
+  );
+
+  const finalizePersistence = useCallback(
+    async (work: FinalizationWork) => {
+      const token = ++persistenceOperation.current;
+      setPersistenceStatus("pending");
+      setPersistenceError(undefined);
+      try {
+        await work.persistence.finish(work.snapshot);
+        const assessment = work.session.summary().advancementAssessment;
+        const classification = assessment
+          ? await getRetryClassification(
+              {
+                activeCharacters: work.session.unlockedNow,
+                charWpm: settings.charWpm,
+                effectiveWpm: settings.effectiveWpm,
+              },
+              settings.speedSuggestionAfterAttempts,
+            )
+          : undefined;
+        if (
+          persistenceRef.current === work.persistence &&
+          persistenceOperation.current === token
+        ) {
+          setRetryClassification(classification);
+          setPersistenceStatus("ready");
+        }
+      } catch {
+        if (
+          persistenceRef.current === work.persistence &&
+          persistenceOperation.current === token
+        ) {
+          setPersistenceFailed();
+        }
+      }
+    },
+    [
+      getRetryClassification,
+      setPersistenceFailed,
+      settings.charWpm,
+      settings.effectiveWpm,
+      settings.speedSuggestionAfterAttempts,
+    ],
   );
 
   const recordContinuousCopy = useCallback(
@@ -170,26 +260,30 @@ export function useLearnSession() {
         abandoned,
       );
       const assessment = session.summary().advancementAssessment;
-      void persistenceRef.current
-        ?.recordAttempt(
-          {
-            exerciseType: "continuous-copy",
-            target: event.plan.gradingTarget,
-            response: typed,
-            assisted: false,
-            replayed: false,
-            abandoned,
-            durationMs: durationCompleted,
-            ...(assessment ? { readinessReason: assessment.reason } : {}),
-          },
-          persistenceSnapshot(session),
-        )
-        .catch(() => undefined);
+      const persistence = persistenceRef.current;
+      if (persistence) {
+        trackPersistence(
+          persistence,
+          persistence.recordAttempt(
+            {
+              exerciseType: "continuous-copy",
+              target: event.plan.gradingTarget,
+              response: typed,
+              assisted: false,
+              replayed: false,
+              abandoned,
+              durationMs: durationCompleted,
+              ...(assessment ? { readinessReason: assessment.reason } : {}),
+            },
+            persistenceSnapshot(session),
+          ),
+        );
+      }
       saveCurriculum(stateRef.current);
       forceTick((value) => value + 1);
       return result;
     },
-    [persistenceSnapshot, saveCurriculum],
+    [persistenceSnapshot, saveCurriculum, trackPersistence],
   );
   const continuousCopy = useContinuousCopy({
     audio,
@@ -294,35 +388,15 @@ export function useLearnSession() {
     const completedSummary = session.end();
     setSummary(completedSummary);
     setRetryClassification(undefined);
-    const finalized = persistenceRef.current?.finish(
-      persistenceSnapshot(session),
-    );
-    persistenceRef.current = undefined;
-    if (completedSummary.advancementAssessment) {
-      void Promise.resolve(finalized)
-        .then(() =>
-          getRetryClassification(
-            {
-              activeCharacters: session.unlockedNow,
-              charWpm: settings.charWpm,
-              effectiveWpm: settings.effectiveWpm,
-            },
-            settings.speedSuggestionAfterAttempts,
-          ),
-        )
-        .then((classification) => {
-          if (sessionRef.current === session) {
-            setRetryClassification(classification);
-          }
-        })
-        .catch(() => {
-          if (sessionRef.current === session) {
-            setRetryClassification({
-              consecutiveAccuracyMisses: 0,
-              shouldSuggestSpacing: false,
-            });
-          }
-        });
+    const persistence = persistenceRef.current;
+    if (persistence) {
+      const work = {
+        persistence,
+        session,
+        snapshot: persistenceSnapshot(session),
+      };
+      finalizationRef.current = work;
+      void finalizePersistence(work);
     }
     saveIntroductions([
       ...loadIntroductions(),
@@ -344,10 +418,7 @@ export function useLearnSession() {
     saveCurriculum,
     saveIntroductions,
     persistenceSnapshot,
-    getRetryClassification,
-    settings.charWpm,
-    settings.effectiveWpm,
-    settings.speedSuggestionAfterAttempts,
+    finalizePersistence,
     updateIntroStage,
   ]);
 
@@ -422,9 +493,27 @@ export function useLearnSession() {
 
   const startSession = useCallback(
     async (mode: LearnSessionMode, sessionTiming = timing) => {
+      const startToken = nextFlowToken();
+      const previousPersistence = persistenceRef.current;
+      const previousSession = sessionRef.current;
+      if (previousPersistence && previousSession) {
+        previousSession.end();
+        setPersistenceStatus("pending");
+        setPersistenceError(undefined);
+        try {
+          await previousPersistence.interrupt(
+            persistenceSnapshot(previousSession),
+          );
+        } catch {
+          setPersistenceFailed();
+          return;
+        }
+        if (startToken !== flowToken.current) return;
+      }
+      persistenceRef.current = undefined;
+      finalizationRef.current = undefined;
       continuousCopy.reset();
       clearHeldKeys();
-      nextFlowToken();
       queuedSubmissionRef.current = null;
       currentAnswerRef.current = "";
       playbackGeneration.current += 1;
@@ -432,6 +521,7 @@ export function useLearnSession() {
       setIsPlaying(false);
       await audio.cancel();
       await audio.unlock();
+      if (startToken !== flowToken.current) return;
       const session = new LearnSession({
         state: stateRef.current,
         mode,
@@ -440,19 +530,32 @@ export function useLearnSession() {
         continuousCopyDurationMs: settings.continuousCopyDurationMs,
         continuousCopyTiming: sessionTiming,
       });
-      const persistence = await startLearnSessionPersistence({
-        mode,
-        activeCharacters: session.unlockedNow,
-        settings: {
-          charWpm: sessionTiming.charWpm,
-          effectiveWpm: sessionTiming.effectiveWpm,
-          toneHz: settings.toneHz,
-          noiseLevel: settings.noiseLevel,
-        },
-      });
+      let persistence: LearnSessionPersistence;
+      try {
+        persistence = await startLearnSessionPersistence({
+          mode,
+          activeCharacters: session.unlockedNow,
+          settings: {
+            charWpm: sessionTiming.charWpm,
+            effectiveWpm: sessionTiming.effectiveWpm,
+            toneHz: settings.toneHz,
+            noiseLevel: settings.noiseLevel,
+          },
+        });
+      } catch {
+        setPersistenceFailed();
+        return;
+      }
+      if (startToken !== flowToken.current) {
+        session.end();
+        await persistence.interrupt(persistenceSnapshot(session));
+        return;
+      }
       session.start();
       sessionRef.current = session;
       persistenceRef.current = persistence;
+      setPersistenceStatus("ready");
+      setPersistenceError(undefined);
       introDoneToken.current = null;
       setSummary(undefined);
       setRetryClassification(undefined);
@@ -474,17 +577,19 @@ export function useLearnSession() {
       timing,
       loadIntroductions,
       startLearnSessionPersistence,
+      persistenceSnapshot,
+      setPersistenceFailed,
     ],
   );
 
-  const restartFullLesson = useCallback(
-    () => startSession("learn"),
-    [startSession],
-  );
-  const practiceLongCopy = useCallback(
-    () => startSession("review"),
-    [startSession],
-  );
+  const restartFullLesson = useCallback(() => {
+    if (phase === "summary" && persistenceStatus !== "ready") return;
+    return startSession("learn");
+  }, [persistenceStatus, phase, startSession]);
+  const practiceLongCopy = useCallback(() => {
+    if (phase === "summary" && persistenceStatus !== "ready") return;
+    return startSession("review");
+  }, [persistenceStatus, phase, startSession]);
   const begin = restartFullLesson;
 
   const retryRecommendation: RetryRecommendation | undefined = useMemo(() => {
@@ -512,11 +617,26 @@ export function useLearnSession() {
   }, [retryClassification, settings.charWpm, settings.effectiveWpm, summary]);
 
   const acceptSpacingSuggestion = useCallback(() => {
+    if (persistenceStatus !== "ready") return;
     const spacing = retryRecommendation?.spacing;
     if (!spacing) return;
     updateSettings({ effectiveWpm: spacing.effectiveWpm });
     void startSession("review", spacing);
-  }, [retryRecommendation, startSession, updateSettings]);
+  }, [persistenceStatus, retryRecommendation, startSession, updateSettings]);
+
+  const retryPersistence = useCallback(() => {
+    const work = finalizationRef.current;
+    if (work) {
+      void finalizePersistence(work);
+      return;
+    }
+    const persistence = persistenceRef.current;
+    if (!persistence) {
+      if (phase === "onboarding") void startSession("learn");
+      return;
+    }
+    trackPersistence(persistence, persistence.retry());
+  }, [finalizePersistence, phase, startSession, trackPersistence]);
 
   // Records the answer, replays on a miss, and advances only after any
   // corrective playback finishes and while this prompt is still current.
@@ -531,19 +651,23 @@ export function useLearnSession() {
         outcome.exercise.type === "copy-group" ||
         outcome.exercise.type === "copy-word"
       ) {
-        void persistenceRef.current
-          ?.recordAttempt(
-            {
-              exerciseType: outcome.exercise.type,
-              target: outcome.exercise.target,
-              response: typeof input === "string" ? input : "",
-              assisted: outcome.assisted,
-              replayed: outcome.replayed,
-              abandoned: false,
-            },
-            persistenceSnapshot(session),
-          )
-          .catch(() => undefined);
+        const persistence = persistenceRef.current;
+        if (persistence) {
+          trackPersistence(
+            persistence,
+            persistence.recordAttempt(
+              {
+                exerciseType: outcome.exercise.type,
+                target: outcome.exercise.target,
+                response: typeof input === "string" ? input : "",
+                assisted: outcome.assisted,
+                replayed: outcome.replayed,
+                abandoned: false,
+              },
+              persistenceSnapshot(session),
+            ),
+          );
+        }
       }
       saveCurriculum(stateRef.current);
       forceTick((n) => n + 1);
@@ -564,7 +688,7 @@ export function useLearnSession() {
         setAwaitingContinue(true);
       }
     },
-    [auto, persistenceSnapshot, play, saveCurriculum],
+    [auto, persistenceSnapshot, play, saveCurriculum, trackPersistence],
   );
 
   // The single one-shot gate: returns the current token and locks, or null.
@@ -740,6 +864,7 @@ export function useLearnSession() {
   }, [continuousCopy]);
 
   const acceptAdvancement = useCallback(() => {
+    if (persistenceStatus !== "ready") return;
     const assessment = summary?.advancementAssessment;
     const result = summary?.continuousCopyResult;
     if (!assessment || !result) return;
@@ -766,7 +891,7 @@ export function useLearnSession() {
           }
         : current,
     );
-  }, [begin, saveCurriculum, summary]);
+  }, [begin, persistenceStatus, saveCurriculum, summary]);
 
   const physicalKeyDown = useCallback(
     (
@@ -809,7 +934,7 @@ export function useLearnSession() {
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, []);
 
-  // Invalidate pending async work and stop audio on unmount.
+  // Invalidate pending async work, stop audio, and terminally interrupt storage.
   useEffect(
     () => () => {
       flowToken.current += 1;
@@ -818,8 +943,16 @@ export function useLearnSession() {
       playbackGeneration.current += 1;
       heldKeysRef.current.clear();
       void audio.cancelAndSuspend();
+      const persistence = persistenceRef.current;
+      const session = sessionRef.current;
+      persistenceRef.current = undefined;
+      finalizationRef.current = undefined;
+      if (persistence && session) {
+        session.end();
+        void persistence.interrupt(persistenceSnapshot(session));
+      }
     },
-    [audio],
+    [audio, persistenceSnapshot],
   );
 
   const current: CharacterProgress | undefined = newestCharacter(
@@ -850,6 +983,8 @@ export function useLearnSession() {
     awaitingContinue,
     summary,
     retryRecommendation,
+    persistenceStatus,
+    persistenceError,
     auto,
     inputReady,
     typingReady,
@@ -866,6 +1001,7 @@ export function useLearnSession() {
       restartFullLesson,
       practiceLongCopy,
       acceptSpacingSuggestion,
+      retryPersistence,
       acceptIsolated,
       updateGroupWord,
       submitGroupWord,

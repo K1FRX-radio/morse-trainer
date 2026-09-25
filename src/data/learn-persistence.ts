@@ -65,6 +65,8 @@ export interface LearnSessionPersistence {
     snapshot: LearnPersistenceSnapshot,
   ): Promise<void>;
   finish(snapshot: LearnPersistenceSnapshot): Promise<void>;
+  interrupt(snapshot: LearnPersistenceSnapshot): Promise<void>;
+  retry(): Promise<void>;
 }
 
 function defaultId(): string {
@@ -125,9 +127,11 @@ function activeDateBuckets(
 
 export class DurableLearnSession implements LearnSessionPersistence {
   private record: TrainingSessionRecord;
-  private pending: Promise<void> = Promise.resolve();
-  private failure: unknown;
-  private closing = false;
+  private readonly queue: Array<() => Promise<void>> = [];
+  private processing: Promise<void> | undefined;
+  private closingStatus: "completed" | "interrupted" | undefined;
+  private terminal = false;
+  private leaseRenewalCanceled = false;
   private qualifyingAttemptCount = 0;
   private readonly cancelLeaseRenewal: () => void;
 
@@ -141,7 +145,7 @@ export class DurableLearnSession implements LearnSessionPersistence {
   ) {
     this.record = record;
     this.cancelLeaseRenewal = scheduleLeaseRenewal(() => {
-      if (this.closing) return;
+      if (this.closingStatus) return;
       void this.enqueue(async () => {
         const expiresAt = new Date(
           this.now().getTime() + DEFAULT_LEASE_DURATION_MS,
@@ -203,6 +207,9 @@ export class DurableLearnSession implements LearnSessionPersistence {
     evidence: LearnAttemptEvidence,
     snapshot: LearnPersistenceSnapshot,
   ): Promise<void> {
+    if (this.closingStatus) {
+      return Promise.reject(new Error("Learn session is already closing"));
+    }
     const occurredAt = captureDateTime(this.now());
     const id = this.createId();
     const target = normalizeCopy(evidence.target);
@@ -264,13 +271,28 @@ export class DurableLearnSession implements LearnSessionPersistence {
   }
 
   async finish(snapshot: LearnPersistenceSnapshot): Promise<void> {
-    if (this.closing) {
-      await this.pending;
-      if (this.failure) throw this.failure;
+    await this.close("completed", snapshot);
+  }
+
+  async interrupt(snapshot: LearnPersistenceSnapshot): Promise<void> {
+    await this.close("interrupted", snapshot);
+  }
+
+  async retry(): Promise<void> {
+    await this.retryPending();
+  }
+
+  private async close(
+    status: "completed" | "interrupted",
+    snapshot: LearnPersistenceSnapshot,
+  ): Promise<void> {
+    if (this.terminal) return;
+    if (this.closingStatus) {
+      await this.retryPending();
       return;
     }
-    this.closing = true;
-    this.cancelLeaseRenewal();
+    this.closingStatus = status;
+    this.cancelRenewal();
     const endedAt = captureDateTime(this.now());
     const frozenSnapshot = structuredClone(snapshot);
     await this.enqueue(async () => {
@@ -280,7 +302,7 @@ export class DurableLearnSession implements LearnSessionPersistence {
       const completed: TrainingSessionRecord = {
         ...current,
         updatedAt: endedAt.utc,
-        status: "completed",
+        status,
         endedAt,
         activeMs: frozenSnapshot.activeMs,
         activeDateBuckets: activeDateBuckets(frozenSnapshot.activeMs, endedAt),
@@ -293,15 +315,27 @@ export class DurableLearnSession implements LearnSessionPersistence {
           ({ character }) => character,
         ),
         revision: current.revision + 1,
-        finalizationKey: `learn-session:${current.id}`,
+        finalizationKey: `learn-${status}:${current.id}`,
       };
-      const result = await this.repository.finalizeSession(
-        completed,
-        this.record.revision,
-      );
+      const result =
+        status === "completed"
+          ? await this.repository.finalizeSession(
+              completed,
+              this.record.revision,
+            )
+          : await this.repository.interruptSession(
+              completed,
+              this.record.revision,
+            );
       this.record = result.session;
+      this.terminal = true;
     });
-    if (this.failure) throw this.failure;
+  }
+
+  private cancelRenewal(): void {
+    if (this.leaseRenewalCanceled) return;
+    this.leaseRenewalCanceled = true;
+    this.cancelLeaseRenewal();
   }
 
   private activeSnapshot(
@@ -333,13 +367,35 @@ export class DurableLearnSession implements LearnSessionPersistence {
   }
 
   private enqueue(operation: () => Promise<void>): Promise<void> {
-    const result = this.pending.then(async () => {
-      if (this.failure) throw this.failure;
-      await operation();
-    });
-    this.pending = result.catch((error: unknown) => {
-      this.failure ??= error;
-    });
-    return result;
+    this.queue.push(operation);
+    return this.drain();
+  }
+
+  private drain(): Promise<void> {
+    if (this.processing) return this.processing;
+    const processing = (async () => {
+      while (this.queue.length > 0) {
+        await this.queue[0]!();
+        this.queue.shift();
+      }
+    })();
+    this.processing = processing;
+    void processing
+      .finally(() => {
+        if (this.processing === processing) this.processing = undefined;
+      })
+      .catch(() => undefined);
+    return processing;
+  }
+
+  private async retryPending(): Promise<void> {
+    if (this.processing) {
+      try {
+        await this.processing;
+      } catch {
+        // The failed operation remains at the head of the queue for retry.
+      }
+    }
+    await this.drain();
   }
 }

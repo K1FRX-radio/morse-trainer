@@ -1,5 +1,5 @@
 import { IDBKeyRange, indexedDB } from "fake-indexeddb";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_CURRICULUM_CONFIG } from "../content/curriculum-data.ts";
 import { createInitialState } from "../core/curriculum.ts";
 import { TrainerDatabase } from "./indexeddb.ts";
@@ -268,6 +268,115 @@ describe("DurableLearnSession", () => {
         attemptCount: 1,
         finalizedAttemptCount: 0,
         valid: false,
+      });
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
+  it("interrupts an active session after draining pending writes", async () => {
+    const { database, repository } = await setup();
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    const ids = ["owner-4", "session-4", "attempt-5"];
+    const cancelRenewal = vi.fn();
+
+    try {
+      const session = await DurableLearnSession.create(
+        repository,
+        {
+          mode: "learn",
+          activeCharacters: ["K", "M"],
+          settings: {
+            charWpm: 20,
+            effectiveWpm: 12,
+            toneHz: 600,
+            noiseLevel: 0,
+          },
+        },
+        {
+          now: clock(
+            "2026-09-25T20:00:00.000Z",
+            "2026-09-25T20:00:10.000Z",
+            "2026-09-25T20:00:20.000Z",
+          ),
+          createId: () => ids.shift()!,
+          scheduleLeaseRenewal: () => cancelRenewal,
+        },
+      );
+      const snapshot = {
+        activeMs: 20000,
+        completedCards: 1,
+        curriculum: state,
+        introductions: ["K", "M"],
+      };
+      void session.recordAttempt(
+        {
+          exerciseType: "copy-character",
+          target: "K",
+          response: "K",
+          assisted: false,
+          replayed: false,
+          abandoned: false,
+        },
+        snapshot,
+      );
+      await session.interrupt(snapshot);
+
+      expect(cancelRenewal).toHaveBeenCalledOnce();
+      expect(await database.attempts.count()).toBe(1);
+      expect(await database.sessions.get("session-4")).toMatchObject({
+        status: "interrupted",
+        attemptCount: 1,
+        revision: 2,
+      });
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
+  it("retries a failed finalization with the same operation", async () => {
+    const { database, repository } = await setup();
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    const ids = ["owner-5", "session-5"];
+    const finalize = vi.spyOn(repository, "finalizeSession");
+    finalize.mockRejectedValueOnce(new Error("storage unavailable"));
+
+    try {
+      const session = await DurableLearnSession.create(
+        repository,
+        {
+          mode: "review",
+          activeCharacters: ["K", "M"],
+          settings: {
+            charWpm: 20,
+            effectiveWpm: 12,
+            toneHz: 600,
+            noiseLevel: 0,
+          },
+        },
+        {
+          now: clock("2026-09-25T21:00:00.000Z", "2026-09-25T21:01:00.000Z"),
+          createId: () => ids.shift()!,
+          scheduleLeaseRenewal: () => () => undefined,
+        },
+      );
+      const snapshot = {
+        activeMs: 60000,
+        completedCards: 0,
+        curriculum: state,
+        introductions: ["K", "M"],
+      };
+
+      await expect(session.finish(snapshot)).rejects.toThrow(
+        "storage unavailable",
+      );
+      await expect(session.finish(snapshot)).resolves.toBeUndefined();
+      expect(finalize).toHaveBeenCalledTimes(2);
+      expect(await database.sessions.get("session-5")).toMatchObject({
+        status: "completed",
+        revision: 1,
       });
     } finally {
       repository.close();

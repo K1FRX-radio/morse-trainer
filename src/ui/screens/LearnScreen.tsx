@@ -40,6 +40,7 @@ export function LearnScreen() {
     restartFullLesson,
     practiceLongCopy,
     acceptSpacingSuggestion,
+    retryPersistence,
     endSession,
     physicalKeyDown,
     physicalKeyUp,
@@ -61,6 +62,20 @@ export function LearnScreen() {
   const answerReady =
     isolatedCopy || supportsTypeBehind ? typingReady : inputReady;
   const introControlsReady = introStage === "ready" && !isPlaying;
+  const persistenceReady = learn.persistenceStatus === "ready";
+  const persistenceNotice =
+    learn.persistenceStatus === "error" ? (
+      <div className="feedback feedback--neutral" role="alert">
+        <p>{learn.persistenceError}</p>
+        <button type="button" onClick={retryPersistence}>
+          Retry saving
+        </button>
+      </div>
+    ) : learn.persistenceStatus === "pending" && learn.phase === "summary" ? (
+      <p className="feedback feedback--neutral" role="status">
+        Saving session…
+      </p>
+    ) : null;
 
   // Clear the field for each new practice prompt.
   useEffect(() => {
@@ -169,6 +184,7 @@ export function LearnScreen() {
     return (
       <section>
         <h2>Learn</h2>
+        {persistenceNotice}
         <p>
           Short lessons teach Morse by ear: each new character is introduced by
           sound, drilled on its own, then mixed with the ones you know. Just
@@ -196,6 +212,7 @@ export function LearnScreen() {
             : undefined
         }
         onClick={() => void practiceLongCopy()}
+        disabled={!persistenceReady}
       >
         {spacing
           ? `Practice again at ${spacing.charWpm} / ${spacing.currentEffectiveWpm} WPM`
@@ -209,6 +226,7 @@ export function LearnScreen() {
           recommendation?.emphasizedAction === "full-lesson" ? undefined : "tab"
         }
         onClick={() => void restartFullLesson()}
+        disabled={!persistenceReady}
       >
         Restart full lesson
       </button>
@@ -216,6 +234,7 @@ export function LearnScreen() {
     return (
       <section>
         <h2>Session complete</h2>
+        {persistenceNotice}
         <ul className="summary">
           <li>
             Active time: {Math.round(s.activeMs / 1000)} s
@@ -331,17 +350,29 @@ export function LearnScreen() {
 
         <div className="practice__controls retry-actions">
           {assessment?.eligible && assessment.nextCharacter && (
-            <button type="button" onClick={acceptAdvancement}>
+            <button
+              type="button"
+              onClick={acceptAdvancement}
+              disabled={!persistenceReady}
+            >
               Learn {assessment.nextCharacter}
             </button>
           )}
           {assessment?.eligible && assessment.reason === "COMPLETE" && (
-            <button type="button" onClick={acceptAdvancement}>
+            <button
+              type="button"
+              onClick={acceptAdvancement}
+              disabled={!persistenceReady}
+            >
               Complete curriculum
             </button>
           )}
           {spacing && (
-            <button type="button" onClick={acceptSpacingSuggestion}>
+            <button
+              type="button"
+              onClick={acceptSpacingSuggestion}
+              disabled={!persistenceReady}
+            >
               Try {spacing.charWpm} / {spacing.effectiveWpm} WPM
             </button>
           )}
@@ -367,6 +398,7 @@ export function LearnScreen() {
     const selectedMinutes = learn.continuousCopy.selectedDurationMs / 60000;
     return (
       <section>
+        {persistenceNotice}
         <div className="learn__top">
           <span className="field__label" aria-live="polite">
             {learn.phaseLabel}
@@ -401,6 +433,7 @@ export function LearnScreen() {
   if (learn.notification) {
     return (
       <section>
+        {persistenceNotice}
         <div className="learn__top">
           <span className="field__label" aria-live="polite">
             {learn.phaseLabel}
@@ -425,6 +458,7 @@ export function LearnScreen() {
     const result = learn.continuousCopy.result;
     return (
       <section>
+        {persistenceNotice}
         <div className="learn__top">
           <span className="field__label">Continuous copy</span>
           <div className="learn__bar" aria-hidden>
@@ -460,6 +494,7 @@ export function LearnScreen() {
       : 0;
     return (
       <section>
+        {persistenceNotice}
         <div className="learn__top">
           <span className="field__label" aria-live="polite">
             Continuous copy
@@ -515,6 +550,7 @@ export function LearnScreen() {
 
   return (
     <section>
+      {persistenceNotice}
       <div className="learn__top">
         <span className="field__label" aria-live="polite">
           {learn.phaseLabel}

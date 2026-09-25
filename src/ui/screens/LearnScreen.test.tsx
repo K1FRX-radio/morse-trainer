@@ -118,6 +118,8 @@ function TrainingDataFixture({
   const persistence: LearnSessionPersistence = {
     recordAttempt: () => Promise.resolve(),
     finish: () => Promise.resolve(),
+    interrupt: () => Promise.resolve(),
+    retry: () => Promise.resolve(),
   };
   return (
     <TrainingDataContext.Provider
@@ -574,6 +576,102 @@ describe("LearnScreen input gating", () => {
     await flush();
 
     expect(screen.getByRole("status")).toBeInTheDocument();
+  });
+
+  it("interrupts durable persistence when the screen unmounts", async () => {
+    const fake = makeFakeAudio();
+    const interrupt = vi.fn<LearnSessionPersistence["interrupt"]>(() =>
+      Promise.resolve(),
+    );
+    const persistence: LearnSessionPersistence = {
+      recordAttempt: () => Promise.resolve(),
+      finish: () => Promise.resolve(),
+      interrupt,
+      retry: () => Promise.resolve(),
+    };
+    const view = renderLearn(
+      fake.audio,
+      {},
+      {
+        startLearnSessionPersistence: () => Promise.resolve(persistence),
+      },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
+    await flush();
+
+    view.unmount();
+    await flush();
+
+    expect(interrupt).toHaveBeenCalledOnce();
+    expect(interrupt.mock.calls[0]?.[0]).toMatchObject({
+      completedCards: 0,
+    });
+  });
+
+  it("interrupts durable persistence created after the screen unmounts", async () => {
+    const fake = makeFakeAudio();
+    let resolvePersistence:
+      ((persistence: LearnSessionPersistence) => void) | undefined;
+    const interrupt = vi.fn<LearnSessionPersistence["interrupt"]>(() =>
+      Promise.resolve(),
+    );
+    const persistence: LearnSessionPersistence = {
+      recordAttempt: () => Promise.resolve(),
+      finish: () => Promise.resolve(),
+      interrupt,
+      retry: () => Promise.resolve(),
+    };
+    const view = renderLearn(
+      fake.audio,
+      {},
+      {
+        startLearnSessionPersistence: () =>
+          new Promise((resolve) => {
+            resolvePersistence = resolve;
+          }),
+      },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
+    await flush();
+
+    view.unmount();
+    await act(async () => resolvePersistence?.(persistence));
+    await flush();
+
+    expect(interrupt).toHaveBeenCalledOnce();
+  });
+
+  it("surfaces and retries an ordinary attempt persistence failure", async () => {
+    const fake = makeFakeAudio();
+    const retry = vi.fn(() => Promise.resolve());
+    const persistence: LearnSessionPersistence = {
+      recordAttempt: () => Promise.reject(new Error("quota exceeded")),
+      finish: () => Promise.resolve(),
+      interrupt: () => Promise.resolve(),
+      retry,
+    };
+    renderLearn(
+      fake.audio,
+      {},
+      {
+        startLearnSessionPersistence: () => Promise.resolve(persistence),
+      },
+    );
+    await toFirstCopy(fake);
+
+    fireEvent.change(screen.getByLabelText("Your copy"), {
+      target: { value: "K" },
+    });
+    await flush();
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Your session could not be saved",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Retry saving" }));
+    await flush();
+
+    expect(retry).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("accepts mobile-style change events", async () => {
@@ -1490,6 +1588,8 @@ describe("LearnScreen advancement", () => {
       finish: async () => {
         events.push("finalize");
       },
+      interrupt: () => Promise.resolve(),
+      retry: () => Promise.resolve(),
     };
     renderLearn(
       fake.audio,
@@ -1522,6 +1622,68 @@ describe("LearnScreen advancement", () => {
       "finalize",
       "classify",
     ]);
+  });
+
+  it("blocks summary actions and retries failed finalization", async () => {
+    const fake = makeFakeAudio();
+    let rejectFirstFinish: ((error: Error) => void) | undefined;
+    const finish = vi
+      .fn<LearnSessionPersistence["finish"]>()
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            rejectFirstFinish = reject;
+          }),
+      )
+      .mockResolvedValue(undefined);
+    const getRetryClassification = vi.fn(() =>
+      Promise.resolve({
+        consecutiveAccuracyMisses: 0,
+        shouldSuggestSpacing: false,
+      }),
+    );
+    const persistence: LearnSessionPersistence = {
+      recordAttempt: () => Promise.resolve(),
+      finish,
+      interrupt: () => Promise.resolve(),
+      retry: () => Promise.resolve(),
+    };
+    renderLearn(
+      fake.audio,
+      {},
+      {
+        startLearnSessionPersistence: () => Promise.resolve(persistence),
+        getRetryClassification,
+      },
+    );
+
+    await completeContinuousCopy(fake);
+
+    expect(screen.getByRole("status")).toHaveTextContent("Saving session");
+    expect(screen.getByRole("button", { name: "Learn U" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Practice long copy" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Restart full lesson" }),
+    ).toBeDisabled();
+    expect(getRetryClassification).not.toHaveBeenCalled();
+
+    await act(async () => rejectFirstFinish?.(new Error("quota exceeded")));
+    await flush();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Your session could not be saved",
+    );
+    expect(screen.getByRole("button", { name: "Learn U" })).toBeDisabled();
+    expect(getRetryClassification).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry saving" }));
+    await flush();
+
+    expect(finish).toHaveBeenCalledTimes(2);
+    expect(getRetryClassification).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Learn U" })).toBeEnabled();
   });
 
   it("starts another lesson without unlocking from the secondary action", async () => {

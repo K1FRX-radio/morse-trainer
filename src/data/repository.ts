@@ -98,6 +98,10 @@ export interface TrainingDataRepository extends LegacyMigrationRepository {
     session: TrainingSessionRecord,
     expectedRevision: number,
   ): Promise<PersistenceResult>;
+  interruptSession(
+    session: TrainingSessionRecord,
+    expectedRevision: number,
+  ): Promise<PersistenceResult>;
   renewSessionLease(
     sessionId: string,
     ownerTabId: string,
@@ -470,13 +474,39 @@ export class DexieTrainingRepository implements TrainingDataRepository {
     value: TrainingSessionRecord,
     expectedRevision: number,
   ): Promise<PersistenceResult> {
+    return this.finalizeTerminalSession(
+      value,
+      expectedRevision,
+      "completed",
+      "finalize-session",
+    );
+  }
+
+  async interruptSession(
+    value: TrainingSessionRecord,
+    expectedRevision: number,
+  ): Promise<PersistenceResult> {
+    return this.finalizeTerminalSession(
+      value,
+      expectedRevision,
+      "interrupted",
+      "interrupt-session",
+    );
+  }
+
+  private async finalizeTerminalSession(
+    value: TrainingSessionRecord,
+    expectedRevision: number,
+    status: "completed" | "interrupted",
+    operationName: string,
+  ): Promise<PersistenceResult> {
     const nextSession = parseTrainingSession(value);
     if (
-      nextSession.status !== "completed" ||
+      nextSession.status !== status ||
       nextSession.finalizationKey === undefined
     ) {
       throw new Error(
-        "normal finalization requires a completed session and key",
+        `${status} finalization requires a matching status and key`,
       );
     }
     const finalizationKey = nextSession.finalizationKey;
@@ -529,7 +559,7 @@ export class DexieTrainingRepository implements TrainingDataRepository {
           schemaVersion: RECORD_SCHEMA_VERSION,
           updatedAt: nextSession.updatedAt,
           kind: "operation",
-          operation: "finalize-session",
+          operation: operationName,
           idempotencyKey: finalizationKey,
           completedAt: nextSession.updatedAt,
           resultRecordId: nextSession.id,
