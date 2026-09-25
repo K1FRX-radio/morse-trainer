@@ -258,6 +258,19 @@ export const trainingAttemptRecordSchema = persistedRecordSchema
     assisted: z.boolean(),
     replayed: z.boolean(),
     abandoned: z.boolean(),
+    readinessReason: z
+      .enum([
+        "READY",
+        "ABANDONED",
+        "INSUFFICIENT_TOTAL_EVIDENCE",
+        "INCOMPLETE_ACTIVE_COVERAGE",
+        "INSUFFICIENT_NEWEST_COVERAGE",
+        "LOW_OVERALL_ACCURACY",
+        "LOW_NEWEST_ACCURACY",
+        "NEEDS_REVIEW",
+        "COMPLETE",
+      ])
+      .optional(),
     scoringAlgorithmVersion: z.literal(SCORING_ALGORITHM_VERSION),
     observations: z.array(alignmentObservationSchema),
     schedulerReason: z
@@ -295,6 +308,24 @@ export const trainingAttemptRecordSchema = persistedRecordSchema
       addIssue(
         ["exerciseType"],
         `${attempt.direction} attempts use ${attempt.direction === "tx" ? "send" : "copy"} exercises`,
+      );
+    }
+    if (
+      attempt.readinessReason !== undefined &&
+      (attempt.source !== "learn" || attempt.exerciseType !== "continuous-copy")
+    ) {
+      addIssue(
+        ["readinessReason"],
+        "readiness outcomes require a Learn continuous-copy attempt",
+      );
+    }
+    if (
+      attempt.readinessReason !== undefined &&
+      (attempt.readinessReason === "ABANDONED") !== attempt.abandoned
+    ) {
+      addIssue(
+        ["readinessReason"],
+        "ABANDONED readiness must match the attempt abandonment flag",
       );
     }
 

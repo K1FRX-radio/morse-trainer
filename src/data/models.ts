@@ -91,6 +91,17 @@ export type AttemptExerciseType =
   | "send-character"
   | "send-word";
 
+export type ContinuousCopyReadinessReason =
+  | "READY"
+  | "ABANDONED"
+  | "INSUFFICIENT_TOTAL_EVIDENCE"
+  | "INCOMPLETE_ACTIVE_COVERAGE"
+  | "INSUFFICIENT_NEWEST_COVERAGE"
+  | "LOW_OVERALL_ACCURACY"
+  | "LOW_NEWEST_ACCURACY"
+  | "NEEDS_REVIEW"
+  | "COMPLETE";
+
 export type TrainingAttemptRecord = PersistedRecord & {
   sessionId: string;
   occurredAt: CapturedDateTime;
@@ -105,6 +116,7 @@ export type TrainingAttemptRecord = PersistedRecord & {
   assisted: boolean;
   replayed: boolean;
   abandoned: boolean;
+  readinessReason?: ContinuousCopyReadinessReason;
   scoringAlgorithmVersion: string;
   observations: AlignmentObservation[];
   schedulerReason?: SchedulerReason;

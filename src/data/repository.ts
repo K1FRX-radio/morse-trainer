@@ -1,6 +1,9 @@
 import { DATABASE_VERSION, TrainerDatabase } from "./indexeddb.ts";
 import { isValidTrainingSession } from "../core/session-validity.ts";
-import type { PracticeSettings } from "../core/settings.ts";
+import type {
+  PracticeSettings,
+  SpeedSuggestionAfterAttempts,
+} from "../core/settings.ts";
 import type { CurriculumState } from "../core/curriculum.ts";
 import {
   LEGACY_MIGRATION_ID,
@@ -19,6 +22,11 @@ import {
 } from "./models.ts";
 import { buildProjectionRows } from "./projections.ts";
 import { captureDateTime } from "./time.ts";
+import {
+  classifyRetryHistory,
+  type RetryClassification,
+  type RetryCounterIdentity,
+} from "./retry-history.ts";
 import {
   parseCurriculumStateRecord,
   parseIntroductionsRecord,
@@ -97,6 +105,10 @@ export interface TrainingDataRepository extends LegacyMigrationRepository {
     expiresAt: string,
   ): Promise<TrainingSessionRecord>;
   recoverInterruptedSessions(): Promise<TrainingSessionRecord[]>;
+  getRetryClassification(
+    identity: RetryCounterIdentity,
+    threshold: SpeedSuggestionAfterAttempts,
+  ): Promise<RetryClassification>;
   rebuildProjections(): Promise<void>;
 }
 
@@ -572,6 +584,28 @@ export class DexieTrainingRepository implements TrainingDataRepository {
       await this.database.sessions.put(renewed);
       return renewed;
     });
+  }
+
+  async getRetryClassification(
+    identity: RetryCounterIdentity,
+    threshold: SpeedSuggestionAfterAttempts,
+  ): Promise<RetryClassification> {
+    return this.database.transaction(
+      "r",
+      [this.database.sessions, this.database.attempts],
+      async () => {
+        const dataset = parseTrainingDataset(
+          await this.database.sessions.toArray(),
+          await this.database.attempts.toArray(),
+        );
+        return classifyRetryHistory(
+          dataset.sessions,
+          dataset.attempts,
+          identity,
+          threshold,
+        );
+      },
+    );
   }
 
   async isMigrationComplete(): Promise<boolean> {
