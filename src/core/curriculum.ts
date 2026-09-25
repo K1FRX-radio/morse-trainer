@@ -156,6 +156,14 @@ export function reviewCharacters(state: CurriculumState): string[] {
   return state.characters.filter((c) => c.needsReview).map((c) => c.character);
 }
 
+export function completeCurriculum(state: CurriculumState, at?: string): void {
+  for (const progress of state.characters) {
+    if (progress.state === "mastered") continue;
+    progress.state = "mastered";
+    if (at !== undefined) progress.masteredAt = at;
+  }
+}
+
 /** Low-level mutation used after advancement validation and by test fixtures. */
 export function forceUnlockNext(
   state: CurriculumState,

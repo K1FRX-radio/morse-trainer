@@ -3,6 +3,7 @@ import {
   type AdvancementConfig,
 } from "../content/curriculum-data.ts";
 import {
+  completeCurriculum,
   forceUnlockNext,
   newestCharacter,
   nextLockedCharacter,
@@ -36,6 +37,10 @@ export type AdvancementAssessment = {
   weakCharacter?: string;
   nextCharacter?: string;
 };
+
+export type AdvancementAcceptance =
+  | { type: "character-unlocked"; character: string }
+  | { type: "curriculum-completed" };
 
 export function minimumAdvancementObservations(
   activeCharacterCount: number,
@@ -117,9 +122,6 @@ export function evaluateAdvancementEvidence(
     ...(nextCharacter ? { nextCharacter } : {}),
   };
 
-  if (!nextCharacter) {
-    return { ...base, eligible: false, reason: "COMPLETE" };
-  }
   if (result.abandoned) {
     return { ...base, eligible: false, reason: "ABANDONED" };
   }
@@ -161,6 +163,13 @@ export function evaluateAdvancementEvidence(
   if (newestAccuracy < config.newestAccuracy) {
     return { ...base, eligible: false, reason: "LOW_NEWEST_ACCURACY" };
   }
+  if (!nextCharacter) {
+    return {
+      ...base,
+      eligible: state.characters.some(({ state }) => state !== "mastered"),
+      reason: "COMPLETE",
+    };
+  }
   return { ...base, eligible: true, reason: "READY" };
 }
 
@@ -170,7 +179,7 @@ export function acceptAdvancement(
   offeredAssessment: AdvancementAssessment,
   at?: string,
   config: AdvancementConfig = DEFAULT_ADVANCEMENT_CONFIG,
-): string | undefined {
+): AdvancementAcceptance | undefined {
   const currentAssessment = evaluateAdvancementEvidence(state, result, config);
   if (!currentAssessment.eligible || !offeredAssessment.eligible) {
     return undefined;
@@ -186,5 +195,12 @@ export function acceptAdvancement(
   ) {
     return undefined;
   }
-  return forceUnlockNext(state, at);
+  if (currentAssessment.reason === "COMPLETE") {
+    completeCurriculum(state, at);
+    return { type: "curriculum-completed" };
+  }
+  const character = forceUnlockNext(state, at);
+  return character === undefined
+    ? undefined
+    : { type: "character-unlocked", character };
 }

@@ -287,6 +287,11 @@ export function LearnScreen() {
               Learn {assessment.nextCharacter}
             </button>
           )}
+          {assessment?.eligible && assessment.reason === "COMPLETE" && (
+            <button type="button" onClick={acceptAdvancement}>
+              Complete curriculum
+            </button>
+          )}
           <button
             type="button"
             className={assessment?.eligible ? "tab" : undefined}

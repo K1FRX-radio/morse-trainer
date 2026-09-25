@@ -609,14 +609,29 @@ export function useLearnSession() {
     const assessment = summary?.advancementAssessment;
     const result = summary?.continuousCopyResult;
     if (!assessment || !result) return;
-    const unlocked = acceptAdvancementOffer(
+    const acceptance = acceptAdvancementOffer(
       stateRef.current,
       result,
       assessment,
+      new Date().toISOString(),
     );
-    if (!unlocked) return;
+    if (!acceptance) return;
     saveCurriculum(stateRef.current);
-    void begin();
+    if (acceptance.type === "character-unlocked") {
+      void begin();
+      return;
+    }
+    setSummary((current) =>
+      current?.advancementAssessment
+        ? {
+            ...current,
+            advancementAssessment: {
+              ...current.advancementAssessment,
+              eligible: false,
+            },
+          }
+        : current,
+    );
   }, [begin, summary]);
 
   const physicalKeyDown = useCallback(

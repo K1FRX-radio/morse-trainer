@@ -204,14 +204,99 @@ describe("evaluateAdvancementEvidence", () => {
     });
   });
 
-  it("reports complete when every curriculum character is unlocked", () => {
+  it("offers completion only after the final active set passes evidence", () => {
     const state = stateWith(DEFAULT_CURRICULUM_CONFIG.order.length);
     const result = stream(
       state.characters.flatMap((character) =>
         observations(character.character, 8),
       ),
     );
-    expect(evaluateAdvancementEvidence(state, result).reason).toBe("COMPLETE");
+    const assessment = evaluateAdvancementEvidence(state, result);
+    expect(assessment).toMatchObject({
+      eligible: true,
+      reason: "COMPLETE",
+    });
+    expect(assessment).not.toHaveProperty("nextCharacter");
+  });
+
+  it.each<[string, Partial<ContinuousCopyResult>]>([
+    ["ABANDONED", { abandoned: true }],
+    ["INSUFFICIENT_TOTAL_EVIDENCE", { perCharacterResults: [] }],
+  ])(
+    "applies %s before offering final curriculum completion",
+    (reason, overrides) => {
+      const state = stateWith(DEFAULT_CURRICULUM_CONFIG.order.length);
+      const complete = state.characters.flatMap((character) =>
+        observations(character.character, 8),
+      );
+      const result = stream(complete, overrides);
+
+      expect(evaluateAdvancementEvidence(state, result)).toMatchObject({
+        eligible: false,
+        reason,
+      });
+    },
+  );
+
+  it("applies review, coverage, newest, and accuracy checks to the final set", () => {
+    const state = stateWith(DEFAULT_CURRICULUM_CONFIG.order.length);
+    const active = state.characters.map(({ character }) => character);
+    const newest = active.at(-1)!;
+    const strong = active.flatMap((character) => observations(character, 8));
+
+    state.characters[0].needsReview = true;
+    expect(evaluateAdvancementEvidence(state, stream(strong)).reason).toBe(
+      "NEEDS_REVIEW",
+    );
+    state.characters[0].needsReview = false;
+
+    const missingCharacter = active[0];
+    expect(
+      evaluateAdvancementEvidence(
+        state,
+        stream(
+          strong.filter(({ character }) => character !== missingCharacter),
+        ),
+      ).reason,
+    ).toBe("INCOMPLETE_ACTIVE_COVERAGE");
+
+    expect(
+      evaluateAdvancementEvidence(
+        state,
+        stream([
+          ...active.slice(0, -1).map((character) => ({
+            character,
+            correct: true,
+          })),
+          ...observations(newest, 7),
+          ...observations(active[0], 50),
+        ]),
+      ).reason,
+    ).toBe("INSUFFICIENT_NEWEST_COVERAGE");
+
+    expect(
+      evaluateAdvancementEvidence(
+        state,
+        stream(
+          strong.map((result, index) => ({
+            ...result,
+            correct: index % 5 !== 0,
+          })),
+        ),
+      ).reason,
+    ).toBe("LOW_OVERALL_ACCURACY");
+
+    expect(
+      evaluateAdvancementEvidence(
+        state,
+        stream([
+          ...active
+            .slice(0, -1)
+            .flatMap((character) => observations(character, 8)),
+          ...observations(newest, 8, 6),
+        ]),
+      ).reason,
+    ).toBe("LOW_NEWEST_ACCURACY");
   });
 
   it("allows strong overall evidence to carry a weak older character", () => {
@@ -286,7 +371,10 @@ describe("acceptAdvancement", () => {
     const state = stateWith();
     const { result, assessment } = qualifyingOffer(state);
 
-    expect(acceptAdvancement(state, result, assessment)).toBe("U");
+    expect(acceptAdvancement(state, result, assessment)).toEqual({
+      type: "character-unlocked",
+      character: "U",
+    });
     expect(state.characters.map(({ character }) => character)).toEqual([
       "K",
       "M",
@@ -298,7 +386,10 @@ describe("acceptAdvancement", () => {
     const state = stateWith();
     const { result, assessment } = qualifyingOffer(state);
 
-    expect(acceptAdvancement(state, result, assessment)).toBe("U");
+    expect(acceptAdvancement(state, result, assessment)).toEqual({
+      type: "character-unlocked",
+      character: "U",
+    });
     expect(acceptAdvancement(state, result, assessment)).toBeUndefined();
     expect(state.characters.map(({ character }) => character)).toEqual([
       "K",
@@ -323,5 +414,35 @@ describe("acceptAdvancement", () => {
 
     expect(acceptAdvancement(state, result, assessment)).toBeUndefined();
     expect(state.characters).toHaveLength(2);
+  });
+
+  it("marks the final active set mastered only after completion acceptance", () => {
+    const state = stateWith(DEFAULT_CURRICULUM_CONFIG.order.length);
+    const result = stream(
+      state.characters.flatMap(({ character }) => observations(character, 8)),
+    );
+    const assessment = evaluateAdvancementEvidence(state, result);
+    const characterCount = state.characters.length;
+
+    expect(state.characters.some(({ state }) => state !== "mastered")).toBe(
+      true,
+    );
+    expect(
+      acceptAdvancement(state, result, assessment, "2026-09-24T18:00:00.000Z"),
+    ).toEqual({
+      type: "curriculum-completed",
+    });
+    expect(state.characters).toHaveLength(characterCount);
+    expect(state.characters).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          state: "mastered",
+          masteredAt: "2026-09-24T18:00:00.000Z",
+        }),
+      ]),
+    );
+    expect(state.characters.every(({ state }) => state === "mastered")).toBe(
+      true,
+    );
   });
 });
