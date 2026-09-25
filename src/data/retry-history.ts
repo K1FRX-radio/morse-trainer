@@ -10,6 +10,11 @@ export type RetryCounterIdentity = {
 export type RetryClassification = {
   consecutiveAccuracyMisses: number;
   shouldSuggestSpacing: boolean;
+  isolatedPerformance?: {
+    eligibleObservations: number;
+    eligibleCorrect: number;
+    accuracy: number;
+  };
 };
 
 function sameCharacters(
@@ -71,7 +76,9 @@ export function classifyRetryHistory(
     .filter(
       (session) =>
         session.mode === "learn" &&
-        sameCharacters(session.unlockedAtStart, identity.activeCharacters),
+        sameCharacters(session.unlockedAtStart, identity.activeCharacters) &&
+        session.charWpm === identity.charWpm &&
+        session.effectiveWpm === identity.effectiveWpm,
     )
     .sort(
       (left, right) =>
@@ -112,9 +119,40 @@ export function classifyRetryHistory(
     }
   }
 
+  const isolatedObservations = latestFullLesson
+    ? attempts
+        .filter(
+          (attempt) =>
+            attempt.sessionId === latestFullLesson.id &&
+            attempt.exerciseType === "copy-character" &&
+            !attempt.assisted &&
+            !attempt.replayed &&
+            !attempt.abandoned,
+        )
+        .flatMap((attempt) =>
+          attempt.observations.filter(
+            (observation) =>
+              observation.target !== undefined &&
+              observation.kind !== "insertion",
+          ),
+        )
+    : [];
+  const isolatedCorrect = isolatedObservations.filter(
+    ({ correct }) => correct,
+  ).length;
+
   return {
     consecutiveAccuracyMisses,
     shouldSuggestSpacing:
       threshold !== "off" && consecutiveAccuracyMisses >= threshold,
+    ...(isolatedObservations.length > 0
+      ? {
+          isolatedPerformance: {
+            eligibleObservations: isolatedObservations.length,
+            eligibleCorrect: isolatedCorrect,
+            accuracy: isolatedCorrect / isolatedObservations.length,
+          },
+        }
+      : {}),
   };
 }

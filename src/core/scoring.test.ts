@@ -125,6 +125,13 @@ describe("gradeCopyDetailed", () => {
       deletions: 0,
       substitutions: 0,
       perChar: [true, true, true, true],
+      alignment: [
+        { kind: "match", target: "K", answer: "K" },
+        { kind: "insertion", answer: "X" },
+        { kind: "match", target: "M", answer: "M" },
+        { kind: "match", target: "U", answer: "U" },
+        { kind: "match", target: "R", answer: "R" },
+      ],
     });
     expect(gradeCopyDetailed("KMUR", "KMR")).toMatchObject({
       alignedCorrect: 3,

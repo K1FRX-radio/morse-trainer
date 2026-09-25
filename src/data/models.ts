@@ -44,6 +44,8 @@ export type TrainingSessionRecord = PersistedRecord & {
   activeMs: number;
   activeDateBuckets: ActiveDateBucket[];
   attemptCount: number;
+  /** Non-abandoned attempts eligible to satisfy session validity. */
+  finalizedAttemptCount?: number;
   completedCards: number;
   valid: boolean;
   charWpm: number;

@@ -213,6 +213,11 @@ describe("LearnSession modes", () => {
       mode: "review",
       rng: createRng(17),
       continuousCopyDurationMs: 60000,
+      sessionConfig: { idleThresholdMs: 60000, minActiveMs: 30000 },
+      now: (() => {
+        let now = 0;
+        return () => (now += 30000);
+      })(),
     });
     session.start(0);
 
@@ -235,6 +240,8 @@ describe("LearnSession modes", () => {
       mode: "review",
       cards: 0,
       attempts: 0,
+      finalizedAttempts: 1,
+      valid: true,
       isolatedPrompts: 0,
       groups: 0,
       words: 0,
@@ -766,6 +773,9 @@ describe("LearnSession transitions", () => {
     ).toEqual(attemptsBefore);
     expect(session.summary().continuousCopyResult).toBe(result);
     expect(session.summary().advancementAssessment?.reason).toBe("ABANDONED");
+    expect(session.summary().finalizedAttempts).toBe(
+      session.summary().attempts,
+    );
   });
 
   it("omits word copy when the active vocabulary pool is too small", () => {

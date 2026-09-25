@@ -7,10 +7,15 @@ import { encodeText, isSupportedCharacter } from "../../core/morse.ts";
 import { createRng } from "../../core/rng.ts";
 import { recommendedContinuousCopyDurationMs } from "../../core/settings.ts";
 import type { CharacterProgress } from "../../core/types.ts";
+import type {
+  LearnPersistenceSnapshot,
+  LearnSessionPersistence,
+} from "../../data/learn-persistence.ts";
 import type { RetryClassification } from "../../data/retry-history.ts";
 import { acceptAdvancement as acceptAdvancementOffer } from "../../training/advancement.ts";
 import {
   LearnSession,
+  MIN_RETRY_ISOLATED_OBSERVATIONS,
   type LessonEvent,
   type LessonNotification,
   type LessonTransition,
@@ -77,6 +82,7 @@ export function useLearnSession() {
     saveCurriculum,
     loadIntroductions,
     saveIntroductions,
+    startLearnSessionPersistence,
     getRetryClassification,
   } = useTrainingData();
   const audio = useLearnAudio();
@@ -89,6 +95,7 @@ export function useLearnSession() {
     stateRef.current = loadCurriculum();
   }
   const sessionRef = useRef<LearnSession | undefined>(undefined);
+  const persistenceRef = useRef<LearnSessionPersistence | undefined>(undefined);
 
   // Flow tokens invalidate stale async transitions; the one-shot lock guarantees
   // exactly one accepted answer per presented prompt.
@@ -134,22 +141,55 @@ export function useLearnSession() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [, forceTick] = useState(0);
 
+  const persistenceSnapshot = useCallback(
+    (session: LearnSession): LearnPersistenceSnapshot => ({
+      activeMs: session.elapsedActiveMs,
+      completedCards: session.completedCards,
+      curriculum: stateRef.current,
+      introductions: [
+        ...loadIntroductions(),
+        ...session.completedIntroductions,
+      ],
+    }),
+    [loadIntroductions],
+  );
+
   const recordContinuousCopy = useCallback(
     (typed: string, durationCompleted: number, abandoned: boolean) => {
       const session = sessionRef.current;
       if (!session) {
         throw new Error("continuous copy completed without a Learn session");
       }
+      const event = session.currentEvent;
+      if (event?.type !== "continuous-copy") {
+        throw new Error("continuous copy event is unavailable");
+      }
       const result = session.completeContinuousCopy(
         typed,
         durationCompleted,
         abandoned,
       );
+      const assessment = session.summary().advancementAssessment;
+      void persistenceRef.current
+        ?.recordAttempt(
+          {
+            exerciseType: "continuous-copy",
+            target: event.plan.gradingTarget,
+            response: typed,
+            assisted: false,
+            replayed: false,
+            abandoned,
+            durationMs: durationCompleted,
+            ...(assessment ? { readinessReason: assessment.reason } : {}),
+          },
+          persistenceSnapshot(session),
+        )
+        .catch(() => undefined);
       saveCurriculum(stateRef.current);
       forceTick((value) => value + 1);
       return result;
     },
-    [saveCurriculum],
+    [persistenceSnapshot, saveCurriculum],
   );
   const continuousCopy = useContinuousCopy({
     audio,
@@ -254,15 +294,22 @@ export function useLearnSession() {
     const completedSummary = session.end();
     setSummary(completedSummary);
     setRetryClassification(undefined);
+    const finalized = persistenceRef.current?.finish(
+      persistenceSnapshot(session),
+    );
+    persistenceRef.current = undefined;
     if (completedSummary.advancementAssessment) {
-      void getRetryClassification(
-        {
-          activeCharacters: session.unlockedNow,
-          charWpm: settings.charWpm,
-          effectiveWpm: settings.effectiveWpm,
-        },
-        settings.speedSuggestionAfterAttempts,
-      )
+      void Promise.resolve(finalized)
+        .then(() =>
+          getRetryClassification(
+            {
+              activeCharacters: session.unlockedNow,
+              charWpm: settings.charWpm,
+              effectiveWpm: settings.effectiveWpm,
+            },
+            settings.speedSuggestionAfterAttempts,
+          ),
+        )
         .then((classification) => {
           if (sessionRef.current === session) {
             setRetryClassification(classification);
@@ -296,6 +343,7 @@ export function useLearnSession() {
     nextFlowToken,
     saveCurriculum,
     saveIntroductions,
+    persistenceSnapshot,
     getRetryClassification,
     settings.charWpm,
     settings.effectiveWpm,
@@ -392,8 +440,19 @@ export function useLearnSession() {
         continuousCopyDurationMs: settings.continuousCopyDurationMs,
         continuousCopyTiming: sessionTiming,
       });
+      const persistence = await startLearnSessionPersistence({
+        mode,
+        activeCharacters: session.unlockedNow,
+        settings: {
+          charWpm: sessionTiming.charWpm,
+          effectiveWpm: sessionTiming.effectiveWpm,
+          toneHz: settings.toneHz,
+          noiseLevel: settings.noiseLevel,
+        },
+      });
       session.start();
       sessionRef.current = session;
+      persistenceRef.current = persistence;
       introDoneToken.current = null;
       setSummary(undefined);
       setRetryClassification(undefined);
@@ -410,8 +469,11 @@ export function useLearnSession() {
       continuousCopy,
       nextFlowToken,
       settings.continuousCopyDurationMs,
+      settings.noiseLevel,
+      settings.toneHz,
       timing,
       loadIntroductions,
+      startLearnSessionPersistence,
     ],
   );
 
@@ -428,11 +490,21 @@ export function useLearnSession() {
   const retryRecommendation: RetryRecommendation | undefined = useMemo(() => {
     const assessment = summary?.advancementAssessment;
     if (!assessment || assessment.eligible) return undefined;
+    const historicalIsolated = retryClassification?.isolatedPerformance;
+    const isolatedObservations =
+      summary.mode === "review" && historicalIsolated
+        ? historicalIsolated.eligibleObservations
+        : summary.eligibleIsolatedObservations;
+    const isolatedAccuracy =
+      summary.mode === "review" && historicalIsolated
+        ? historicalIsolated.accuracy
+        : summary.isolatedAccuracy;
     return recommendRetry({
       reason: assessment.reason,
-      isolatedObservations: summary.eligibleIsolatedObservations,
-      isolatedAccuracy: summary.isolatedAccuracy,
-      hasMinimumIsolatedSample: summary.hasMinimumIsolatedSample,
+      isolatedObservations,
+      isolatedAccuracy,
+      hasMinimumIsolatedSample:
+        isolatedObservations >= MIN_RETRY_ISOLATED_OBSERVATIONS,
       shouldSuggestSpacing: retryClassification?.shouldSuggestSpacing ?? false,
       charWpm: settings.charWpm,
       effectiveWpm: settings.effectiveWpm,
@@ -454,6 +526,25 @@ export function useLearnSession() {
       const ex = exerciseRef.current;
       if (!session || !ex) return;
       const outcome = session.submit(input);
+      if (
+        outcome.exercise.type === "copy-character" ||
+        outcome.exercise.type === "copy-group" ||
+        outcome.exercise.type === "copy-word"
+      ) {
+        void persistenceRef.current
+          ?.recordAttempt(
+            {
+              exerciseType: outcome.exercise.type,
+              target: outcome.exercise.target,
+              response: typeof input === "string" ? input : "",
+              assisted: outcome.assisted,
+              replayed: outcome.replayed,
+              abandoned: false,
+            },
+            persistenceSnapshot(session),
+          )
+          .catch(() => undefined);
+      }
       saveCurriculum(stateRef.current);
       forceTick((n) => n + 1);
       setFeedback({
@@ -473,7 +564,7 @@ export function useLearnSession() {
         setAwaitingContinue(true);
       }
     },
-    [auto, play, saveCurriculum],
+    [auto, persistenceSnapshot, play, saveCurriculum],
   );
 
   // The single one-shot gate: returns the current token and locks, or null.

@@ -18,6 +18,10 @@ import {
 } from "../../core/settings.ts";
 import type { Schedule } from "../../core/timing.ts";
 import type { RetryClassification } from "../../data/retry-history.ts";
+import type {
+  LearnPersistenceStart,
+  LearnSessionPersistence,
+} from "../../data/learn-persistence.ts";
 import { DEFAULT_LESSON_CONFIG } from "../../training/lesson-plan.ts";
 import { sanitizeCopyInput } from "../copy-input.ts";
 import { LearnAudioContext, type LearnAudio } from "../learn-audio-context.ts";
@@ -101,10 +105,20 @@ function TrainingDataFixture({
     consecutiveAccuracyMisses: 0,
     shouldSuggestSpacing: false,
   },
+  startLearnSessionPersistence,
+  getRetryClassification,
 }: {
   children: ReactNode;
   retryClassification?: RetryClassification;
+  startLearnSessionPersistence?: (
+    options: LearnPersistenceStart,
+  ) => Promise<LearnSessionPersistence>;
+  getRetryClassification?: () => Promise<RetryClassification>;
 }) {
+  const persistence: LearnSessionPersistence = {
+    recordAttempt: () => Promise.resolve(),
+    finish: () => Promise.resolve(),
+  };
   return (
     <TrainingDataContext.Provider
       value={{
@@ -120,7 +134,11 @@ function TrainingDataFixture({
             "k1frx.introduced.v1",
             JSON.stringify(characters),
           ),
-        getRetryClassification: () => Promise.resolve(retryClassification),
+        startLearnSessionPersistence:
+          startLearnSessionPersistence ?? (() => Promise.resolve(persistence)),
+        getRetryClassification:
+          getRetryClassification ??
+          (() => Promise.resolve(retryClassification)),
       }}
     >
       {children}
@@ -134,6 +152,10 @@ function renderLearn(
   options: {
     retryClassification?: RetryClassification;
     persistSettings?: (settings: PracticeSettings) => void;
+    startLearnSessionPersistence?: (
+      options: LearnPersistenceStart,
+    ) => Promise<LearnSessionPersistence>;
+    getRetryClassification?: () => Promise<RetryClassification>;
   } = {},
 ) {
   return render(
@@ -146,6 +168,15 @@ function renderLearn(
       <TrainingDataFixture
         {...(options.retryClassification
           ? { retryClassification: options.retryClassification }
+          : {})}
+        {...(options.startLearnSessionPersistence
+          ? {
+              startLearnSessionPersistence:
+                options.startLearnSessionPersistence,
+            }
+          : {})}
+        {...(options.getRetryClassification
+          ? { getRetryClassification: options.getRetryClassification }
           : {})}
       >
         <LearnAudioContext.Provider value={audio}>
@@ -1447,6 +1478,52 @@ describe("LearnScreen advancement", () => {
     ).toBeEnabled();
   });
 
+  it("finalizes durable Learn evidence before reading retry history", async () => {
+    const fake = makeFakeAudio();
+    const events: string[] = [];
+    const persistence: LearnSessionPersistence = {
+      recordAttempt: async (evidence) => {
+        if (evidence.exerciseType === "continuous-copy") {
+          events.push("continuous-copy");
+        }
+      },
+      finish: async () => {
+        events.push("finalize");
+      },
+    };
+    renderLearn(
+      fake.audio,
+      {},
+      {
+        startLearnSessionPersistence: async () => {
+          events.push("create");
+          return persistence;
+        },
+        getRetryClassification: async () => {
+          events.push("classify");
+          return {
+            consecutiveAccuracyMisses: 1,
+            shouldSuggestSpacing: false,
+          };
+        },
+      },
+    );
+
+    await completeContinuousCopy(fake, (target) =>
+      [...target]
+        .map((character, index) => (index < 11 ? "U" : character))
+        .join(""),
+    );
+    await flush();
+
+    expect(events[0]).toBe("create");
+    expect(events.slice(-3)).toEqual([
+      "continuous-copy",
+      "finalize",
+      "classify",
+    ]);
+  });
+
   it("starts another lesson without unlocking from the secondary action", async () => {
     const fake = makeFakeAudio();
     renderLearn(fake.audio);
@@ -1526,6 +1603,50 @@ describe("LearnScreen advancement", () => {
       expect.objectContaining({ charWpm: 20, effectiveWpm: 10 }),
     );
     expect(screen.getByLabelText("Continuous copy")).toHaveFocus();
+  });
+
+  it("preserves full-lesson isolated weakness after a long-copy retry", async () => {
+    const fake = makeFakeAudio();
+    renderLearn(
+      fake.audio,
+      {},
+      {
+        retryClassification: {
+          consecutiveAccuracyMisses: 1,
+          shouldSuggestSpacing: false,
+          isolatedPerformance: {
+            eligibleObservations: 12,
+            eligibleCorrect: 8,
+            accuracy: 8 / 12,
+          },
+        },
+      },
+    );
+    await completeContinuousCopy(fake, (target) =>
+      [...target]
+        .map((character, index) => (index < 11 ? "U" : character))
+        .join(""),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Practice long copy" }));
+    await flush();
+    const reviewTarget = fake.pending[0]?.text ?? "";
+    fireEvent.change(screen.getByLabelText("Continuous copy"), {
+      target: {
+        value: [...reviewTarget]
+          .map((character, index) => (index < 11 ? "U" : character))
+          .join(""),
+      },
+    });
+    await resolvePlay(fake);
+    await tick(2000);
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await flush();
+
+    const retryButtons = screen
+      .getAllByRole("button")
+      .map((button) => button.textContent);
+    expect(retryButtons).toEqual(["Restart full lesson", "Practice long copy"]);
   });
 
   it("gives unresolved review priority and never offers advancement", async () => {

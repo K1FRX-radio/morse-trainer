@@ -5,6 +5,10 @@ import type {
   RetryClassification,
   RetryCounterIdentity,
 } from "../data/retry-history.ts";
+import type {
+  LearnPersistenceStart,
+  LearnSessionPersistence,
+} from "../data/learn-persistence.ts";
 import { TrainingDataContext } from "./training-data-context.ts";
 
 type TrainingDataProviderProps = {
@@ -13,6 +17,9 @@ type TrainingDataProviderProps = {
   initialIntroductions: string[];
   persistCurriculum?: (state: CurriculumState) => unknown;
   persistIntroductions?: (characters: string[]) => unknown;
+  startLearnSessionPersistence: (
+    options: LearnPersistenceStart,
+  ) => Promise<LearnSessionPersistence>;
   getRetryClassification: (
     identity: RetryCounterIdentity,
     threshold: SpeedSuggestionAfterAttempts,
@@ -33,6 +40,7 @@ export function TrainingDataProvider({
   initialIntroductions,
   persistCurriculum,
   persistIntroductions,
+  startLearnSessionPersistence,
   getRetryClassification,
 }: TrainingDataProviderProps) {
   const curriculum = useRef(structuredClone(initialCurriculum));
@@ -70,6 +78,7 @@ export function TrainingDataProvider({
       saveCurriculum,
       loadIntroductions,
       saveIntroductions,
+      startLearnSessionPersistence,
       getRetryClassification,
     }),
     [
@@ -77,6 +86,7 @@ export function TrainingDataProvider({
       saveCurriculum,
       loadIntroductions,
       saveIntroductions,
+      startLearnSessionPersistence,
       getRetryClassification,
     ],
   );

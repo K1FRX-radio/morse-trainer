@@ -14,6 +14,16 @@ export type DetailedCopyGrade = CopyGrade & {
   insertions: number;
   deletions: number;
   substitutions: number;
+  alignment: CopyAlignmentObservation[];
+};
+
+export type CopyAlignmentObservation = {
+  kind: "match" | "substitution" | "deletion" | "insertion";
+  correct: boolean;
+  targetIndex?: number;
+  target?: string;
+  answerIndex?: number;
+  answer?: string;
 };
 
 /** Uppercases and removes whitespace so copy answers compare cleanly. */
@@ -94,6 +104,7 @@ export function gradeCopyDetailed(
   let insertions = 0;
   let deletions = 0;
   let substitutions = 0;
+  const alignment: CopyAlignmentObservation[] = [];
   let i = n;
   let j = m;
   while (i > 0 && j > 0) {
@@ -102,21 +113,68 @@ export function gradeCopyDetailed(
       if (t[i - 1] === a[j - 1]) {
         perChar[i - 1] = true;
         alignedCorrect += 1;
+        alignment.push({
+          kind: "match",
+          correct: true,
+          targetIndex: i - 1,
+          target: t[i - 1],
+          answerIndex: j - 1,
+          answer: a[j - 1],
+        });
       } else {
         substitutions += 1;
+        alignment.push({
+          kind: "substitution",
+          correct: false,
+          targetIndex: i - 1,
+          target: t[i - 1],
+          answerIndex: j - 1,
+          answer: a[j - 1],
+        });
       }
       i -= 1;
       j -= 1;
     } else if (direction === 1) {
       deletions += 1;
+      alignment.push({
+        kind: "deletion",
+        correct: false,
+        targetIndex: i - 1,
+        target: t[i - 1],
+      });
       i -= 1;
     } else {
       insertions += 1;
+      alignment.push({
+        kind: "insertion",
+        correct: false,
+        answerIndex: j - 1,
+        answer: a[j - 1],
+      });
       j -= 1;
     }
   }
-  deletions += i;
-  insertions += j;
+  while (i > 0) {
+    deletions += 1;
+    alignment.push({
+      kind: "deletion",
+      correct: false,
+      targetIndex: i - 1,
+      target: t[i - 1],
+    });
+    i -= 1;
+  }
+  while (j > 0) {
+    insertions += 1;
+    alignment.push({
+      kind: "insertion",
+      correct: false,
+      answerIndex: j - 1,
+      answer: a[j - 1],
+    });
+    j -= 1;
+  }
+  alignment.reverse();
 
   return {
     correct: a === t,
@@ -127,5 +185,6 @@ export function gradeCopyDetailed(
     insertions,
     deletions,
     substitutions,
+    alignment,
   };
 }

@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import { App } from "./App.tsx";
 import { createTrainingDataBootstrap } from "./data/bootstrap.ts";
+import { DurableLearnSession } from "./data/learn-persistence.ts";
 import type { PracticeSettings } from "./core/settings.ts";
 import { LearnAudioProvider } from "./ui/learn-audio.tsx";
 import { SettingsProvider } from "./ui/settings-provider.tsx";
@@ -41,6 +42,9 @@ async function start(): Promise<void> {
             }
             persistIntroductions={(characters) =>
               bootstrap.repository.saveIntroductions(characters)
+            }
+            startLearnSessionPersistence={(options) =>
+              DurableLearnSession.create(bootstrap.repository, options)
             }
             getRetryClassification={(identity, threshold) =>
               bootstrap.repository.getRetryClassification(identity, threshold)

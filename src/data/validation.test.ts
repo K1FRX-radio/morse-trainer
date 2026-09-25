@@ -92,8 +92,8 @@ function validAttempt(
 
 describe("persisted record semantics", () => {
   it("defaults the speed-suggestion threshold in old portable settings", () => {
-      const oldSettings: Record<string, unknown> = { ...DEFAULT_SETTINGS };
-      delete oldSettings.speedSuggestionAfterAttempts;
+    const oldSettings: Record<string, unknown> = { ...DEFAULT_SETTINGS };
+    delete oldSettings.speedSuggestionAfterAttempts;
     expect(
       parsePortableSettingsRecord({
         id: "portable-settings",

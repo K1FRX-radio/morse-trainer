@@ -5,12 +5,19 @@ import type {
   RetryClassification,
   RetryCounterIdentity,
 } from "../data/retry-history.ts";
+import type {
+  LearnPersistenceStart,
+  LearnSessionPersistence,
+} from "../data/learn-persistence.ts";
 
 export type TrainingDataContextValue = {
   loadCurriculum: () => CurriculumState;
   saveCurriculum: (state: CurriculumState) => void;
   loadIntroductions: () => string[];
   saveIntroductions: (characters: string[]) => void;
+  startLearnSessionPersistence: (
+    options: LearnPersistenceStart,
+  ) => Promise<LearnSessionPersistence>;
   getRetryClassification: (
     identity: RetryCounterIdentity,
     threshold: SpeedSuggestionAfterAttempts,

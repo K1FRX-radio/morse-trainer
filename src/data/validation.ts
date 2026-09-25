@@ -62,6 +62,7 @@ export const trainingSessionRecordSchema = persistedRecordSchema
     activeMs: z.number().finite().nonnegative(),
     activeDateBuckets: z.array(activeDateBucketSchema),
     attemptCount: z.number().int().nonnegative(),
+    finalizedAttemptCount: z.number().int().nonnegative().optional(),
     completedCards: z.number().int().nonnegative(),
     valid: z.boolean(),
     charWpm: z.number().finite().positive(),
@@ -97,7 +98,20 @@ export const trainingSessionRecordSchema = persistedRecordSchema
         message: "effective WPM cannot exceed character WPM",
       });
     }
-    const expectedValidity = isValidTrainingSession(session);
+    if (
+      session.finalizedAttemptCount !== undefined &&
+      session.finalizedAttemptCount > session.attemptCount
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["finalizedAttemptCount"],
+        message: "finalizedAttemptCount cannot exceed attemptCount",
+      });
+    }
+    const expectedValidity = isValidTrainingSession({
+      activeMs: session.activeMs,
+      attemptCount: session.finalizedAttemptCount ?? session.attemptCount,
+    });
     if (session.valid !== expectedValidity) {
       context.addIssue({
         code: "custom",

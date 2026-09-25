@@ -56,6 +56,8 @@ export const DEFAULT_SESSION_CONFIG: SessionConfig = {
 export type AttemptOutcome = {
   exercise: PlannedExercise;
   correct: boolean;
+  assisted: boolean;
+  replayed: boolean;
 };
 
 export type LessonTransition = {
@@ -128,6 +130,8 @@ export type SessionSummary = {
   cards: number;
   /** Scored attempts (excludes introductions). */
   attempts: number;
+  /** Persistable attempts, including a completed continuous-copy stream. */
+  finalizedAttempts: number;
   correct: number;
   accuracy: number;
   rxAttempts: number;
@@ -208,6 +212,7 @@ export class LearnSession {
   private activeMs = 0;
 
   private cards = 0;
+  private finalizedOrdinaryAttempts = 0;
   private attempts = 0;
   private correctCount = 0;
   private rxAttempts = 0;
@@ -462,8 +467,14 @@ export class LearnSession {
 
     if (exercise.type === "introduce") {
       this.introducedCompleted.add(exercise.target);
-      return { exercise, correct: true };
+      return {
+        exercise,
+        correct: true,
+        assisted: false,
+        replayed: false,
+      };
     }
+    this.finalizedOrdinaryAttempts += 1;
 
     // Assisted or replayed cards reveal or repeat the answer, so they are
     // teaching moments and must not feed the curriculum or scored accuracy.
@@ -533,7 +544,12 @@ export class LearnSession {
         progress.reviewStreak = 0;
       }
     }
-    return { exercise, correct };
+    return {
+      exercise,
+      correct,
+      assisted: exercise.assisted,
+      replayed: this.replayedThisCard,
+    };
   }
 
   pause(time = this.now()): void {
@@ -587,11 +603,17 @@ export class LearnSession {
     const advancementAssessment = this.lastContinuousCopyResult
       ? evaluateAdvancementEvidence(this.state, this.lastContinuousCopyResult)
       : undefined;
+    const finalizedAttempts =
+      this.finalizedOrdinaryAttempts +
+      (this.lastContinuousCopyResult && !this.lastContinuousCopyResult.abandoned
+        ? 1
+        : 0);
     return {
       mode: this.mode,
       activeMs: this.activeMs,
       cards: this.cards,
       attempts: this.attempts,
+      finalizedAttempts,
       correct: this.correctCount,
       accuracy: this.attempts === 0 ? 0 : this.correctCount / this.attempts,
       rxAttempts: this.rxAttempts,
@@ -628,7 +650,7 @@ export class LearnSession {
       charactersNeedingReview: reviewCharacters(this.state),
       charactersPracticed: [...this.practiced],
       valid: isValidTrainingSession(
-        { activeMs: this.activeMs, attemptCount: this.attempts },
+        { activeMs: this.activeMs, attemptCount: finalizedAttempts },
         this.config.minActiveMs,
       ),
       ...(this.lastContinuousCopyResult
