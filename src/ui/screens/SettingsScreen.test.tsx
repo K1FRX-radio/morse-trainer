@@ -45,4 +45,20 @@ describe("SettingsScreen continuous copy", () => {
     );
     expect(localStorage.getItem("k1frx.settings.v1")).toBeNull();
   });
+
+  it("persists the speed-suggestion threshold and supports Off", () => {
+    const persistSettings = vi.fn();
+    renderSettings(DEFAULT_SETTINGS, persistSettings);
+
+    fireEvent.change(screen.getByLabelText("Suggest more spacing after"), {
+      target: { value: "off" },
+    });
+
+    expect(screen.getByLabelText("Suggest more spacing after")).toHaveValue(
+      "off",
+    );
+    expect(persistSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ speedSuggestionAfterAttempts: "off" }),
+    );
+  });
 });

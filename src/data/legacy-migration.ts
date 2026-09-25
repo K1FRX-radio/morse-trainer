@@ -91,6 +91,14 @@ function normalizeLegacySettings(raw: string | null): PracticeSettings {
   if (typeof value.continuousCopyDurationMs === "number") {
     settings.continuousCopyDurationMs = value.continuousCopyDurationMs as never;
   }
+  if (
+    value.speedSuggestionAfterAttempts === 3 ||
+    value.speedSuggestionAfterAttempts === 4 ||
+    value.speedSuggestionAfterAttempts === 5 ||
+    value.speedSuggestionAfterAttempts === "off"
+  ) {
+    settings.speedSuggestionAfterAttempts = value.speedSuggestionAfterAttempts;
+  }
   return normalizeSettings(settings);
 }
 

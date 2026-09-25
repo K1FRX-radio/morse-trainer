@@ -55,6 +55,27 @@ describe("normalizeSettings", () => {
         .continuousCopyDurationMs,
     ).toBe(60000);
   });
+
+  it("defaults old settings to three attempts before a speed suggestion", () => {
+    expect(normalizeSettings({}).speedSuggestionAfterAttempts).toBe(3);
+  });
+
+  it.each([3, 4, 5, "off"] as const)(
+    "accepts %s as the speed-suggestion threshold",
+    (speedSuggestionAfterAttempts) => {
+      expect(
+        normalizeSettings({ speedSuggestionAfterAttempts })
+          .speedSuggestionAfterAttempts,
+      ).toBe(speedSuggestionAfterAttempts);
+    },
+  );
+
+  it("rejects unsupported speed-suggestion thresholds", () => {
+    expect(
+      normalizeSettings({ speedSuggestionAfterAttempts: 2 as 3 })
+        .speedSuggestionAfterAttempts,
+    ).toBe(3);
+  });
 });
 
 describe("recommendedContinuousCopyDurationMs", () => {

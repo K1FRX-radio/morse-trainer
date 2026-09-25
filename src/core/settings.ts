@@ -4,10 +4,17 @@
 
 export type PacingMode = "auto" | "manual";
 export type ContinuousCopyDurationMs = 60000 | 180000 | 300000 | 600000;
+export type SpeedSuggestionAfterAttempts = 3 | 4 | 5 | "off";
 
 export const CONTINUOUS_COPY_DURATIONS = [
   60000, 180000, 300000, 600000,
 ] as const satisfies readonly ContinuousCopyDurationMs[];
+export const SPEED_SUGGESTION_THRESHOLDS = [
+  3,
+  4,
+  5,
+  "off",
+] as const satisfies readonly SpeedSuggestionAfterAttempts[];
 
 export type PracticeSettings = {
   /** Character speed in WPM; sets element and intra-character timing. */
@@ -24,6 +31,8 @@ export type PracticeSettings = {
   pacing: PacingMode;
   /** Requested duration of the continuous-copy portion of a Learn lesson. */
   continuousCopyDurationMs: ContinuousCopyDurationMs;
+  /** Consecutive qualifying misses before suggesting more spacing. */
+  speedSuggestionAfterAttempts: SpeedSuggestionAfterAttempts;
 };
 
 export type SettingRange = {
@@ -52,6 +61,7 @@ export const DEFAULT_SETTINGS: PracticeSettings = {
   noiseLevel: SETTING_RANGES.noiseLevel.default,
   pacing: "auto",
   continuousCopyDurationMs: 60000,
+  speedSuggestionAfterAttempts: 3,
 };
 
 function clamp(value: number, range: SettingRange): number {
@@ -100,6 +110,11 @@ export function normalizeSettings(
     )
       ? (settings.continuousCopyDurationMs as ContinuousCopyDurationMs)
       : DEFAULT_SETTINGS.continuousCopyDurationMs,
+    speedSuggestionAfterAttempts: SPEED_SUGGESTION_THRESHOLDS.includes(
+      settings.speedSuggestionAfterAttempts as SpeedSuggestionAfterAttempts,
+    )
+      ? (settings.speedSuggestionAfterAttempts as SpeedSuggestionAfterAttempts)
+      : DEFAULT_SETTINGS.speedSuggestionAfterAttempts,
   };
 }
 

@@ -431,6 +431,9 @@ const practiceSettingsSchema = z
       z.literal(300000),
       z.literal(600000),
     ]),
+    speedSuggestionAfterAttempts: z
+      .union([z.literal(3), z.literal(4), z.literal(5), z.literal("off")])
+      .default(3),
   })
   .strict()
   .refine((settings) => settings.effectiveWpm <= settings.charWpm, {

@@ -1,9 +1,11 @@
 import { useState } from "react";
 import {
   CONTINUOUS_COPY_DURATIONS,
+  SPEED_SUGGESTION_THRESHOLDS,
   SETTING_RANGES,
   type ContinuousCopyDurationMs,
   type PracticeSettings,
+  type SpeedSuggestionAfterAttempts,
 } from "../../core/settings.ts";
 import {
   getOutputSupport,
@@ -145,6 +147,31 @@ export function SettingsScreen() {
               </option>
             );
           })}
+        </select>
+      </label>
+
+      <label className="field">
+        <span className="field__label">Suggest more spacing after</span>
+        <select
+          value={settings.speedSuggestionAfterAttempts}
+          onChange={(event) =>
+            update({
+              speedSuggestionAfterAttempts:
+                event.target.value === "off"
+                  ? "off"
+                  : (Number(
+                      event.target.value,
+                    ) as SpeedSuggestionAfterAttempts),
+            })
+          }
+        >
+          {SPEED_SUGGESTION_THRESHOLDS.map((threshold) => (
+            <option key={threshold} value={threshold}>
+              {threshold === "off"
+                ? "Off"
+                : `${threshold} continuous-copy attempts`}
+            </option>
+          ))}
         </select>
       </label>
 

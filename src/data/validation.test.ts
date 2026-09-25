@@ -1,5 +1,7 @@
+import { DEFAULT_SETTINGS } from "../core/settings.ts";
 import type { TrainingAttemptRecord, TrainingSessionRecord } from "./models.ts";
 import {
+  parsePortableSettingsRecord,
   parseTrainingAttempts,
   parseTrainingDataset,
   parseTrainingSessions,
@@ -89,6 +91,19 @@ function validAttempt(
 }
 
 describe("persisted record semantics", () => {
+  it("defaults the speed-suggestion threshold in old portable settings", () => {
+      const oldSettings: Record<string, unknown> = { ...DEFAULT_SETTINGS };
+      delete oldSettings.speedSuggestionAfterAttempts;
+    expect(
+      parsePortableSettingsRecord({
+        id: "portable-settings",
+        schemaVersion: 1,
+        updatedAt: "2026-09-24T17:05:00.000Z",
+        value: oldSettings,
+      }).value.speedSuggestionAfterAttempts,
+    ).toBe(3);
+  });
+
   it("accepts Learn-sourced review sessions", () => {
     expect(parseTrainingSessions([validSession({ mode: "review" })])).toEqual([
       validSession({ mode: "review" }),
