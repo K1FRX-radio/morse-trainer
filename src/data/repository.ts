@@ -37,20 +37,42 @@ export type PersistenceResult<T extends object = object> = {
   session: TrainingSessionRecord;
 } & T;
 
-export type AttemptCommit = {
+type BaseAttemptCommit = {
   expectedSessionRevision: number;
   session: TrainingSessionRecord;
   attempt: TrainingAttemptRecord;
+};
+
+export type LearnAttemptCommit = BaseAttemptCommit & {
   curriculum?: CurriculumStateRecord;
   introductions?: IntroductionsRecord;
 };
+
+export type PracticeAttemptCommit = BaseAttemptCommit;
+
+type SharedAttemptCommit = BaseAttemptCommit & {
+  curriculum?: CurriculumStateRecord;
+  introductions?: IntroductionsRecord;
+};
+
+const PROHIBITED_PRACTICE_COMMIT_FIELDS = [
+  "curriculum",
+  "introductions",
+  "progressionEvents",
+  "milestones",
+  "advancement",
+  "mastery",
+] as const;
 
 export interface TrainingDataRepository extends LegacyMigrationRepository {
   open(): Promise<SchemaMetadataRecord>;
   close(): void;
   createSession(session: TrainingSessionRecord): Promise<PersistenceResult>;
-  commitAttempt(
-    commit: AttemptCommit,
+  commitLearnAttempt(
+    commit: LearnAttemptCommit,
+  ): Promise<PersistenceResult<{ attempt: TrainingAttemptRecord }>>;
+  commitPracticeAttempt(
+    commit: PracticeAttemptCommit,
   ): Promise<PersistenceResult<{ attempt: TrainingAttemptRecord }>>;
   finalizeSession(
     session: TrainingSessionRecord,
@@ -75,6 +97,16 @@ function defaultId(): string {
 
 function recordsEqual(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function assertNoPracticeProgressionData(commit: PracticeAttemptCommit): void {
+  const payload = commit as PracticeAttemptCommit & Record<string, unknown>;
+  const prohibitedField = PROHIBITED_PRACTICE_COMMIT_FIELDS.find((field) =>
+    Object.prototype.hasOwnProperty.call(payload, field),
+  );
+  if (prohibitedField !== undefined) {
+    throw new Error(`practice commits cannot include ${prohibitedField}`);
+  }
 }
 
 function instant(value: string, label: string): number {
@@ -203,8 +235,35 @@ export class DexieTrainingRepository implements TrainingDataRepository {
     });
   }
 
-  async commitAttempt(
-    commit: AttemptCommit,
+  async commitLearnAttempt(
+    commit: LearnAttemptCommit,
+  ): Promise<PersistenceResult<{ attempt: TrainingAttemptRecord }>> {
+    if (
+      commit.session.source !== "learn" ||
+      commit.attempt.source !== "learn"
+    ) {
+      throw new Error("Learn attempt commits require Learn source records");
+    }
+    return this.commitAttempt(commit);
+  }
+
+  async commitPracticeAttempt(
+    commit: PracticeAttemptCommit,
+  ): Promise<PersistenceResult<{ attempt: TrainingAttemptRecord }>> {
+    assertNoPracticeProgressionData(commit);
+    if (
+      commit.session.source === "learn" ||
+      commit.attempt.source === "learn"
+    ) {
+      throw new Error(
+        "Practice attempt commits require Practice source records",
+      );
+    }
+    return this.commitAttempt(commit);
+  }
+
+  private async commitAttempt(
+    commit: SharedAttemptCommit,
   ): Promise<PersistenceResult<{ attempt: TrainingAttemptRecord }>> {
     const nextSession = parseTrainingSession(commit.session);
     const attempt = parseTrainingAttempt(commit.attempt);

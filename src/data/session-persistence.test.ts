@@ -222,7 +222,7 @@ describe("session persistence", () => {
     try {
       await repository.createSession(record);
       await expect(
-        repository.commitAttempt({
+        repository.commitLearnAttempt({
           expectedSessionRevision: 0,
           session: nextSession,
           attempt: firstAttempt,
@@ -234,7 +234,7 @@ describe("session persistence", () => {
         committed: true,
       });
       await expect(
-        repository.commitAttempt({
+        repository.commitLearnAttempt({
           expectedSessionRevision: 0,
           session: nextSession,
           attempt: firstAttempt,
@@ -258,7 +258,7 @@ describe("session persistence", () => {
     try {
       await database.sessions.add(session({ revision: 1 }));
       await expect(
-        repository.commitAttempt({
+        repository.commitLearnAttempt({
           expectedSessionRevision: 0,
           session: session({ attemptCount: 1, revision: 1 }),
           attempt: attempt(),
@@ -270,6 +270,137 @@ describe("session persistence", () => {
       await database.delete();
     }
   });
+
+  it.each([
+    {
+      source: "copy-practice" as const,
+      mode: "copy" as const,
+      direction: "rx" as const,
+      exerciseType: "copy-character" as const,
+    },
+    {
+      source: "send-practice" as const,
+      mode: "send" as const,
+      direction: "tx" as const,
+      exerciseType: "send-character" as const,
+    },
+  ])("persists $source attempt analytics", async (practice) => {
+    const { database, repository } = await setupRepository();
+    const current = session({ source: practice.source, mode: practice.mode });
+    const next = session({
+      source: practice.source,
+      mode: practice.mode,
+      updatedAt: "2026-09-24T17:00:10.000Z",
+      activeMs: 10000,
+      activeDateBuckets: [
+        {
+          localDate: "2026-09-24",
+          utcOffsetMinutes: -240,
+          timeZone: "America/New_York",
+          activeMs: 10000,
+        },
+      ],
+      attemptCount: 1,
+      completedCards: 1,
+      revision: 1,
+    });
+    const practiceAttempt = attempt({
+      source: practice.source,
+      direction: practice.direction,
+      exerciseType: practice.exerciseType,
+    });
+
+    try {
+      await repository.createSession(current);
+      await expect(
+        repository.commitPracticeAttempt({
+          expectedSessionRevision: 0,
+          session: next,
+          attempt: practiceAttempt,
+        }),
+      ).resolves.toEqual({
+        session: next,
+        attempt: practiceAttempt,
+        committed: true,
+      });
+      expect(await database.curriculum.count()).toBe(0);
+      expect(await database.introductions.count()).toBe(0);
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
+  it.each([
+    ["copy-practice", "copy", "rx", "copy-character"],
+    ["send-practice", "send", "tx", "send-character"],
+  ] as const)(
+    "rejects prohibited progression data for %s and rolls back",
+    async (source, mode, direction, exerciseType) => {
+      const prohibitedFields = [
+        ["curriculum", curriculum()],
+        [
+          "introductions",
+          {
+            id: "completed-introductions",
+            schemaVersion: 1,
+            updatedAt: "2026-09-24T17:00:10.000Z",
+            characters: ["K"],
+          },
+        ],
+        ["progressionEvents", []],
+        ["milestones", []],
+        ["advancement", {}],
+        ["mastery", {}],
+      ] as const;
+
+      for (const [field, value] of prohibitedFields) {
+        const { database, repository } = await setupRepository();
+        const current = session({ source, mode });
+        const next = session({
+          source,
+          mode,
+          updatedAt: "2026-09-24T17:00:10.000Z",
+          activeMs: 10000,
+          activeDateBuckets: [
+            {
+              localDate: "2026-09-24",
+              utcOffsetMinutes: -240,
+              timeZone: "America/New_York",
+              activeMs: 10000,
+            },
+          ],
+          attemptCount: 1,
+          completedCards: 1,
+          revision: 1,
+        });
+        const practiceAttempt = attempt({
+          source,
+          direction,
+          exerciseType,
+        });
+
+        try {
+          await repository.createSession(current);
+          await expect(
+            repository.commitPracticeAttempt({
+              expectedSessionRevision: 0,
+              session: next,
+              attempt: practiceAttempt,
+              [field]: value,
+            }),
+          ).rejects.toThrow(/practice commits cannot include/);
+          expect(await database.sessions.get("session-1")).toEqual(current);
+          expect(await database.attempts.count()).toBe(0);
+          expect(await database.curriculum.count()).toBe(0);
+          expect(await database.introductions.count()).toBe(0);
+        } finally {
+          repository.close();
+          await database.delete();
+        }
+      }
+    },
+  );
 
   it("finalizes by compare-and-set and returns the committed result on retry", async () => {
     const { database, repository } = await setupRepository();
