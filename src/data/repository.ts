@@ -56,6 +56,12 @@ export interface TrainingDataRepository extends LegacyMigrationRepository {
     session: TrainingSessionRecord,
     expectedRevision: number,
   ): Promise<PersistenceResult>;
+  renewSessionLease(
+    sessionId: string,
+    ownerTabId: string,
+    expectedRevision: number,
+    expiresAt: string,
+  ): Promise<TrainingSessionRecord>;
   recoverInterruptedSessions(): Promise<TrainingSessionRecord[]>;
   rebuildProjections(): Promise<void>;
 }
@@ -69,6 +75,30 @@ function defaultId(): string {
 
 function recordsEqual(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function instant(value: string, label: string): number {
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) {
+    throw new RangeError(`${label} must be a valid timestamp`);
+  }
+  return parsed;
+}
+
+function laterTimestamp(left: string, right: string): string {
+  return instant(left, "timestamp") >= instant(right, "timestamp")
+    ? left
+    : right;
+}
+
+function hasExpiredLease(
+  session: TrainingSessionRecord,
+  nowMs: number,
+): boolean {
+  return (
+    session.leaseExpiresAt === undefined ||
+    instant(session.leaseExpiresAt, "lease expiration") <= nowMs
+  );
 }
 
 function assertSessionIdentity(
@@ -335,6 +365,44 @@ export class DexieTrainingRepository implements TrainingDataRepository {
     );
   }
 
+  async renewSessionLease(
+    sessionId: string,
+    ownerTabId: string,
+    expectedRevision: number,
+    expiresAt: string,
+  ): Promise<TrainingSessionRecord> {
+    if (ownerTabId.length === 0) {
+      throw new Error("session owner cannot be empty");
+    }
+    const canonicalExpiresAt = new Date(
+      instant(expiresAt, "lease expiration"),
+    ).toISOString();
+
+    return this.database.transaction("rw", this.database.sessions, async () => {
+      const stored = await this.database.sessions.get(sessionId);
+      if (stored === undefined) throw new Error("session does not exist");
+      const current = parseTrainingSession(stored);
+      if (current.status !== "active") {
+        throw new Error("cannot renew a finalized session");
+      }
+      if (current.ownerTabId !== ownerTabId) {
+        throw new Error("session owner changed before lease renewal");
+      }
+      if (current.revision !== expectedRevision) {
+        throw new Error("session revision changed before lease renewal");
+      }
+
+      const renewed = parseTrainingSession({
+        ...current,
+        updatedAt: laterTimestamp(current.updatedAt, this.now().toISOString()),
+        leaseExpiresAt: canonicalExpiresAt,
+        revision: current.revision + 1,
+      });
+      await this.database.sessions.put(renewed);
+      return renewed;
+    });
+  }
+
   async isMigrationComplete(): Promise<boolean> {
     const record = await this.database.metadata.get(
       `migration:${LEGACY_MIGRATION_ID}`,
@@ -377,6 +445,7 @@ export class DexieTrainingRepository implements TrainingDataRepository {
 
   async recoverInterruptedSessions(): Promise<TrainingSessionRecord[]> {
     const now = this.now();
+    const nowMs = now.getTime();
     const capturedNow = captureDateTime(now);
     return this.database.transaction(
       "rw",
@@ -393,14 +462,15 @@ export class DexieTrainingRepository implements TrainingDataRepository {
           await this.database.sessions.toArray(),
           await this.database.attempts.toArray(),
         );
-        const activeSessions = dataset.sessions.filter(
-          (session) => session.status === "active",
+        const recoverableSessions = dataset.sessions.filter(
+          (session) =>
+            session.status === "active" && hasExpiredLease(session, nowMs),
         );
-        if (activeSessions.length === 0) return [];
+        if (recoverableSessions.length === 0) return [];
 
-        const recovered = activeSessions.map((session) => {
+        const recovered = recoverableSessions.map((session) => {
           const endedAt =
-            capturedNow.utc < session.startedAt.utc
+            nowMs < instant(session.startedAt.utc, "session start")
               ? session.startedAt
               : capturedNow;
           const finalizationKey = `recovery:${session.id}:${session.revision}`;
@@ -408,7 +478,7 @@ export class DexieTrainingRepository implements TrainingDataRepository {
             ...session,
             status: "interrupted",
             endedAt,
-            updatedAt: [session.updatedAt, endedAt.utc].sort().at(-1)!,
+            updatedAt: laterTimestamp(session.updatedAt, endedAt.utc),
             valid: isValidTrainingSession(session),
             revision: session.revision + 1,
             finalizationKey,
