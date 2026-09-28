@@ -6,14 +6,16 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { DEFAULT_CURRICULUM_CONFIG } from "../../content/curriculum-data.ts";
 import { createInitialState } from "../../core/curriculum.ts";
 import { DEFAULT_SETTINGS } from "../../core/settings.ts";
 import type { PracticeSessionPersistence } from "../../data/practice-persistence.ts";
+import { NavigationGuardContext } from "../navigation-guard-context.ts";
 import { SettingsContext } from "../settings-context.ts";
 import { TrainingDataContext } from "../training-data-context.ts";
 import { CopyPractice } from "./CopyPractice.tsx";
+import { PracticeScreen } from "./PracticeScreen.tsx";
 import { SendPractice } from "./SendPractice.tsx";
 
 const audio = vi.hoisted(() => ({
@@ -48,6 +50,15 @@ function persistence(): PracticeSessionPersistence {
   };
 }
 
+function NavigationGuardHarness({ children }: { children: ReactNode }) {
+  const [blocked, setBlocked] = useState(false);
+  return (
+    <NavigationGuardContext.Provider value={{ blocked, setBlocked }}>
+      {children}
+    </NavigationGuardContext.Provider>
+  );
+}
+
 function renderPractice(child: ReactNode, session: PracticeSessionPersistence) {
   const startPracticeSessionPersistence = vi.fn(() => Promise.resolve(session));
   const curriculum = createInitialState(DEFAULT_CURRICULUM_CONFIG);
@@ -77,7 +88,7 @@ function renderPractice(child: ReactNode, session: PracticeSessionPersistence) {
             }),
         }}
       >
-        {child}
+        <NavigationGuardHarness>{child}</NavigationGuardHarness>
       </TrainingDataContext.Provider>
     </SettingsContext.Provider>,
   );
@@ -177,5 +188,32 @@ describe("SendPractice persistence", () => {
       expect.objectContaining({ target: "E", response: "T" }),
       expect.objectContaining({ completedCards: 1 }),
     );
+  });
+
+  it("blocks tab navigation after a failed attempt until retry succeeds", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(19 / 36);
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => (now += 200));
+    const session = persistence();
+    vi.mocked(session.recordAttempt).mockRejectedValueOnce(
+      new Error("write failed"),
+    );
+    renderPractice(<PracticeScreen />, session);
+    fireEvent.click(screen.getByRole("tab", { name: "Send" }));
+
+    fireEvent.keyDown(window, { key: " " });
+    fireEvent.keyUp(window, { key: " " });
+
+    await screen.findByRole("alert");
+    const copyTab = screen.getByRole("tab", { name: "Copy" });
+    expect(copyTab).toBeDisabled();
+    fireEvent.click(copyTab);
+    expect(screen.getByLabelText("Send this character")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry save" }));
+    await waitFor(() => expect(copyTab).toBeEnabled());
+    expect(session.retry).toHaveBeenCalledOnce();
+    fireEvent.click(copyTab);
+    expect(screen.getByRole("button", { name: "Start" })).toBeInTheDocument();
   });
 });

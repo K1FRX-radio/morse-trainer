@@ -10,7 +10,9 @@ import {
   currentActiveTimePoint,
   PracticeSessionTimer,
 } from "../../training/practice-session.ts";
+import { useNavigationGuard } from "../navigation-guard-context.ts";
 import { useTrainingData } from "../training-data-context.ts";
+import { PracticeWorkQueue } from "./practice-work-queue.ts";
 
 export type PracticePersistenceStatus = "ready" | "pending" | "error";
 
@@ -19,18 +21,34 @@ export function usePracticeSession(
   settings: PracticeSettings,
 ) {
   const { loadCurriculum, startPracticeSessionPersistence } = useTrainingData();
+  const { setBlocked } = useNavigationGuard();
   const timerRef = useRef(new PracticeSessionTimer());
-  const persistenceRef = useRef<PracticeSessionPersistence | undefined>(
-    undefined,
-  );
-  const startPromiseRef = useRef<
-    Promise<PracticeSessionPersistence> | undefined
-  >(undefined);
   const completedCardsRef = useRef(0);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+  const dependenciesRef = useRef({
+    loadCurriculum,
+    startPracticeSessionPersistence,
+  });
+  dependenciesRef.current = { loadCurriculum, startPracticeSessionPersistence };
+  const workQueueRef = useRef<PracticeWorkQueue | undefined>(undefined);
+  if (!workQueueRef.current) {
+    workQueueRef.current = new PracticeWorkQueue(() => {
+      const dependencies = dependenciesRef.current;
+      const currentSettings = settingsRef.current;
+      return dependencies.startPracticeSessionPersistence({
+        source,
+        activeCharacters: unlockedCharacters(dependencies.loadCurriculum()),
+        settings: {
+          charWpm: currentSettings.charWpm,
+          effectiveWpm: currentSettings.effectiveWpm,
+          toneHz: currentSettings.toneHz,
+          noiseLevel: currentSettings.noiseLevel,
+        },
+      });
+    });
+  }
   const mountedRef = useRef(true);
-  const pendingWritesRef = useRef(0);
   const [status, setStatus] = useState<PracticePersistenceStatus>("ready");
   const [error, setError] = useState<string | undefined>(undefined);
 
@@ -44,35 +62,13 @@ export function usePracticeSession(
 
   const start = useCallback(async (): Promise<PracticeSessionPersistence> => {
     timerRef.current.recordActivity(currentActiveTimePoint());
-    if (persistenceRef.current) return persistenceRef.current;
-    if (startPromiseRef.current) return startPromiseRef.current;
-
-    const currentSettings = settingsRef.current;
-    const promise = startPracticeSessionPersistence({
-      source,
-      activeCharacters: unlockedCharacters(loadCurriculum()),
-      settings: {
-        charWpm: currentSettings.charWpm,
-        effectiveWpm: currentSettings.effectiveWpm,
-        toneHz: currentSettings.toneHz,
-        noiseLevel: currentSettings.noiseLevel,
-      },
-    });
-    startPromiseRef.current = promise;
     setStatus("pending");
     setError(undefined);
     try {
-      const persistence = await promise;
-      persistenceRef.current = persistence;
-      if (mountedRef.current) {
-        setStatus("ready");
-      } else {
-        timerRef.current.finish(currentActiveTimePoint());
-        await persistence.finish(snapshot());
-      }
+      const persistence = await workQueueRef.current!.start();
+      if (mountedRef.current) setStatus("ready");
       return persistence;
     } catch (cause) {
-      startPromiseRef.current = undefined;
       if (mountedRef.current) {
         setStatus("error");
         setError(
@@ -83,7 +79,7 @@ export function usePracticeSession(
       }
       throw cause;
     }
-  }, [loadCurriculum, snapshot, source, startPracticeSessionPersistence]);
+  }, []);
 
   const recordActivity = useCallback(() => {
     timerRef.current.recordActivity(currentActiveTimePoint());
@@ -91,18 +87,17 @@ export function usePracticeSession(
 
   const recordAttempt = useCallback(
     async (evidence: PracticeAttemptEvidence): Promise<void> => {
-      const persistence = await start();
       completedCardsRef.current += 1;
-      pendingWritesRef.current += 1;
       if (mountedRef.current) {
         setStatus("pending");
         setError(undefined);
       }
-      let failed = false;
       try {
-        await persistence.recordAttempt(evidence, snapshot());
+        await workQueueRef.current!.enqueueAttempt(evidence, snapshot());
+        setBlocked(false);
+        if (mountedRef.current) setStatus("ready");
       } catch (cause) {
-        failed = true;
+        if (workQueueRef.current!.hasPendingAttempts) setBlocked(true);
         if (mountedRef.current) {
           setStatus("error");
           setError(
@@ -112,34 +107,26 @@ export function usePracticeSession(
           );
         }
         throw cause;
-      } finally {
-        pendingWritesRef.current -= 1;
-        if (mountedRef.current && pendingWritesRef.current === 0 && !failed) {
-          setStatus("ready");
-        }
       }
     },
-    [snapshot, start],
+    [setBlocked, snapshot],
   );
 
   const retry = useCallback(async (): Promise<void> => {
-    const persistence = persistenceRef.current;
-    if (!persistence) {
-      await start();
-      return;
-    }
     setStatus("pending");
     setError(undefined);
     try {
-      await persistence.retry();
+      await workQueueRef.current!.retry();
+      setBlocked(false);
       if (mountedRef.current) setStatus("ready");
     } catch (cause) {
+      if (workQueueRef.current!.hasPendingAttempts) setBlocked(true);
       if (mountedRef.current) {
         setStatus("error");
         setError(cause instanceof Error ? cause.message : "Save retry failed.");
       }
     }
-  }, [start]);
+  }, [setBlocked]);
 
   useEffect(() => {
     const timer = timerRef.current;
@@ -156,15 +143,17 @@ export function usePracticeSession(
 
   useEffect(() => {
     const timer = timerRef.current;
+    const workQueue = workQueueRef.current!;
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      const persistence = persistenceRef.current;
-      if (!persistence) return;
+      if (!workQueue.hasStarted) return;
       timer.finish(currentActiveTimePoint());
-      void persistence.finish(snapshot());
+      void workQueue.requestFinalization(snapshot()).catch(() => {
+        if (workQueue.hasPendingAttempts) setBlocked(true);
+      });
     };
-  }, [snapshot]);
+  }, [setBlocked, snapshot]);
 
   return {
     start,
