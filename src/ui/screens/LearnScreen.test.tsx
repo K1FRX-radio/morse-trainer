@@ -119,6 +119,7 @@ function TrainingDataFixture({
     recordAttempt: () => Promise.resolve(),
     finish: () => Promise.resolve(),
     interrupt: () => Promise.resolve(),
+    acceptAdvancement: () => Promise.resolve(),
     retry: () => Promise.resolve(),
   };
   return (
@@ -587,6 +588,7 @@ describe("LearnScreen input gating", () => {
       recordAttempt: () => Promise.resolve(),
       finish: () => Promise.resolve(),
       interrupt,
+      acceptAdvancement: () => Promise.resolve(),
       retry: () => Promise.resolve(),
     };
     const view = renderLearn(
@@ -619,6 +621,7 @@ describe("LearnScreen input gating", () => {
       recordAttempt: () => Promise.resolve(),
       finish: () => Promise.resolve(),
       interrupt,
+      acceptAdvancement: () => Promise.resolve(),
       retry: () => Promise.resolve(),
     };
     const view = renderLearn(
@@ -648,6 +651,7 @@ describe("LearnScreen input gating", () => {
       recordAttempt: () => Promise.reject(new Error("quota exceeded")),
       finish: () => Promise.resolve(),
       interrupt: () => Promise.resolve(),
+      acceptAdvancement: () => Promise.resolve(),
       retry,
     };
     renderLearn(
@@ -1576,6 +1580,72 @@ describe("LearnScreen advancement", () => {
     ).toBeEnabled();
   });
 
+  it("retains the advancement offer and retries before starting the next lesson", async () => {
+    const fake = makeFakeAudio();
+    let rejectAcceptance: ((error: Error) => void) | undefined;
+    const acceptAdvancement = vi
+      .fn<LearnSessionPersistence["acceptAdvancement"]>()
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            rejectAcceptance = reject;
+          }),
+      )
+      .mockResolvedValue(undefined);
+    const persistence: LearnSessionPersistence = {
+      recordAttempt: () => Promise.resolve(),
+      finish: () => Promise.resolve(),
+      interrupt: () => Promise.resolve(),
+      acceptAdvancement,
+      retry: () => Promise.resolve(),
+    };
+    const startLearnSessionPersistence = vi.fn(() =>
+      Promise.resolve(persistence),
+    );
+    renderLearn(
+      fake.audio,
+      {},
+      {
+        startLearnSessionPersistence,
+      },
+    );
+    await completeContinuousCopy(fake);
+
+    fireEvent.click(screen.getByRole("button", { name: "Learn U" }));
+    expect(screen.getByRole("status")).toHaveTextContent("Saving session");
+    expect(screen.getByRole("button", { name: "Learn U" })).toBeDisabled();
+    expect(fake.pending[0]).toBeUndefined();
+    expect(startLearnSessionPersistence).toHaveBeenCalledOnce();
+
+    await act(async () => rejectAcceptance?.(new Error("quota exceeded")));
+    await flush();
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Your session could not be saved",
+    );
+    expect(screen.getByRole("button", { name: "Learn U" })).toBeDisabled();
+    expect(
+      JSON.parse(localStorage.getItem("k1frx.curriculum.v2") ?? "[]") as Array<{
+        character: string;
+      }>,
+    ).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry saving" }));
+    await flush();
+    await flush();
+
+    expect(acceptAdvancement).toHaveBeenCalledTimes(2);
+    expect(startLearnSessionPersistence).toHaveBeenCalledTimes(2);
+    expect(acceptAdvancement.mock.calls[0]?.[1]).toEqual({
+      type: "character-unlocked",
+      character: "U",
+    });
+    const saved = JSON.parse(
+      localStorage.getItem("k1frx.curriculum.v2") ?? "[]",
+    ) as Array<{ character: string }>;
+    expect(saved.map(({ character }) => character)).toEqual(["K", "M", "U"]);
+  });
+
   it("finalizes durable Learn evidence before reading retry history", async () => {
     const fake = makeFakeAudio();
     const events: string[] = [];
@@ -1589,6 +1659,7 @@ describe("LearnScreen advancement", () => {
         events.push("finalize");
       },
       interrupt: () => Promise.resolve(),
+      acceptAdvancement: () => Promise.resolve(),
       retry: () => Promise.resolve(),
     };
     renderLearn(
@@ -1646,6 +1717,7 @@ describe("LearnScreen advancement", () => {
       recordAttempt: () => Promise.resolve(),
       finish,
       interrupt: () => Promise.resolve(),
+      acceptAdvancement: () => Promise.resolve(),
       retry: () => Promise.resolve(),
     };
     renderLearn(

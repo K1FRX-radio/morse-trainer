@@ -2,6 +2,7 @@ import type { CurriculumState } from "../core/curriculum.ts";
 import { gradeCopyDetailed, normalizeCopy } from "../core/scoring.ts";
 import { isValidTrainingSession } from "../core/session-validity.ts";
 import type { LearnSessionMode } from "../training/learn-session.ts";
+import type { AdvancementAcceptance } from "../training/advancement.ts";
 import {
   RECORD_SCHEMA_VERSION,
   SCORING_ALGORITHM_VERSION,
@@ -66,6 +67,10 @@ export interface LearnSessionPersistence {
   ): Promise<void>;
   finish(snapshot: LearnPersistenceSnapshot): Promise<void>;
   interrupt(snapshot: LearnPersistenceSnapshot): Promise<void>;
+  acceptAdvancement(
+    state: CurriculumState,
+    acceptance: AdvancementAcceptance,
+  ): Promise<void>;
   retry(): Promise<void>;
 }
 
@@ -133,6 +138,7 @@ export class DurableLearnSession implements LearnSessionPersistence {
   private terminal = false;
   private leaseRenewalCanceled = false;
   private qualifyingAttemptCount = 0;
+  private continuousCopyAttemptId: string | undefined;
   private readonly cancelLeaseRenewal: () => void;
 
   private constructor(
@@ -267,6 +273,9 @@ export class DurableLearnSession implements LearnSessionPersistence {
       });
       this.record = result.session;
       this.qualifyingAttemptCount = nextQualifyingAttemptCount;
+      if (evidence.exerciseType === "continuous-copy") {
+        this.continuousCopyAttemptId = result.attempt.id;
+      }
     });
   }
 
@@ -276,6 +285,34 @@ export class DurableLearnSession implements LearnSessionPersistence {
 
   async interrupt(snapshot: LearnPersistenceSnapshot): Promise<void> {
     await this.close("interrupted", snapshot);
+  }
+
+  async acceptAdvancement(
+    state: CurriculumState,
+    acceptance: AdvancementAcceptance,
+  ): Promise<void> {
+    if (!this.terminal || this.record.status !== "completed") {
+      throw new Error("advancement requires a finalized Learn session");
+    }
+    if (this.continuousCopyAttemptId === undefined) {
+      throw new Error("advancement requires continuous-copy evidence");
+    }
+    const activeCharacters = this.record.unlockedAtEnd;
+    if (activeCharacters === undefined) {
+      throw new Error("finalized Learn session has no curriculum snapshot");
+    }
+
+    await this.repository.acceptAdvancement({
+      state,
+      sessionId: this.record.id,
+      evidenceAttemptId: this.continuousCopyAttemptId,
+      idempotencyKey: `learn-advancement:${this.record.id}:${this.continuousCopyAttemptId}`,
+      activeCharacters,
+      type: acceptance.type,
+      ...(acceptance.type === "character-unlocked"
+        ? { unlockedCharacter: acceptance.character }
+        : {}),
+    });
   }
 
   async retry(): Promise<void> {

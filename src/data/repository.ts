@@ -14,8 +14,10 @@ import {
   type CurriculumStateRecord,
   type IntroductionsRecord,
   type LegacyMigrationBundle,
+  type MilestoneRecord,
   type OperationLedgerRecord,
   type PortableSettingsRecord,
+  type ProgressionEventRecord,
   type SchemaMetadataRecord,
   type TrainingAttemptRecord,
   type TrainingSessionRecord,
@@ -62,6 +64,21 @@ export type LearnAttemptCommit = BaseAttemptCommit & {
 
 export type PracticeAttemptCommit = BaseAttemptCommit;
 
+export type AdvancementCommit = {
+  state: CurriculumState;
+  sessionId: string;
+  evidenceAttemptId: string;
+  idempotencyKey: string;
+  activeCharacters: string[];
+  type: "character-unlocked" | "curriculum-completed";
+  unlockedCharacter?: string;
+};
+
+export type AdvancementResult = {
+  committed: boolean;
+  event: ProgressionEventRecord;
+};
+
 type SharedAttemptCommit = BaseAttemptCommit & {
   curriculum?: CurriculumStateRecord;
   introductions?: IntroductionsRecord;
@@ -88,6 +105,7 @@ export interface TrainingDataRepository extends LegacyMigrationRepository {
   saveCurriculumState(state: CurriculumState): Promise<CurriculumStateRecord>;
   getIntroductions(): Promise<IntroductionsRecord | undefined>;
   saveIntroductions(characters: string[]): Promise<IntroductionsRecord>;
+  acceptAdvancement(commit: AdvancementCommit): Promise<AdvancementResult>;
   commitLearnAttempt(
     commit: LearnAttemptCommit,
   ): Promise<PersistenceResult<{ attempt: TrainingAttemptRecord }>>;
@@ -184,6 +202,23 @@ function assertSessionIdentity(
   if (next.updatedAt < current.updatedAt) {
     throw new Error("session updatedAt cannot move backward");
   }
+}
+
+function curriculumRecord(
+  state: CurriculumState,
+  updatedAt: string,
+): CurriculumStateRecord {
+  return parseCurriculumStateRecord({
+    id: "curriculum-state",
+    schemaVersion: RECORD_SCHEMA_VERSION,
+    updatedAt,
+    order: [...state.config.order],
+    startCount: state.config.startCount,
+    windowSize: state.config.windowSize,
+    minNewCharObservations: state.config.minNewCharObservations,
+    reviewDecayAccuracy: state.config.reviewDecayAccuracy,
+    characters: structuredClone(state.characters),
+  });
 }
 
 export class DexieTrainingRepository implements TrainingDataRepository {
@@ -326,6 +361,210 @@ export class DexieTrainingRepository implements TrainingDataRepository {
         });
         await this.database.curriculum.put(record);
         return record;
+      },
+    );
+  }
+
+  async acceptAdvancement(
+    commit: AdvancementCommit,
+  ): Promise<AdvancementResult> {
+    if (commit.idempotencyKey.length === 0) {
+      throw new Error("advancement idempotency key cannot be empty");
+    }
+    const operationId = `operation:${commit.idempotencyKey}`;
+
+    return this.database.transaction(
+      "rw",
+      [
+        this.database.metadata,
+        this.database.curriculum,
+        this.database.sessions,
+        this.database.attempts,
+        this.database.progressionEvents,
+        this.database.milestones,
+      ],
+      async () => {
+        const existingOperation = await this.database.metadata.get(operationId);
+        if (existingOperation !== undefined) {
+          if (
+            !("operation" in existingOperation) ||
+            existingOperation.operation !== "accept-advancement" ||
+            existingOperation.idempotencyKey !== commit.idempotencyKey ||
+            existingOperation.resultRecordId === undefined
+          ) {
+            throw new Error("advancement idempotency key is already in use");
+          }
+          const existingEvent = await this.database.progressionEvents.get(
+            existingOperation.resultRecordId,
+          );
+          if (existingEvent === undefined) {
+            throw new Error("advancement ledger references a missing event");
+          }
+          return { committed: false, event: existingEvent };
+        }
+
+        const storedSession = await this.database.sessions.get(
+          commit.sessionId,
+        );
+        if (
+          storedSession === undefined ||
+          storedSession.source !== "learn" ||
+          storedSession.status !== "completed" ||
+          !storedSession.valid
+        ) {
+          throw new Error("advancement requires a completed Learn session");
+        }
+        const evidenceAttempt = await this.database.attempts.get(
+          commit.evidenceAttemptId,
+        );
+        if (
+          evidenceAttempt === undefined ||
+          evidenceAttempt.sessionId !== storedSession.id ||
+          evidenceAttempt.exerciseType !== "continuous-copy" ||
+          evidenceAttempt.abandoned ||
+          (commit.type === "character-unlocked" &&
+            evidenceAttempt.readinessReason !== "READY") ||
+          (commit.type === "curriculum-completed" &&
+            evidenceAttempt.readinessReason !== "COMPLETE")
+        ) {
+          throw new Error(
+            "advancement requires continuous-copy evidence from the completed session",
+          );
+        }
+        if (
+          !recordsEqual(storedSession.unlockedAtEnd, commit.activeCharacters)
+        ) {
+          throw new Error(
+            "advancement active characters do not match the session",
+          );
+        }
+
+        const storedCurriculumValue =
+          await this.database.curriculum.get("curriculum-state");
+        if (storedCurriculumValue === undefined) {
+          throw new Error("curriculum does not exist");
+        }
+        const storedCurriculum = parseCurriculumStateRecord(
+          storedCurriculumValue,
+        );
+        const storedCharacters = storedCurriculum.characters.map(
+          ({ character }) => character,
+        );
+        if (!recordsEqual(storedCharacters, commit.activeCharacters)) {
+          throw new Error("advancement curriculum is stale");
+        }
+
+        const occurredAt = captureDateTime(this.now());
+        const nextCurriculum = curriculumRecord(
+          commit.state,
+          laterTimestamp(storedCurriculum.updatedAt, occurredAt.utc),
+        );
+        const nextCharacters = nextCurriculum.characters.map(
+          ({ character }) => character,
+        );
+        if (commit.type === "character-unlocked") {
+          if (
+            commit.unlockedCharacter === undefined ||
+            !recordsEqual(nextCharacters, [
+              ...commit.activeCharacters,
+              commit.unlockedCharacter,
+            ])
+          ) {
+            throw new Error("advancement must unlock exactly one character");
+          }
+        } else if (
+          commit.unlockedCharacter !== undefined ||
+          !recordsEqual(nextCharacters, commit.activeCharacters) ||
+          !recordsEqual(nextCharacters, nextCurriculum.order) ||
+          nextCurriculum.characters.some(({ state }) => state !== "mastered")
+        ) {
+          throw new Error("curriculum completion must master every character");
+        }
+
+        const previouslyMastered = new Set(
+          storedCurriculum.characters
+            .filter(({ state }) => state === "mastered")
+            .map(({ character }) => character),
+        );
+        const masteredCharacters = nextCurriculum.characters
+          .filter(({ state }) => state === "mastered")
+          .map(({ character }) => character);
+        const newlyMastered = masteredCharacters.filter(
+          (character) => !previouslyMastered.has(character),
+        );
+        const eventId = this.createId();
+        const event: ProgressionEventRecord = {
+          id: eventId,
+          schemaVersion: RECORD_SCHEMA_VERSION,
+          updatedAt: occurredAt.utc,
+          idempotencyKey: commit.idempotencyKey,
+          type:
+            commit.type === "curriculum-completed"
+              ? "curriculum-completed"
+              : "advancement-accepted",
+          occurredAt,
+          sessionId: storedSession.id,
+          evidenceAttemptId: evidenceAttempt.id,
+          activeCharacters: [...commit.activeCharacters],
+          masteredCharacters,
+          ...(commit.unlockedCharacter === undefined
+            ? {}
+            : { unlockedCharacter: commit.unlockedCharacter }),
+          migrationDerived: false,
+        };
+        const milestones: MilestoneRecord[] = newlyMastered.map(
+          (character) => ({
+            id: this.createId(),
+            schemaVersion: RECORD_SCHEMA_VERSION,
+            updatedAt: occurredAt.utc,
+            idempotencyKey: `${commit.idempotencyKey}:mastered:${character}`,
+            eventId,
+            type: "character-mastered",
+            occurredAt,
+            character,
+            migrationDerived: false,
+          }),
+        );
+        if (commit.type === "character-unlocked") {
+          milestones.push({
+            id: this.createId(),
+            schemaVersion: RECORD_SCHEMA_VERSION,
+            updatedAt: occurredAt.utc,
+            idempotencyKey: `${commit.idempotencyKey}:unlocked:${commit.unlockedCharacter!}`,
+            eventId,
+            type: "character-unlocked",
+            occurredAt,
+            character: commit.unlockedCharacter!,
+            migrationDerived: false,
+          });
+        } else {
+          milestones.push({
+            id: this.createId(),
+            schemaVersion: RECORD_SCHEMA_VERSION,
+            updatedAt: occurredAt.utc,
+            idempotencyKey: `${commit.idempotencyKey}:completed`,
+            eventId,
+            type: "curriculum-completed",
+            occurredAt,
+            migrationDerived: false,
+          });
+        }
+        const operation: OperationLedgerRecord = {
+          id: operationId,
+          schemaVersion: RECORD_SCHEMA_VERSION,
+          updatedAt: occurredAt.utc,
+          kind: "operation",
+          operation: "accept-advancement",
+          idempotencyKey: commit.idempotencyKey,
+          completedAt: occurredAt.utc,
+          resultRecordId: eventId,
+        };
+
+        await this.database.curriculum.put(nextCurriculum);
+        await this.database.progressionEvents.add(event);
+        await this.database.milestones.bulkAdd(milestones);
+        await this.database.metadata.add(operation);
+        return { committed: true, event };
       },
     );
   }

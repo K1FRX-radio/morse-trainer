@@ -1,7 +1,7 @@
 import { IDBKeyRange, indexedDB } from "fake-indexeddb";
 import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_CURRICULUM_CONFIG } from "../content/curriculum-data.ts";
-import { createInitialState } from "../core/curriculum.ts";
+import { createInitialState, forceUnlockNext } from "../core/curriculum.ts";
 import { TrainerDatabase } from "./indexeddb.ts";
 import { DurableLearnSession } from "./learn-persistence.ts";
 import { DexieTrainingRepository } from "./repository.ts";
@@ -104,6 +104,91 @@ describe("DurableLearnSession", () => {
           3,
         ),
       ).resolves.toMatchObject({ consecutiveAccuracyMisses: 1 });
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
+  it("accepts advancement with the finalized session evidence idempotently", async () => {
+    const { database, repository } = await setup();
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    const advanced = structuredClone(state);
+    forceUnlockNext(advanced, "2026-09-25T17:02:00.000Z");
+    const ids = [
+      "owner-advancement",
+      "session-advancement",
+      "attempt-evidence",
+    ];
+
+    try {
+      const session = await DurableLearnSession.create(
+        repository,
+        {
+          mode: "learn",
+          activeCharacters: ["K", "M"],
+          settings: {
+            charWpm: 20,
+            effectiveWpm: 12,
+            toneHz: 600,
+            noiseLevel: 0,
+          },
+        },
+        {
+          now: clock(
+            "2026-09-25T17:00:00.000Z",
+            "2026-09-25T17:01:00.000Z",
+            "2026-09-25T17:02:00.000Z",
+          ),
+          createId: () => ids.shift()!,
+          scheduleLeaseRenewal: () => () => undefined,
+        },
+      );
+      const snapshot = {
+        activeMs: 60000,
+        completedCards: 1,
+        curriculum: state,
+        introductions: ["K", "M"],
+      };
+      await session.recordAttempt(
+        {
+          exerciseType: "continuous-copy",
+          target: "KMKM",
+          response: "KMKM",
+          assisted: false,
+          replayed: false,
+          abandoned: false,
+          durationMs: 60000,
+          readinessReason: "READY",
+        },
+        snapshot,
+      );
+      await session.finish(snapshot);
+
+      await session.acceptAdvancement(advanced, {
+        type: "character-unlocked",
+        character: "U",
+      });
+      await session.acceptAdvancement(advanced, {
+        type: "character-unlocked",
+        character: "U",
+      });
+
+      expect(await database.progressionEvents.toArray()).toMatchObject([
+        {
+          idempotencyKey:
+            "learn-advancement:session-advancement:attempt-evidence",
+          sessionId: "session-advancement",
+          evidenceAttemptId: "attempt-evidence",
+          unlockedCharacter: "U",
+        },
+      ]);
+      expect(await database.milestones.count()).toBe(1);
+      expect(
+        (await database.curriculum.get("curriculum-state"))?.characters.map(
+          ({ character }) => character,
+        ),
+      ).toEqual(["K", "M", "U"]);
     } finally {
       repository.close();
       await database.delete();

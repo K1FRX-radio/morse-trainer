@@ -12,7 +12,10 @@ import type {
   LearnSessionPersistence,
 } from "../../data/learn-persistence.ts";
 import type { RetryClassification } from "../../data/retry-history.ts";
-import { acceptAdvancement as acceptAdvancementOffer } from "../../training/advancement.ts";
+import {
+  acceptAdvancement as acceptAdvancementOffer,
+  type AdvancementAcceptance,
+} from "../../training/advancement.ts";
 import {
   LearnSession,
   MIN_RETRY_ISOLATED_OBSERVATIONS,
@@ -65,6 +68,12 @@ type FinalizationWork = {
   snapshot: LearnPersistenceSnapshot;
 };
 
+type AdvancementWork = {
+  persistence: LearnSessionPersistence;
+  state: CurriculumState;
+  acceptance: AdvancementAcceptance;
+};
+
 function toMorse(target: string): string {
   return encodeText(target)
     .map((entry) => entry.pattern)
@@ -104,6 +113,7 @@ export function useLearnSession() {
   const sessionRef = useRef<LearnSession | undefined>(undefined);
   const persistenceRef = useRef<LearnSessionPersistence | undefined>(undefined);
   const finalizationRef = useRef<FinalizationWork | undefined>(undefined);
+  const advancementRef = useRef<AdvancementWork | undefined>(undefined);
   const persistenceOperation = useRef(0);
 
   // Flow tokens invalidate stale async transitions; the one-shot lock guarantees
@@ -512,6 +522,7 @@ export function useLearnSession() {
       }
       persistenceRef.current = undefined;
       finalizationRef.current = undefined;
+      advancementRef.current = undefined;
       continuousCopy.reset();
       clearHeldKeys();
       queuedSubmissionRef.current = null;
@@ -623,20 +634,6 @@ export function useLearnSession() {
     updateSettings({ effectiveWpm: spacing.effectiveWpm });
     void startSession("review", spacing);
   }, [persistenceStatus, retryRecommendation, startSession, updateSettings]);
-
-  const retryPersistence = useCallback(() => {
-    const work = finalizationRef.current;
-    if (work) {
-      void finalizePersistence(work);
-      return;
-    }
-    const persistence = persistenceRef.current;
-    if (!persistence) {
-      if (phase === "onboarding") void startSession("learn");
-      return;
-    }
-    trackPersistence(persistence, persistence.retry());
-  }, [finalizePersistence, phase, startSession, trackPersistence]);
 
   // Records the answer, replays on a miss, and advances only after any
   // corrective playback finishes and while this prompt is still current.
@@ -863,35 +860,95 @@ export function useLearnSession() {
     advanceRef.current();
   }, [continuousCopy]);
 
+  const persistAdvancement = useCallback(
+    async (work: AdvancementWork) => {
+      const token = ++persistenceOperation.current;
+      setPersistenceStatus("pending");
+      setPersistenceError(undefined);
+      try {
+        await work.persistence.acceptAdvancement(work.state, work.acceptance);
+        if (
+          persistenceRef.current !== work.persistence ||
+          persistenceOperation.current !== token
+        ) {
+          return;
+        }
+        stateRef.current = work.state;
+        saveCurriculum(work.state);
+        advancementRef.current = undefined;
+        setPersistenceStatus("ready");
+        if (work.acceptance.type === "character-unlocked") {
+          void startSession("learn");
+          return;
+        }
+        setSummary((current) =>
+          current?.advancementAssessment
+            ? {
+                ...current,
+                advancementAssessment: {
+                  ...current.advancementAssessment,
+                  eligible: false,
+                },
+              }
+            : current,
+        );
+      } catch {
+        if (
+          persistenceRef.current === work.persistence &&
+          persistenceOperation.current === token
+        ) {
+          setPersistenceFailed();
+        }
+      }
+    },
+    [saveCurriculum, setPersistenceFailed, startSession],
+  );
+
   const acceptAdvancement = useCallback(() => {
     if (persistenceStatus !== "ready") return;
     const assessment = summary?.advancementAssessment;
     const result = summary?.continuousCopyResult;
-    if (!assessment || !result) return;
+    const persistence = persistenceRef.current;
+    if (!assessment || !result || !persistence || advancementRef.current) {
+      return;
+    }
+    const nextState = structuredClone(stateRef.current);
     const acceptance = acceptAdvancementOffer(
-      stateRef.current,
+      nextState,
       result,
       assessment,
       new Date().toISOString(),
     );
     if (!acceptance) return;
-    saveCurriculum(stateRef.current);
-    if (acceptance.type === "character-unlocked") {
-      void begin();
+    const work = { persistence, state: nextState, acceptance };
+    advancementRef.current = work;
+    void persistAdvancement(work);
+  }, [persistAdvancement, persistenceStatus, summary]);
+
+  const retryPersistence = useCallback(() => {
+    const advancement = advancementRef.current;
+    if (advancement) {
+      void persistAdvancement(advancement);
       return;
     }
-    setSummary((current) =>
-      current?.advancementAssessment
-        ? {
-            ...current,
-            advancementAssessment: {
-              ...current.advancementAssessment,
-              eligible: false,
-            },
-          }
-        : current,
-    );
-  }, [begin, persistenceStatus, saveCurriculum, summary]);
+    const finalization = finalizationRef.current;
+    if (finalization) {
+      void finalizePersistence(finalization);
+      return;
+    }
+    const persistence = persistenceRef.current;
+    if (!persistence) {
+      if (phase === "onboarding") void startSession("learn");
+      return;
+    }
+    trackPersistence(persistence, persistence.retry());
+  }, [
+    finalizePersistence,
+    persistAdvancement,
+    phase,
+    startSession,
+    trackPersistence,
+  ]);
 
   const physicalKeyDown = useCallback(
     (
