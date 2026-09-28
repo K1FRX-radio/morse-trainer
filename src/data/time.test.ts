@@ -7,7 +7,7 @@ describe("captureDateTime", () => {
     expect(captureDateTime(date)).toMatchObject({
       utc: date.toISOString(),
       localDate: "2026-09-24",
-      utcOffsetMinutes: -date.getTimezoneOffset(),
+      utcOffsetMinutes: -date.getTimezoneOffset() || 0,
     });
   });
 

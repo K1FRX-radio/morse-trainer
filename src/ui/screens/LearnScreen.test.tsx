@@ -2027,7 +2027,9 @@ describe("LearnScreen advancement", () => {
   it("gives unresolved review priority and never offers advancement", async () => {
     const fake = makeFakeAudio();
     renderLearn(fake.audio);
-    await completeContinuousCopy(fake, (target) => target.replaceAll("K", "M"));
+    await completeContinuousCopy(fake, (target) =>
+      target.replace(/[KM]/g, "U"),
+    );
 
     expect(screen.getByText(/more practice with K/)).toBeInTheDocument();
     expect(
