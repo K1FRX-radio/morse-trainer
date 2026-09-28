@@ -3,12 +3,10 @@ import { thresholdsForWpm } from "../../core/keying.ts";
 import { StraightKey } from "../../input/key-input.ts";
 import { attachKeyboardKey } from "../../input/keyboard-key.ts";
 import { attachPointerKey } from "../../input/pointer-key.ts";
-import {
-  currentActiveTimePoint,
-  PracticeSessionTimer,
-} from "../../training/practice-session.ts";
+import { encodeKeyingTiming } from "../../data/keying-timing.ts";
 import { useSettings } from "../settings-context.ts";
 import { useAudioEngine } from "../hooks/useAudioEngine.ts";
+import { usePracticeSession } from "../hooks/usePracticeSession.ts";
 
 const TARGETS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
@@ -19,30 +17,58 @@ function randomTarget(): string {
 export function SendPractice() {
   const { settings } = useSettings();
   const { engine, unlock } = useAudioEngine();
+  const practice = usePracticeSession("send-practice", settings);
 
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
   const buttonRef = useRef<HTMLButtonElement>(null);
   const keyRef = useRef<StraightKey | undefined>(undefined);
-  const sessionTimer = useRef(new PracticeSessionTimer());
+  const targetRef = useRef("");
+  const promptToken = useRef(1);
+  const committedToken = useRef<number | undefined>(undefined);
 
   const [decoded, setDecoded] = useState("");
   const [target, setTarget] = useState<string>(randomTarget);
+  targetRef.current = target;
 
   if (!keyRef.current) {
     keyRef.current = new StraightKey({
       thresholds: thresholdsForWpm(settings.charWpm),
       onMarkStart: () => {
-        sessionTimer.current.recordActivity(currentActiveTimePoint());
+        void practice.start().catch(() => undefined);
         void unlock();
         engine.startTone(settingsRef.current.toneHz);
       },
       onMarkEnd: () => {
-        sessionTimer.current.recordActivity(currentActiveTimePoint());
+        practice.recordActivity();
         engine.stopTone();
       },
-      onDecodeChange: (result) => setDecoded(result.text),
+      onDecodeChange: (result) => {
+        setDecoded(result.text);
+        const token = promptToken.current;
+        if (
+          result.text.trim().toUpperCase() !== targetRef.current ||
+          committedToken.current === token
+        ) {
+          return;
+        }
+        committedToken.current = token;
+        void practice
+          .recordAttempt({
+            exerciseType: "send-character",
+            target: targetRef.current,
+            response: result.text,
+            assisted: false,
+            replayed: false,
+            keying: encodeKeyingTiming(
+              result.marksMs,
+              result.spacesMs,
+              thresholdsForWpm(settingsRef.current.charWpm).ditMs,
+            ),
+          })
+          .catch(() => undefined);
+      },
     });
   }
 
@@ -66,29 +92,40 @@ export function SendPractice() {
     };
   }, [engine]);
 
-  useEffect(() => {
-    const timer = sessionTimer.current;
-    const onVisibility = () => {
-      if (document.visibilityState === "hidden") {
-        timer.pause(currentActiveTimePoint());
-      } else {
-        timer.resume(currentActiveTimePoint());
-      }
-    };
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => {
-      document.removeEventListener("visibilitychange", onVisibility);
-      timer.pause(currentActiveTimePoint());
-    };
-  }, []);
-
   function clear(): void {
     keyRef.current?.reset();
     setDecoded("");
   }
 
-  function nextTarget(): void {
+  async function nextTarget(): Promise<void> {
+    practice.recordActivity();
+    const result = keyRef.current?.decode();
+    const token = promptToken.current;
+    if (
+      result &&
+      result.text.trim() !== "" &&
+      committedToken.current !== token
+    ) {
+      committedToken.current = token;
+      try {
+        await practice.recordAttempt({
+          exerciseType: "send-character",
+          target,
+          response: result.text,
+          assisted: false,
+          replayed: false,
+          keying: encodeKeyingTiming(
+            result.marksMs,
+            result.spacesMs,
+            thresholdsForWpm(settings.charWpm).ditMs,
+          ),
+        });
+      } catch {
+        return;
+      }
+    }
     clear();
+    promptToken.current += 1;
     setTarget(randomTarget());
   }
 
@@ -126,10 +163,20 @@ export function SendPractice() {
         <button type="button" onClick={clear}>
           Clear
         </button>
-        <button type="button" onClick={nextTarget}>
+        <button type="button" onClick={() => void nextTarget()}>
           New target
         </button>
       </div>
+
+      {practice.status === "pending" && <p role="status">Saving…</p>}
+      {practice.error && (
+        <div role="alert">
+          <span>{practice.error}</span>
+          <button type="button" onClick={() => void practice.retry()}>
+            Retry save
+          </button>
+        </div>
+      )}
     </div>
   );
 }

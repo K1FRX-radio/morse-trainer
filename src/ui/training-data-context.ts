@@ -9,6 +9,10 @@ import type {
   LearnPersistenceStart,
   LearnSessionPersistence,
 } from "../data/learn-persistence.ts";
+import type {
+  PracticePersistenceStart,
+  PracticeSessionPersistence,
+} from "../data/practice-persistence.ts";
 
 export type TrainingDataContextValue = {
   loadCurriculum: () => CurriculumState;
@@ -19,6 +23,9 @@ export type TrainingDataContextValue = {
   startLearnSessionPersistence: (
     options: LearnPersistenceStart,
   ) => Promise<LearnSessionPersistence>;
+  startPracticeSessionPersistence: (
+    options: PracticePersistenceStart,
+  ) => Promise<PracticeSessionPersistence>;
   getRetryClassification: (
     identity: RetryCounterIdentity,
     threshold: SpeedSuggestionAfterAttempts,

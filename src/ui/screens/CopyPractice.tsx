@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useMemo, useRef, useState, type FormEvent } from "react";
 import { createRng, type Rng } from "../../core/rng.ts";
 import {
   COPY_CONTENT_LABELS,
@@ -6,12 +6,9 @@ import {
   generateCopyPrompt,
   type CopyContentMode,
 } from "../../content/practice-content.ts";
-import {
-  currentActiveTimePoint,
-  PracticeSessionTimer,
-} from "../../training/practice-session.ts";
 import { useSettings } from "../settings-context.ts";
 import { useAudioEngine } from "../hooks/useAudioEngine.ts";
+import { usePracticeSession } from "../hooks/usePracticeSession.ts";
 
 type Result = "correct" | "incorrect";
 
@@ -23,7 +20,10 @@ export function CopyPractice() {
   const { settings } = useSettings();
   const { engine, noise, unlock } = useAudioEngine();
   const rng = useRef<Rng>(createRng(Date.now() >>> 0));
-  const sessionTimer = useRef(new PracticeSessionTimer());
+  const practice = usePracticeSession("copy-practice", settings);
+  const replayed = useRef(false);
+  const audioCompletedAt = useRef<number | undefined>(undefined);
+  const playbackToken = useRef(0);
 
   const [mode, setMode] = useState<CopyContentMode>("letters");
   const [prompt, setPrompt] = useState<string | undefined>(undefined);
@@ -37,23 +37,9 @@ export function CopyPractice() {
     [settings.charWpm, settings.effectiveWpm],
   );
 
-  useEffect(() => {
-    const timer = sessionTimer.current;
-    const onVisibility = () => {
-      if (document.visibilityState === "hidden") {
-        timer.pause(currentActiveTimePoint());
-      } else {
-        timer.resume(currentActiveTimePoint());
-      }
-    };
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => {
-      document.removeEventListener("visibilitychange", onVisibility);
-      timer.pause(currentActiveTimePoint());
-    };
-  }, []);
-
   async function play(text: string): Promise<void> {
+    const token = ++playbackToken.current;
+    audioCompletedAt.current = undefined;
     await unlock();
     setPlaying(true);
     if (settings.noiseLevel > 0) {
@@ -64,23 +50,32 @@ export function CopyPractice() {
     } finally {
       noise.stop();
       setPlaying(false);
+      if (token === playbackToken.current) {
+        audioCompletedAt.current = performance.now();
+      }
     }
   }
 
   async function nextPrompt(): Promise<void> {
-    sessionTimer.current.recordActivity(currentActiveTimePoint());
+    try {
+      await practice.start();
+    } catch {
+      return;
+    }
     engine.cancel();
     const next = generateCopyPrompt(mode, rng.current);
     setPrompt(next);
     setAnswer("");
     setResult(undefined);
     setRevealed(false);
+    replayed.current = false;
     await play(next);
   }
 
   function replay(): void {
     if (prompt) {
-      sessionTimer.current.recordActivity(currentActiveTimePoint());
+      practice.recordActivity();
+      replayed.current = true;
       void play(prompt);
     }
   }
@@ -90,11 +85,25 @@ export function CopyPractice() {
     if (!prompt) {
       return;
     }
-    sessionTimer.current.recordActivity(currentActiveTimePoint());
-    setResult(
-      normalize(answer) === normalize(prompt) ? "correct" : "incorrect",
-    );
+    if (result) return;
+    practice.recordActivity();
+    const correct = normalize(answer) === normalize(prompt);
+    setResult(correct ? "correct" : "incorrect");
     setRevealed(true);
+    const completedAt = audioCompletedAt.current;
+    void practice
+      .recordAttempt({
+        exerciseType: mode === "words" ? "copy-word" : "copy-group",
+        target: prompt,
+        response: answer,
+        assisted: replayed.current,
+        replayed: replayed.current,
+        responseMs:
+          completedAt === undefined
+            ? 0
+            : Math.max(0, performance.now() - completedAt),
+      })
+      .catch(() => undefined);
   }
 
   return (
@@ -132,7 +141,7 @@ export function CopyPractice() {
             placeholder="Type what you hear"
             value={answer}
             onChange={(event) => {
-              sessionTimer.current.recordActivity(currentActiveTimePoint());
+              practice.recordActivity();
               setAnswer(event.target.value);
             }}
             aria-label="Your copy"
@@ -153,6 +162,16 @@ export function CopyPractice() {
           {result === "correct" ? "Correct" : "Not quite"}
           {revealed && prompt ? ` — sent ${prompt}` : ""}
         </p>
+      )}
+
+      {practice.status === "pending" && <p role="status">Saving…</p>}
+      {practice.error && (
+        <div role="alert">
+          <span>{practice.error}</span>
+          <button type="button" onClick={() => void practice.retry()}>
+            Retry save
+          </button>
+        </div>
       )}
     </div>
   );

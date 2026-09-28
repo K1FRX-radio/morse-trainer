@@ -178,6 +178,8 @@ function TrainingDataFixture({
           ),
         startLearnSessionPersistence:
           startLearnSessionPersistence ?? (() => Promise.resolve(persistence)),
+        startPracticeSessionPersistence: () =>
+          Promise.reject(new Error("Practice persistence is not used here")),
         getRetryClassification:
           getRetryClassification ??
           (() => Promise.resolve(retryClassification)),

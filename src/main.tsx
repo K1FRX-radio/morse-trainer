@@ -7,6 +7,7 @@ import {
   curriculumState,
 } from "./data/bootstrap.ts";
 import { DurableLearnSession } from "./data/learn-persistence.ts";
+import { DurablePracticeSession } from "./data/practice-persistence.ts";
 import type { PracticeSettings } from "./core/settings.ts";
 import { LearnAudioProvider } from "./ui/learn-audio.tsx";
 import { SettingsProvider } from "./ui/settings-provider.tsx";
@@ -55,6 +56,9 @@ async function start(): Promise<void> {
             }
             startLearnSessionPersistence={(options) =>
               DurableLearnSession.create(bootstrap.repository, options)
+            }
+            startPracticeSessionPersistence={(options) =>
+              DurablePracticeSession.create(bootstrap.repository, options)
             }
             getRetryClassification={(identity, threshold) =>
               bootstrap.repository.getRetryClassification(identity, threshold)
