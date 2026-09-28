@@ -15,10 +15,7 @@ import {
 } from "../core/curriculum.ts";
 import type { Rng } from "../core/rng.ts";
 import { gradeCopy, gradeCopyAligned, normalizeCopy } from "../core/scoring.ts";
-import {
-  isValidTrainingSession,
-  MIN_VALID_SESSION_ACTIVE_MS,
-} from "../core/session-validity.ts";
+import { MIN_VALID_SESSION_ACTIVE_MS } from "../core/session-validity.ts";
 import type { TimingOptions } from "../core/timing.ts";
 import {
   applyContinuousCopyResult,
@@ -39,6 +36,13 @@ import {
   type LessonConfig,
   type PlannedExercise,
 } from "./lesson-plan.ts";
+import {
+  ActiveTimeTracker,
+  captureActiveTime,
+  DEFAULT_IDLE_THRESHOLD_MS,
+  type ActiveDateBucket,
+  type ActiveTimeContext,
+} from "./session-time.ts";
 import type { FocusedWordEligibility } from "./word-selection.ts";
 
 export type SessionConfig = {
@@ -49,7 +53,7 @@ export type SessionConfig = {
 };
 
 export const DEFAULT_SESSION_CONFIG: SessionConfig = {
-  idleThresholdMs: 60000,
+  idleThresholdMs: DEFAULT_IDLE_THRESHOLD_MS,
   minActiveMs: MIN_VALID_SESSION_ACTIVE_MS,
 };
 
@@ -175,6 +179,8 @@ type SessionOptions = {
   /** Active characters flagged for review; defaults to the state's flags. */
   review?: Iterable<string>;
   now?: () => number;
+  wallNow?: () => Date;
+  captureAt?: (date: Date) => ActiveTimeContext;
   lessonConfig?: LessonConfig;
   sessionConfig?: SessionConfig;
   continuousCopyDurationMs?: number;
@@ -185,7 +191,10 @@ export class LearnSession {
   private readonly state: CurriculumState;
   private readonly mode: LearnSessionMode;
   private readonly now: () => number;
+  private readonly wallNow: () => Date;
+  private readonly captureAt: (date: Date) => ActiveTimeContext;
   private readonly config: SessionConfig;
+  private readonly activeTime: ActiveTimeTracker;
   private readonly plan: LessonPlan;
   private readonly rng: Rng;
   private readonly groupLengthNoticeMs: number;
@@ -207,10 +216,6 @@ export class LearnSession {
   private readonly wordExercises: PlannedExercise[];
   private wordCursor = 0;
   private showedWordTransition = false;
-  private lastActivityAt: number | undefined;
-  private paused = false;
-  private activeMs = 0;
-
   private cards = 0;
   private finalizedOrdinaryAttempts = 0;
   private attempts = 0;
@@ -237,7 +242,14 @@ export class LearnSession {
       options.now ??
       (() =>
         typeof performance !== "undefined" ? performance.now() : Date.now());
+    this.wallNow = options.wallNow ?? (() => new Date());
+    this.captureAt = options.captureAt ?? captureActiveTime;
     this.config = options.sessionConfig ?? DEFAULT_SESSION_CONFIG;
+    this.activeTime = new ActiveTimeTracker({
+      idleThresholdMs: this.config.idleThresholdMs,
+      minActiveMs: this.config.minActiveMs,
+      captureAt: this.captureAt,
+    });
     this.rng = options.rng;
     const lessonConfig = options.lessonConfig ?? DEFAULT_LESSON_CONFIG;
     this.groupLengthNoticeMs = lessonConfig.groupLengthNoticeMs;
@@ -282,7 +294,7 @@ export class LearnSession {
   }
 
   start(time = this.now()): void {
-    this.lastActivityAt = time;
+    this.activeTime.start(this.timePoint(time));
   }
 
   /** The next lesson event, or undefined when the lesson is complete. */
@@ -553,17 +565,11 @@ export class LearnSession {
   }
 
   pause(time = this.now()): void {
-    if (!this.paused) {
-      this.accrue(time);
-      this.paused = true;
-    }
+    this.activeTime.pause(this.timePoint(time));
   }
 
   resume(time = this.now()): void {
-    if (this.paused) {
-      this.paused = false;
-      this.lastActivityAt = time;
-    }
+    this.activeTime.resume(this.timePoint(time));
   }
 
   end(time = this.now()): SessionSummary {
@@ -572,7 +578,11 @@ export class LearnSession {
   }
 
   get elapsedActiveMs(): number {
-    return this.activeMs;
+    return this.activeTime.snapshot().activeMs;
+  }
+
+  get activeDateBuckets(): ActiveDateBucket[] {
+    return this.activeTime.snapshot().activeDateBuckets;
   }
 
   get totalCards(): number {
@@ -608,9 +618,10 @@ export class LearnSession {
       (this.lastContinuousCopyResult && !this.lastContinuousCopyResult.abandoned
         ? 1
         : 0);
+    const activeTime = this.activeTime.snapshot();
     return {
       mode: this.mode,
-      activeMs: this.activeMs,
+      activeMs: activeTime.activeMs,
       cards: this.cards,
       attempts: this.attempts,
       finalizedAttempts,
@@ -649,10 +660,7 @@ export class LearnSession {
       excludedFromMastery: this.excludedFromMastery,
       charactersNeedingReview: reviewCharacters(this.state),
       charactersPracticed: [...this.practiced],
-      valid: isValidTrainingSession(
-        { activeMs: this.activeMs, attemptCount: finalizedAttempts },
-        this.config.minActiveMs,
-      ),
+      valid: this.activeTime.isValid(finalizedAttempts),
       ...(this.lastContinuousCopyResult
         ? { continuousCopyResult: this.lastContinuousCopyResult }
         : {}),
@@ -678,12 +686,13 @@ export class LearnSession {
   }
 
   private accrue(time: number): void {
-    if (!this.paused && this.lastActivityAt !== undefined) {
-      const delta = time - this.lastActivityAt;
-      if (delta > 0) {
-        this.activeMs += Math.min(delta, this.config.idleThresholdMs);
-      }
-    }
-    this.lastActivityAt = time;
+    this.activeTime.recordActivity(this.timePoint(time));
+  }
+
+  private timePoint(monotonicMs: number) {
+    return {
+      monotonicMs,
+      wallTime: this.captureAt(this.wallNow()),
+    };
   }
 }

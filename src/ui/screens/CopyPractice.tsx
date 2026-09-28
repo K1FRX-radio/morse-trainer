@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { createRng, type Rng } from "../../core/rng.ts";
 import {
   COPY_CONTENT_LABELS,
@@ -6,6 +6,10 @@ import {
   generateCopyPrompt,
   type CopyContentMode,
 } from "../../content/practice-content.ts";
+import {
+  currentActiveTimePoint,
+  PracticeSessionTimer,
+} from "../../training/practice-session.ts";
 import { useSettings } from "../settings-context.ts";
 import { useAudioEngine } from "../hooks/useAudioEngine.ts";
 
@@ -19,6 +23,7 @@ export function CopyPractice() {
   const { settings } = useSettings();
   const { engine, noise, unlock } = useAudioEngine();
   const rng = useRef<Rng>(createRng(Date.now() >>> 0));
+  const sessionTimer = useRef(new PracticeSessionTimer());
 
   const [mode, setMode] = useState<CopyContentMode>("letters");
   const [prompt, setPrompt] = useState<string | undefined>(undefined);
@@ -31,6 +36,22 @@ export function CopyPractice() {
     () => ({ charWpm: settings.charWpm, effectiveWpm: settings.effectiveWpm }),
     [settings.charWpm, settings.effectiveWpm],
   );
+
+  useEffect(() => {
+    const timer = sessionTimer.current;
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        timer.pause(currentActiveTimePoint());
+      } else {
+        timer.resume(currentActiveTimePoint());
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      timer.pause(currentActiveTimePoint());
+    };
+  }, []);
 
   async function play(text: string): Promise<void> {
     await unlock();
@@ -47,6 +68,7 @@ export function CopyPractice() {
   }
 
   async function nextPrompt(): Promise<void> {
+    sessionTimer.current.recordActivity(currentActiveTimePoint());
     engine.cancel();
     const next = generateCopyPrompt(mode, rng.current);
     setPrompt(next);
@@ -58,6 +80,7 @@ export function CopyPractice() {
 
   function replay(): void {
     if (prompt) {
+      sessionTimer.current.recordActivity(currentActiveTimePoint());
       void play(prompt);
     }
   }
@@ -67,6 +90,7 @@ export function CopyPractice() {
     if (!prompt) {
       return;
     }
+    sessionTimer.current.recordActivity(currentActiveTimePoint());
     setResult(
       normalize(answer) === normalize(prompt) ? "correct" : "incorrect",
     );
@@ -107,7 +131,10 @@ export function CopyPractice() {
             spellCheck={false}
             placeholder="Type what you hear"
             value={answer}
-            onChange={(event) => setAnswer(event.target.value)}
+            onChange={(event) => {
+              sessionTimer.current.recordActivity(currentActiveTimePoint());
+              setAnswer(event.target.value);
+            }}
             aria-label="Your copy"
           />
           <button type="submit">Check</button>

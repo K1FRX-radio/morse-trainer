@@ -3,6 +3,10 @@ import { thresholdsForWpm } from "../../core/keying.ts";
 import { StraightKey } from "../../input/key-input.ts";
 import { attachKeyboardKey } from "../../input/keyboard-key.ts";
 import { attachPointerKey } from "../../input/pointer-key.ts";
+import {
+  currentActiveTimePoint,
+  PracticeSessionTimer,
+} from "../../training/practice-session.ts";
 import { useSettings } from "../settings-context.ts";
 import { useAudioEngine } from "../hooks/useAudioEngine.ts";
 
@@ -21,6 +25,7 @@ export function SendPractice() {
 
   const buttonRef = useRef<HTMLButtonElement>(null);
   const keyRef = useRef<StraightKey | undefined>(undefined);
+  const sessionTimer = useRef(new PracticeSessionTimer());
 
   const [decoded, setDecoded] = useState("");
   const [target, setTarget] = useState<string>(randomTarget);
@@ -29,10 +34,14 @@ export function SendPractice() {
     keyRef.current = new StraightKey({
       thresholds: thresholdsForWpm(settings.charWpm),
       onMarkStart: () => {
+        sessionTimer.current.recordActivity(currentActiveTimePoint());
         void unlock();
         engine.startTone(settingsRef.current.toneHz);
       },
-      onMarkEnd: () => engine.stopTone(),
+      onMarkEnd: () => {
+        sessionTimer.current.recordActivity(currentActiveTimePoint());
+        engine.stopTone();
+      },
       onDecodeChange: (result) => setDecoded(result.text),
     });
   }
@@ -56,6 +65,22 @@ export function SendPractice() {
       engine.stopTone();
     };
   }, [engine]);
+
+  useEffect(() => {
+    const timer = sessionTimer.current;
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        timer.pause(currentActiveTimePoint());
+      } else {
+        timer.resume(currentActiveTimePoint());
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      timer.pause(currentActiveTimePoint());
+    };
+  }, []);
 
   function clear(): void {
     keyRef.current?.reset();

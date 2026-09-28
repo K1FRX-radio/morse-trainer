@@ -168,6 +168,7 @@ export function useLearnSession() {
   const persistenceSnapshot = useCallback(
     (session: LearnSession): LearnPersistenceSnapshot => ({
       activeMs: session.elapsedActiveMs,
+      activeDateBuckets: session.activeDateBuckets,
       completedCards: session.completedCards,
       curriculum: stateRef.current,
       introductions: [

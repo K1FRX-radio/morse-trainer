@@ -11,6 +11,19 @@ function clock(...values: string[]) {
   return () => new Date(values[Math.min(index++, values.length - 1)]);
 }
 
+function activeDateBuckets(activeMs: number) {
+  return activeMs === 0
+    ? []
+    : [
+        {
+          localDate: "2026-09-25",
+          utcOffsetMinutes: 0,
+          timeZone: "UTC",
+          activeMs,
+        },
+      ];
+}
+
 async function setup() {
   const database = new TrainerDatabase({
     name: crypto.randomUUID(),
@@ -57,6 +70,20 @@ describe("DurableLearnSession", () => {
       );
       const snapshot = {
         activeMs: 60000,
+        activeDateBuckets: [
+          {
+            localDate: "2026-09-24",
+            utcOffsetMinutes: 0,
+            timeZone: "UTC",
+            activeMs: 20000,
+          },
+          {
+            localDate: "2026-09-25",
+            utcOffsetMinutes: 0,
+            timeZone: "UTC",
+            activeMs: 40000,
+          },
+        ],
         completedCards: 0,
         curriculum: state,
         introductions: ["K", "M"],
@@ -82,6 +109,7 @@ describe("DurableLearnSession", () => {
         attemptCount: 1,
         completedCards: 0,
         activeMs: 60000,
+        activeDateBuckets: snapshot.activeDateBuckets,
         valid: true,
         revision: 2,
         unlockedAtStart: ["K", "M"],
@@ -145,6 +173,7 @@ describe("DurableLearnSession", () => {
       );
       const snapshot = {
         activeMs: 60000,
+        activeDateBuckets: activeDateBuckets(60000),
         completedCards: 1,
         curriculum: state,
         introductions: ["K", "M"],
@@ -242,6 +271,7 @@ describe("DurableLearnSession", () => {
         },
         {
           activeMs: 10000,
+          activeDateBuckets: activeDateBuckets(10000),
           completedCards: 1,
           curriculum: state,
           introductions: ["K", "M"],
@@ -258,6 +288,7 @@ describe("DurableLearnSession", () => {
         },
         {
           activeMs: 20000,
+          activeDateBuckets: activeDateBuckets(20000),
           completedCards: 2,
           curriculum: state,
           introductions: ["K", "M"],
@@ -265,6 +296,7 @@ describe("DurableLearnSession", () => {
       );
       await session.finish({
         activeMs: 40000,
+        activeDateBuckets: activeDateBuckets(40000),
         completedCards: 2,
         curriculum: state,
         introductions: ["K", "M"],
@@ -331,6 +363,7 @@ describe("DurableLearnSession", () => {
       );
       const snapshot = {
         activeMs: 60000,
+        activeDateBuckets: activeDateBuckets(60000),
         completedCards: 0,
         curriculum: state,
         introductions: ["K", "M"],
@@ -396,7 +429,8 @@ describe("DurableLearnSession", () => {
         },
       );
       const snapshot = {
-        activeMs: 20000,
+        activeMs: 30000,
+        activeDateBuckets: activeDateBuckets(30000),
         completedCards: 1,
         curriculum: state,
         introductions: ["K", "M"],
@@ -419,7 +453,56 @@ describe("DurableLearnSession", () => {
       expect(await database.sessions.get("session-4")).toMatchObject({
         status: "interrupted",
         attemptCount: 1,
+        finalizedAttemptCount: 1,
+        activeMs: 30000,
+        valid: true,
         revision: 2,
+      });
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
+  it("interrupts elapsed activity without inventing an attempt", async () => {
+    const { database, repository } = await setup();
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    const ids = ["owner-invalid", "session-invalid"];
+
+    try {
+      const session = await DurableLearnSession.create(
+        repository,
+        {
+          mode: "learn",
+          activeCharacters: ["K", "M"],
+          settings: {
+            charWpm: 20,
+            effectiveWpm: 12,
+            toneHz: 600,
+            noiseLevel: 0,
+          },
+        },
+        {
+          now: clock("2026-09-25T20:00:00.000Z", "2026-09-25T20:00:40.000Z"),
+          createId: () => ids.shift()!,
+          scheduleLeaseRenewal: () => () => undefined,
+        },
+      );
+      await session.interrupt({
+        activeMs: 40000,
+        activeDateBuckets: activeDateBuckets(40000),
+        completedCards: 0,
+        curriculum: state,
+        introductions: ["K", "M"],
+      });
+
+      expect(await database.attempts.count()).toBe(0);
+      expect(await database.sessions.get("session-invalid")).toMatchObject({
+        status: "interrupted",
+        activeMs: 40000,
+        attemptCount: 0,
+        finalizedAttemptCount: 0,
+        valid: false,
       });
     } finally {
       repository.close();
@@ -455,6 +538,7 @@ describe("DurableLearnSession", () => {
       );
       const snapshot = {
         activeMs: 60000,
+        activeDateBuckets: activeDateBuckets(60000),
         completedCards: 0,
         curriculum: state,
         introductions: ["K", "M"],

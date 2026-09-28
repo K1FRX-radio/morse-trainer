@@ -34,6 +34,7 @@ export type LearnPersistenceStart = {
 
 export type LearnPersistenceSnapshot = {
   activeMs: number;
+  activeDateBuckets: TrainingSessionRecord["activeDateBuckets"];
   completedCards: number;
   curriculum: CurriculumState;
   introductions: string[];
@@ -112,21 +113,6 @@ function introductionsRecord(
     updatedAt,
     characters: [...new Set(characters)],
   };
-}
-
-function activeDateBuckets(
-  activeMs: number,
-  at: ReturnType<typeof captureDateTime>,
-): TrainingSessionRecord["activeDateBuckets"] {
-  if (activeMs === 0) return [];
-  return [
-    {
-      localDate: at.localDate,
-      utcOffsetMinutes: at.utcOffsetMinutes,
-      ...(at.timeZone ? { timeZone: at.timeZone } : {}),
-      activeMs,
-    },
-  ];
 }
 
 export class DurableLearnSession implements LearnSessionPersistence {
@@ -349,7 +335,7 @@ export class DurableLearnSession implements LearnSessionPersistence {
         status,
         endedAt,
         activeMs: frozenSnapshot.activeMs,
-        activeDateBuckets: activeDateBuckets(frozenSnapshot.activeMs, endedAt),
+        activeDateBuckets: frozenSnapshot.activeDateBuckets,
         completedCards: frozenSnapshot.completedCards,
         valid: isValidTrainingSession({
           activeMs: frozenSnapshot.activeMs,
@@ -392,7 +378,7 @@ export class DurableLearnSession implements LearnSessionPersistence {
       ...this.record,
       updatedAt: at.utc,
       activeMs: snapshot.activeMs,
-      activeDateBuckets: activeDateBuckets(snapshot.activeMs, at),
+      activeDateBuckets: snapshot.activeDateBuckets,
       attemptCount,
       finalizedAttemptCount: qualifyingAttemptCount,
       completedCards: snapshot.completedCards,
