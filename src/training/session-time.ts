@@ -32,15 +32,11 @@ export type ActiveTimeSnapshot = {
 export type ActiveTimeTrackerOptions = {
   idleThresholdMs?: number;
   minActiveMs?: number;
-  captureAt?: (date: Date) => ActiveTimeContext;
+  captureAt?: (date: Date, timeZone?: string) => ActiveTimeContext;
 };
 
 function pad(value: number): string {
   return String(value).padStart(2, "0");
-}
-
-function localDate(date: Date): string {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
 function currentTimeZone(): string | undefined {
@@ -51,16 +47,65 @@ function currentTimeZone(): string | undefined {
   }
 }
 
-export function captureActiveTime(date: Date = new Date()): ActiveTimeContext {
+function zonedParts(date: Date, timeZone: string) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const value = (type: Intl.DateTimeFormatPartTypes): number => {
+    const part = parts.find((candidate) => candidate.type === type)?.value;
+    if (part === undefined) throw new RangeError(`missing ${type} date part`);
+    return Number(part);
+  };
+  return {
+    year: value("year"),
+    month: value("month"),
+    day: value("day"),
+    hour: value("hour"),
+    minute: value("minute"),
+    second: value("second"),
+  };
+}
+
+export function captureActiveTime(
+  date: Date = new Date(),
+  requestedTimeZone?: string,
+): ActiveTimeContext {
   if (Number.isNaN(date.getTime())) {
     throw new RangeError("cannot capture an invalid date");
   }
-  const timeZone = currentTimeZone();
+  const timeZone = requestedTimeZone ?? currentTimeZone();
+  if (!timeZone) {
+    return {
+      utc: date.toISOString(),
+      localDate: `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`,
+      utcOffsetMinutes: -date.getTimezoneOffset(),
+    };
+  }
+  const parts = zonedParts(date, timeZone);
+  const utcOffsetMinutes = Math.round(
+    (Date.UTC(
+      parts.year,
+      parts.month - 1,
+      parts.day,
+      parts.hour,
+      parts.minute,
+      parts.second,
+    ) -
+      Math.floor(date.getTime() / 1000) * 1000) /
+      60000,
+  );
   return {
     utc: date.toISOString(),
-    localDate: localDate(date),
-    utcOffsetMinutes: -date.getTimezoneOffset(),
-    ...(timeZone ? { timeZone } : {}),
+    localDate: `${parts.year}-${pad(parts.month)}-${pad(parts.day)}`,
+    utcOffsetMinutes,
+    timeZone,
   };
 }
 
@@ -71,7 +116,10 @@ function bucketKey(bucket: Omit<ActiveDateBucket, "activeMs">): string {
 export class ActiveTimeTracker {
   private readonly idleThresholdMs: number;
   private readonly minActiveMs: number;
-  private readonly captureAt: (date: Date) => ActiveTimeContext;
+  private readonly captureAt: (
+    date: Date,
+    timeZone?: string,
+  ) => ActiveTimeContext;
   private readonly buckets = new Map<string, ActiveDateBucket>();
   private lastActivity: ActiveTimePoint | undefined;
   private paused = false;
@@ -93,7 +141,7 @@ export class ActiveTimeTracker {
       const elapsedMs = point.monotonicMs - this.lastActivity.monotonicMs;
       if (elapsedMs > 0) {
         const accruedMs = Math.min(elapsedMs, this.idleThresholdMs);
-        this.addInterval(this.lastActivity.wallTime.utc, accruedMs);
+        this.addInterval(this.lastActivity.wallTime, accruedMs);
         this.activeMs += accruedMs;
       }
     }
@@ -128,8 +176,8 @@ export class ActiveTimeTracker {
     );
   }
 
-  private addInterval(startUtc: string, durationMs: number): void {
-    const startMs = Date.parse(startUtc);
+  private addInterval(start: ActiveTimeContext, durationMs: number): void {
+    const startMs = Date.parse(start.utc);
     if (!Number.isFinite(startMs)) {
       throw new RangeError("active-time point has an invalid UTC timestamp");
     }
@@ -137,21 +185,21 @@ export class ActiveTimeTracker {
     let cursorMs = startMs;
 
     while (cursorMs < endMs) {
-      const context = this.captureAt(new Date(cursorMs));
+      const context = this.contextAt(new Date(cursorMs), start);
       const identity = {
         localDate: context.localDate,
         utcOffsetMinutes: context.utcOffsetMinutes,
         ...(context.timeZone ? { timeZone: context.timeZone } : {}),
       };
       let boundaryMs = endMs;
-      const finalContext = this.captureAt(new Date(endMs - 1));
+      const finalContext = this.contextAt(new Date(endMs - 1), start);
 
       if (bucketKey(identity) !== bucketKey(finalContext)) {
         let low = cursorMs + 1;
         let high = endMs - 1;
         while (low < high) {
           const middle = Math.floor((low + high) / 2);
-          const middleContext = this.captureAt(new Date(middle));
+          const middleContext = this.contextAt(new Date(middle), start);
           if (bucketKey(middleContext) === bucketKey(identity)) {
             low = middle + 1;
           } else {
@@ -164,6 +212,16 @@ export class ActiveTimeTracker {
       this.addBucket(identity, boundaryMs - cursorMs);
       cursorMs = boundaryMs;
     }
+  }
+
+  private contextAt(date: Date, start: ActiveTimeContext): ActiveTimeContext {
+    if (start.timeZone) return this.captureAt(date, start.timeZone);
+    const local = new Date(date.getTime() + start.utcOffsetMinutes * 60000);
+    return {
+      utc: date.toISOString(),
+      localDate: local.toISOString().slice(0, 10),
+      utcOffsetMinutes: start.utcOffsetMinutes,
+    };
   }
 
   private addBucket(

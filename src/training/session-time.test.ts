@@ -172,6 +172,39 @@ describe("ActiveTimeTracker", () => {
     });
   });
 
+  it("keeps capped idle time in the starting timezone after a device change", () => {
+    const captureNewYork = captureInZone("America/New_York", [
+      { startsAt: "1970-01-01T00:00:00.000Z", offsetMinutes: -240 },
+    ]);
+    const captureChicago = captureInZone("America/Chicago", [
+      { startsAt: "1970-01-01T00:00:00.000Z", offsetMinutes: -300 },
+    ]);
+    let captureEnvironment = captureNewYork;
+    const tracker = new ActiveTimeTracker({
+      captureAt: (date, authorityTimeZone) =>
+        authorityTimeZone === "America/New_York"
+          ? captureNewYork(date)
+          : captureEnvironment(date),
+    });
+    tracker.start(point(0, "2026-09-25T04:59:30.000Z", captureNewYork));
+    captureEnvironment = captureChicago;
+    tracker.recordActivity(
+      point(120000, "2026-09-25T05:01:30.000Z", captureChicago),
+    );
+
+    expect(tracker.snapshot()).toEqual({
+      activeMs: 60000,
+      activeDateBuckets: [
+        {
+          localDate: "2026-09-25",
+          utcOffsetMinutes: -240,
+          timeZone: "America/New_York",
+          activeMs: 60000,
+        },
+      ],
+    });
+  });
+
   it("excludes paused and hidden-tab time", () => {
     const tracker = new ActiveTimeTracker({ captureAt: captureUtc });
     tracker.start(point(0, "2026-09-24T10:00:00.000Z", captureUtc));
