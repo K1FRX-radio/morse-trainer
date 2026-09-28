@@ -475,7 +475,10 @@ export function useLearnSession() {
         setExercise(undefined);
         setTransition(undefined);
         setNotification(undefined);
-        continuousCopy.start(event);
+        continuousCopy.start({
+          schedule: event.plan.schedule,
+          durationMs: event.plan.scheduledDurationMs,
+        });
         return;
       }
       setTransition(undefined);

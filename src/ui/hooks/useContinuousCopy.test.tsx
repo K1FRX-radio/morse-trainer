@@ -2,7 +2,6 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildSchedule } from "../../core/timing.ts";
 import type { ContinuousCopyResult } from "../../training/continuous-copy.ts";
-import type { ContinuousCopyEvent } from "../../training/learn-session.ts";
 import type { LearnAudio } from "../learn-audio-context.ts";
 import {
   CONTINUOUS_COPY_GRACE_MS,
@@ -21,18 +20,9 @@ const schedule = buildSchedule("KMKM", {
   charWpm: 20,
   effectiveWpm: 12,
 });
-const event: ContinuousCopyEvent = {
-  type: "continuous-copy",
-  id: "continuous-copy",
-  phase: "continuous-copy",
-  plan: {
-    tokens: [{ kind: "random-group", text: "KMKM" }],
-    audioText: "KMKM",
-    gradingTarget: "KMKM",
-    schedule,
-    requestedDurationMs: schedule.totalMs,
-    scheduledDurationMs: schedule.totalMs,
-  },
+const playback = {
+  schedule,
+  durationMs: schedule.totalMs,
 };
 const result: ContinuousCopyResult = {
   randomGroupTokens: 1,
@@ -69,7 +59,7 @@ afterEach(() => vi.useRealTimers());
 describe("useContinuousCopy", () => {
   it("keeps input active during playback and completes after the grace period", async () => {
     const hook = setup();
-    act(() => hook.result.current.start(event));
+    act(() => hook.result.current.start(playback));
 
     expect(hook.result.current.stage).toBe("playing");
     expect(hook.result.current.active).toBe(true);
@@ -94,7 +84,7 @@ describe("useContinuousCopy", () => {
 
   it("abandons only elapsed playback and ignores stale completion", async () => {
     const hook = setup();
-    act(() => hook.result.current.start(event));
+    act(() => hook.result.current.start(playback));
     act(() => vi.advanceTimersByTime(500));
     act(() => hook.result.current.abandon());
 

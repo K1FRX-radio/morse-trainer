@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { Schedule } from "../../core/timing.ts";
 import type { ContinuousCopyResult } from "../../training/continuous-copy.ts";
-import type { ContinuousCopyEvent } from "../../training/learn-session.ts";
-import type { LearnAudio } from "../learn-audio-context.ts";
+import type { RxAudio } from "../learn-audio-context.ts";
 
 export const CONTINUOUS_COPY_GRACE_MS = 2000;
 const TIMER_INTERVAL_MS = 100;
@@ -15,14 +15,19 @@ type CompleteContinuousCopy = (
 ) => ContinuousCopyResult;
 
 type Options = {
-  audio: LearnAudio;
+  audio: RxAudio;
   toneHz: number;
   onComplete: CompleteContinuousCopy;
 };
 
+export type ContinuousCopyPlayback = {
+  schedule: Schedule;
+  durationMs: number;
+};
+
 export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
   const generationRef = useRef(0);
-  const eventRef = useRef<ContinuousCopyEvent | undefined>(undefined);
+  const playbackRef = useRef<ContinuousCopyPlayback | undefined>(undefined);
   const textRef = useRef("");
   const startedAtRef = useRef(0);
   const completedRef = useRef(false);
@@ -52,23 +57,23 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
 
   const completeCurrent = useCallback(
     (abandoned: boolean): ContinuousCopyResult | undefined => {
-      const event = eventRef.current;
-      if (!event || completedRef.current) return undefined;
+      const playback = playbackRef.current;
+      if (!playback || completedRef.current) return undefined;
       completedRef.current = true;
       generationRef.current += 1;
       clearTimers();
       const durationCompleted = abandoned
         ? Math.min(
-            event.plan.scheduledDurationMs,
+            playback.durationMs,
             Math.max(0, performance.now() - startedAtRef.current),
           )
-        : event.plan.scheduledDurationMs;
+        : playback.durationMs;
       const completed = onCompleteRef.current(
         textRef.current,
         durationCompleted,
         abandoned,
       );
-      eventRef.current = undefined;
+      playbackRef.current = undefined;
       setRemainingMs(0);
       if (abandoned) {
         setStage("idle");
@@ -85,26 +90,26 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
   );
 
   const start = useCallback(
-    (event: ContinuousCopyEvent) => {
+    (playback: ContinuousCopyPlayback) => {
       clearTimers();
       const generation = ++generationRef.current;
-      eventRef.current = event;
+      playbackRef.current = playback;
       completedRef.current = false;
       textRef.current = "";
       startedAtRef.current = performance.now();
       setTextState("");
       setResult(undefined);
-      setRemainingMs(event.plan.scheduledDurationMs);
-      setTotalMs(event.plan.scheduledDurationMs);
+      setRemainingMs(playback.durationMs);
+      setTotalMs(playback.durationMs);
       setStage("playing");
 
       intervalRef.current = window.setInterval(() => {
         if (generation !== generationRef.current) return;
         const elapsed = performance.now() - startedAtRef.current;
-        setRemainingMs(Math.max(0, event.plan.scheduledDurationMs - elapsed));
+        setRemainingMs(Math.max(0, playback.durationMs - elapsed));
       }, TIMER_INTERVAL_MS);
 
-      void audio.playSchedule(event.plan.schedule, { toneHz }).then(() => {
+      void audio.playSchedule(playback.schedule, { toneHz }).then(() => {
         if (generation !== generationRef.current) return;
         if (intervalRef.current !== undefined) {
           window.clearInterval(intervalRef.current);
@@ -133,7 +138,7 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
   const reset = useCallback(() => {
     generationRef.current += 1;
     clearTimers();
-    eventRef.current = undefined;
+    playbackRef.current = undefined;
     completedRef.current = false;
     textRef.current = "";
     setTextState("");
@@ -147,7 +152,7 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
     () => () => {
       generationRef.current += 1;
       clearTimers();
-      eventRef.current = undefined;
+      playbackRef.current = undefined;
     },
     [clearTimers],
   );

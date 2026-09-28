@@ -1,8 +1,8 @@
 import { createContext, useContext } from "react";
 import type { Schedule } from "../core/timing.ts";
 
-/** Minimal audio surface the Learn flow depends on, injectable for tests. */
-export type LearnAudio = {
+/** Source-agnostic RX playback surface, injectable for orchestration tests. */
+export type RxAudio = {
   unlock: () => Promise<void>;
   /** Resolves when playback finishes so flows can pace to real audio length. */
   play: (
@@ -22,6 +22,8 @@ export type LearnAudio = {
   /** Cancels playback and suspends only if no newer audio flow has started. */
   cancelAndSuspend: () => Promise<void>;
 };
+
+export type LearnAudio = RxAudio;
 
 export const LearnAudioContext = createContext<LearnAudio | undefined>(
   undefined,
