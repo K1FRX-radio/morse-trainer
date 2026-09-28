@@ -24,6 +24,7 @@ const schedule = buildSchedule("KMKM", {
 const event: ContinuousCopyEvent = {
   type: "continuous-copy",
   id: "continuous-copy",
+  phase: "continuous-copy",
   plan: {
     tokens: [{ kind: "random-group", text: "KMKM" }],
     audioText: "KMKM",

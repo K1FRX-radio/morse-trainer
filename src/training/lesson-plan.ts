@@ -22,6 +22,160 @@ export type LessonPhase =
   | "groups-3"
   | "words";
 
+export type LearnPhaseId = LessonPhase | "continuous-copy" | "summary";
+
+export type LearnPhaseContract = {
+  id: LearnPhaseId;
+  label: string;
+  permittedExerciseTypes: readonly LearnExerciseType[];
+  entryCondition: string;
+  completionCondition: string;
+  transitionTo: readonly LearnPhaseId[];
+  recordsScoredAttempts: boolean;
+  affectsSchedulingOrReview: boolean;
+  evidenceMayAffectReadiness: boolean;
+  typingDuringPlayback: boolean;
+  submissionDuringPlayback: boolean;
+};
+
+export const LEARN_PHASE_ORDER = [
+  "introduce",
+  "acquire",
+  "remediate",
+  "contrast",
+  "groups-2",
+  "groups-3",
+  "words",
+  "continuous-copy",
+  "summary",
+] as const satisfies readonly LearnPhaseId[];
+
+export const LEARN_PHASES: Readonly<Record<LearnPhaseId, LearnPhaseContract>> =
+  {
+    introduce: {
+      id: "introduce",
+      label: "Introduction",
+      permittedExerciseTypes: ["introduce"],
+      entryCondition: "An active character has not been introduced.",
+      completionCondition: "The learner completes its introduction.",
+      transitionTo: ["acquire"],
+      recordsScoredAttempts: false,
+      affectsSchedulingOrReview: false,
+      evidenceMayAffectReadiness: false,
+      typingDuringPlayback: false,
+      submissionDuringPlayback: false,
+    },
+    acquire: {
+      id: "acquire",
+      label: "Acquisition",
+      permittedExerciseTypes: ["copy-character"],
+      entryCondition: "A newly introduced character needs isolated practice.",
+      completionCondition:
+        "The configured recent-correct threshold or attempt cap is reached.",
+      transitionTo: ["introduce", "remediate", "contrast"],
+      recordsScoredAttempts: true,
+      affectsSchedulingOrReview: true,
+      evidenceMayAffectReadiness: false,
+      typingDuringPlayback: true,
+      submissionDuringPlayback: false,
+    },
+    remediate: {
+      id: "remediate",
+      label: "Remediation",
+      permittedExerciseTypes: ["copy-character"],
+      entryCondition: "An active character is flagged for isolated review.",
+      completionCondition:
+        "The configured isolated remediation prompts are completed.",
+      transitionTo: ["contrast"],
+      recordsScoredAttempts: true,
+      affectsSchedulingOrReview: true,
+      evidenceMayAffectReadiness: false,
+      typingDuringPlayback: true,
+      submissionDuringPlayback: false,
+    },
+    contrast: {
+      id: "contrast",
+      label: "Contrast",
+      permittedExerciseTypes: ["copy-character"],
+      entryCondition: "Acquisition and any isolated remediation are complete.",
+      completionCondition:
+        "The configured mixed-recognition threshold or attempt cap is reached.",
+      transitionTo: ["groups-2", "continuous-copy"],
+      recordsScoredAttempts: true,
+      affectsSchedulingOrReview: true,
+      evidenceMayAffectReadiness: false,
+      typingDuringPlayback: true,
+      submissionDuringPlayback: false,
+    },
+    "groups-2": {
+      id: "groups-2",
+      label: "Two-character groups",
+      permittedExerciseTypes: ["copy-group"],
+      entryCondition: "Mixed isolated recognition is complete.",
+      completionCondition:
+        "The configured two-character group count is completed.",
+      transitionTo: ["groups-3"],
+      recordsScoredAttempts: true,
+      affectsSchedulingOrReview: true,
+      evidenceMayAffectReadiness: false,
+      typingDuringPlayback: true,
+      submissionDuringPlayback: false,
+    },
+    "groups-3": {
+      id: "groups-3",
+      label: "Three-character groups",
+      permittedExerciseTypes: ["copy-group"],
+      entryCondition: "Two-character groups are complete.",
+      completionCondition:
+        "The configured three-character group count is completed.",
+      transitionTo: ["words", "continuous-copy"],
+      recordsScoredAttempts: true,
+      affectsSchedulingOrReview: true,
+      evidenceMayAffectReadiness: false,
+      typingDuringPlayback: true,
+      submissionDuringPlayback: false,
+    },
+    words: {
+      id: "words",
+      label: "Focused words",
+      permittedExerciseTypes: ["copy-word"],
+      entryCondition: "The unlocked character set has enough eligible words.",
+      completionCondition: "The configured focused-word count is completed.",
+      transitionTo: ["continuous-copy"],
+      recordsScoredAttempts: true,
+      affectsSchedulingOrReview: true,
+      evidenceMayAffectReadiness: false,
+      typingDuringPlayback: true,
+      submissionDuringPlayback: false,
+    },
+    "continuous-copy": {
+      id: "continuous-copy",
+      label: "Continuous copy",
+      permittedExerciseTypes: [],
+      entryCondition: "The planned card sequence is complete.",
+      completionCondition: "The stream completes or the learner abandons it.",
+      transitionTo: ["summary"],
+      recordsScoredAttempts: true,
+      affectsSchedulingOrReview: true,
+      evidenceMayAffectReadiness: true,
+      typingDuringPlayback: true,
+      submissionDuringPlayback: true,
+    },
+    summary: {
+      id: "summary",
+      label: "Summary",
+      permittedExerciseTypes: [],
+      entryCondition: "The session ends.",
+      completionCondition: "The learner chooses a next action.",
+      transitionTo: [],
+      recordsScoredAttempts: false,
+      affectsSchedulingOrReview: false,
+      evidenceMayAffectReadiness: false,
+      typingDuringPlayback: false,
+      submissionDuringPlayback: false,
+    },
+  };
+
 export type PlannedExercise = {
   type: LearnExerciseType;
   target: string;

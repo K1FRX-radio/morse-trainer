@@ -33,6 +33,7 @@ import {
   LessonPlan,
   buildWordCopyExercises,
   focusedWordEligibility,
+  type LearnPhaseId,
   type LessonConfig,
   type PlannedExercise,
 } from "./lesson-plan.ts";
@@ -67,6 +68,7 @@ export type AttemptOutcome = {
 export type LessonTransition = {
   type: "transition";
   id: "multi-character-copy" | "continuous-copy" | "word-copy";
+  phase: "groups-2" | "continuous-copy" | "words";
   title: string;
   text: string;
   destinationPhase: "groups-2" | "continuous-copy" | "words";
@@ -76,6 +78,7 @@ export type LessonTransition = {
 export type LessonNotification = {
   type: "notification";
   id: "three-character-groups";
+  phase: "groups-3";
   title: "Now copying 3-character groups";
   destinationPhase: "groups-3";
   actionLabel: "Go";
@@ -85,6 +88,7 @@ export type LessonNotification = {
 export type ContinuousCopyEvent = {
   type: "continuous-copy";
   id: "continuous-copy";
+  phase: "continuous-copy";
   plan: ContinuousCopyPlan;
 };
 
@@ -94,6 +98,7 @@ export type LessonEvent =
 const MULTI_CHARACTER_TRANSITION: LessonTransition = {
   type: "transition",
   id: "multi-character-copy",
+  phase: "groups-2",
   title: "Ready for something longer?",
   text: "You’ve learned the individual sounds. Now copy several characters without stopping between them.",
   destinationPhase: "groups-2",
@@ -103,6 +108,7 @@ const MULTI_CHARACTER_TRANSITION: LessonTransition = {
 const CONTINUOUS_COPY_TRANSITION: LessonTransition = {
   type: "transition",
   id: "continuous-copy",
+  phase: "continuous-copy",
   title: "Ready for continuous copy?",
   text: "Type continuously while you listen. Keep going if you miss a character; the sound will not pause.",
   destinationPhase: "continuous-copy",
@@ -112,6 +118,7 @@ const CONTINUOUS_COPY_TRANSITION: LessonTransition = {
 const WORD_COPY_TRANSITION: LessonTransition = {
   type: "transition",
   id: "word-copy",
+  phase: "words",
   title: "Ready to copy words?",
   text: "Now listen for complete word rhythms instead of separate characters.",
   destinationPhase: "words",
@@ -339,6 +346,7 @@ export class LearnSession {
       this.current = {
         type: "notification",
         id: "three-character-groups",
+        phase: "groups-3",
         title: "Now copying 3-character groups",
         destinationPhase: "groups-3",
         actionLabel: "Go",
@@ -380,6 +388,10 @@ export class LearnSession {
 
   get currentEvent(): LessonEvent | undefined {
     return this.current;
+  }
+
+  get currentPhaseId(): LearnPhaseId | undefined {
+    return this.current?.phase;
   }
 
   get phaseLabel(): string | undefined {
@@ -672,6 +684,7 @@ export class LearnSession {
     return {
       type: "continuous-copy",
       id: "continuous-copy",
+      phase: "continuous-copy",
       plan: buildContinuousCopyPlan({
         active: this.activeCharacters,
         newest: newestCharacter(this.state)?.character ?? "",

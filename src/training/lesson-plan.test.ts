@@ -2,11 +2,51 @@ import { describe, expect, it } from "vitest";
 import { createRng } from "../core/rng.ts";
 import {
   DEFAULT_LESSON_CONFIG,
+  LEARN_PHASE_ORDER,
+  LEARN_PHASES,
   LessonPlan,
   buildWordCopyExercises,
   focusedWordEligibility,
   type PlannedExercise,
 } from "./lesson-plan.ts";
+
+describe("Learn phase contracts", () => {
+  it("gives every phase a stable identity in lesson order", () => {
+    expect(LEARN_PHASE_ORDER).toEqual([
+      "introduce",
+      "acquire",
+      "remediate",
+      "contrast",
+      "groups-2",
+      "groups-3",
+      "words",
+      "continuous-copy",
+      "summary",
+    ]);
+    expect(
+      LEARN_PHASE_ORDER.map((phaseId) => LEARN_PHASES[phaseId].id),
+    ).toEqual(LEARN_PHASE_ORDER);
+  });
+
+  it("restricts readiness evidence to continuous copy", () => {
+    expect(
+      LEARN_PHASE_ORDER.filter(
+        (phaseId) => LEARN_PHASES[phaseId].evidenceMayAffectReadiness,
+      ),
+    ).toEqual(["continuous-copy"]);
+  });
+
+  it("keeps playback submission locked for prompt-bound exercises", () => {
+    const promptPhases = LEARN_PHASE_ORDER.filter(
+      (phaseId) => LEARN_PHASES[phaseId].permittedExerciseTypes.length > 0,
+    );
+    expect(
+      promptPhases.every(
+        (phaseId) => !LEARN_PHASES[phaseId].submissionDuringPlayback,
+      ),
+    ).toBe(true);
+  });
+});
 
 function drain(plan: LessonPlan): PlannedExercise[] {
   const all: PlannedExercise[] = [];

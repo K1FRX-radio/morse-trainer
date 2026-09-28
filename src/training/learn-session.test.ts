@@ -102,6 +102,19 @@ describe("LearnSession active time", () => {
 });
 
 describe("LearnSession practice", () => {
+  it("exposes stable phase identity for exercises and interstitials", () => {
+    const { session } = freshSession();
+    session.start(0);
+
+    const introduction = session.next();
+    expect(introduction?.phase).toBe("introduce");
+    expect(session.currentPhaseId).toBe("introduce");
+
+    const groups = advanceToPhase(session, "groups-2");
+    expect(groups?.phase).toBe("groups-2");
+    expect(session.currentPhaseId).toBe("groups-2");
+  });
+
   it("does not unlock characters from practice, even when perfect", () => {
     const { session, state, advance } = freshSession();
     session.start(0);
@@ -533,6 +546,7 @@ describe("LearnSession transitions", () => {
     expect(toMultiCharacterTransition(session)).toEqual({
       type: "transition",
       id: "multi-character-copy",
+      phase: "groups-2",
       title: "Ready for something longer?",
       text: "You’ve learned the individual sounds. Now copy several characters without stopping between them.",
       destinationPhase: "groups-2",
@@ -620,6 +634,7 @@ describe("LearnSession transitions", () => {
     expect(event).toEqual({
       type: "notification",
       id: "three-character-groups",
+      phase: "groups-3",
       title: "Now copying 3-character groups",
       destinationPhase: "groups-3",
       actionLabel: "Go",
@@ -663,6 +678,7 @@ describe("LearnSession transitions", () => {
     expect(event).toEqual({
       type: "transition",
       id: "continuous-copy",
+      phase: "continuous-copy",
       title: "Ready for continuous copy?",
       text: "Type continuously while you listen. Keep going if you miss a character; the sound will not pause.",
       destinationPhase: "continuous-copy",
@@ -814,6 +830,7 @@ describe("LearnSession transitions", () => {
     expect(event).toEqual({
       type: "transition",
       id: "word-copy",
+      phase: "words",
       title: "Ready to copy words?",
       text: "Now listen for complete word rhythms instead of separate characters.",
       destinationPhase: "words",
@@ -840,6 +857,7 @@ describe("LearnSession transitions", () => {
     expect(event).toEqual({
       type: "transition",
       id: "continuous-copy",
+      phase: "continuous-copy",
       title: "Ready for continuous copy?",
       text: "Type continuously while you listen. Keep going if you miss a character; the sound will not pause.",
       destinationPhase: "continuous-copy",

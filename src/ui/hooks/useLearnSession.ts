@@ -25,7 +25,10 @@ import {
   type LearnSessionMode,
   type SessionSummary,
 } from "../../training/learn-session.ts";
-import type { PlannedExercise } from "../../training/lesson-plan.ts";
+import type {
+  LearnPhaseId,
+  PlannedExercise,
+} from "../../training/lesson-plan.ts";
 import {
   recommendRetry,
   type RetryRecommendation,
@@ -143,6 +146,7 @@ export function useLearnSession() {
     LessonNotification | undefined
   >(undefined);
   const [phaseLabel, setPhaseLabel] = useState<string | undefined>(undefined);
+  const [phaseId, setPhaseId] = useState<LearnPhaseId | undefined>(undefined);
   const exerciseRef = useRef<PlannedExercise | undefined>(undefined);
   exerciseRef.current = exercise;
 
@@ -418,6 +422,7 @@ export function useLearnSession() {
     setTransition(undefined);
     setNotification(undefined);
     setPhaseLabel(undefined);
+    setPhaseId("summary");
     updateIntroStage(undefined);
     setPhase("summary");
   }, [
@@ -445,6 +450,7 @@ export function useLearnSession() {
       setFeedback(undefined);
       setAwaitingContinue(false);
       updateIntroStage(undefined);
+      setPhaseId(event.phase);
       setPhaseLabel(sessionRef.current?.phaseLabel);
       if (event.type === "transition") {
         setExercise(undefined);
@@ -1035,6 +1041,7 @@ export function useLearnSession() {
         stateRef.current.characters.length,
       ),
     },
+    phaseId,
     phaseLabel,
     feedback,
     introStage,
