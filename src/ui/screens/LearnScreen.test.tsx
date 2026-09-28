@@ -22,6 +22,10 @@ import type {
   LearnPersistenceStart,
   LearnSessionPersistence,
 } from "../../data/learn-persistence.ts";
+import {
+  applyAdvancementTransition,
+  type AdvancementAcceptance,
+} from "../../training/advancement.ts";
 import { DEFAULT_LESSON_CONFIG } from "../../training/lesson-plan.ts";
 import { sanitizeCopyInput } from "../copy-input.ts";
 import { LearnAudioContext, type LearnAudio } from "../learn-audio-context.ts";
@@ -99,6 +103,22 @@ function testIntroductions(): string[] {
   ) as string[];
 }
 
+function acceptedCurriculum(acceptance: AdvancementAcceptance) {
+  const state = testCurriculum();
+  const activeCharacters = state.characters.map(({ character }) => character);
+  const transition = applyAdvancementTransition(state, {
+    activeCharacters,
+    type: acceptance.type,
+    ...(acceptance.type === "character-unlocked"
+      ? { unlockedCharacter: acceptance.character }
+      : {}),
+  });
+  if (transition === undefined) {
+    throw new Error("test advancement transition was rejected");
+  }
+  return state;
+}
+
 function TrainingDataFixture({
   children,
   retryClassification = {
@@ -107,6 +127,9 @@ function TrainingDataFixture({
   },
   startLearnSessionPersistence,
   getRetryClassification,
+  acceptAdvancement,
+  onSaveCurriculum,
+  onAdoptCurriculum,
 }: {
   children: ReactNode;
   retryClassification?: RetryClassification;
@@ -114,23 +137,37 @@ function TrainingDataFixture({
     options: LearnPersistenceStart,
   ) => Promise<LearnSessionPersistence>;
   getRetryClassification?: () => Promise<RetryClassification>;
+  acceptAdvancement?: LearnSessionPersistence["acceptAdvancement"];
+  onSaveCurriculum?: () => void;
+  onAdoptCurriculum?: () => void;
 }) {
   const persistence: LearnSessionPersistence = {
     recordAttempt: () => Promise.resolve(),
     finish: () => Promise.resolve(),
     interrupt: () => Promise.resolve(),
-    acceptAdvancement: () => Promise.resolve(),
+    acceptAdvancement:
+      acceptAdvancement ??
+      ((acceptance) => Promise.resolve(acceptedCurriculum(acceptance))),
     retry: () => Promise.resolve(),
   };
   return (
     <TrainingDataContext.Provider
       value={{
         loadCurriculum: testCurriculum,
-        saveCurriculum: (state) =>
+        saveCurriculum: (state) => {
+          onSaveCurriculum?.();
           localStorage.setItem(
             "k1frx.curriculum.v2",
             JSON.stringify(state.characters),
-          ),
+          );
+        },
+        adoptCurriculum: (state) => {
+          onAdoptCurriculum?.();
+          localStorage.setItem(
+            "k1frx.curriculum.v2",
+            JSON.stringify(state.characters),
+          );
+        },
         loadIntroductions: testIntroductions,
         saveIntroductions: (characters) =>
           localStorage.setItem(
@@ -159,6 +196,9 @@ function renderLearn(
       options: LearnPersistenceStart,
     ) => Promise<LearnSessionPersistence>;
     getRetryClassification?: () => Promise<RetryClassification>;
+    acceptAdvancement?: LearnSessionPersistence["acceptAdvancement"];
+    onSaveCurriculum?: () => void;
+    onAdoptCurriculum?: () => void;
   } = {},
 ) {
   return render(
@@ -180,6 +220,15 @@ function renderLearn(
           : {})}
         {...(options.getRetryClassification
           ? { getRetryClassification: options.getRetryClassification }
+          : {})}
+        {...(options.onSaveCurriculum
+          ? { onSaveCurriculum: options.onSaveCurriculum }
+          : {})}
+        {...(options.onAdoptCurriculum
+          ? { onAdoptCurriculum: options.onAdoptCurriculum }
+          : {})}
+        {...(options.acceptAdvancement
+          ? { acceptAdvancement: options.acceptAdvancement }
           : {})}
       >
         <LearnAudioContext.Provider value={audio}>
@@ -588,7 +637,7 @@ describe("LearnScreen input gating", () => {
       recordAttempt: () => Promise.resolve(),
       finish: () => Promise.resolve(),
       interrupt,
-      acceptAdvancement: () => Promise.resolve(),
+      acceptAdvancement: () => Promise.resolve(testCurriculum()),
       retry: () => Promise.resolve(),
     };
     const view = renderLearn(
@@ -621,7 +670,7 @@ describe("LearnScreen input gating", () => {
       recordAttempt: () => Promise.resolve(),
       finish: () => Promise.resolve(),
       interrupt,
-      acceptAdvancement: () => Promise.resolve(),
+      acceptAdvancement: () => Promise.resolve(testCurriculum()),
       retry: () => Promise.resolve(),
     };
     const view = renderLearn(
@@ -651,7 +700,7 @@ describe("LearnScreen input gating", () => {
       recordAttempt: () => Promise.reject(new Error("quota exceeded")),
       finish: () => Promise.resolve(),
       interrupt: () => Promise.resolve(),
-      acceptAdvancement: () => Promise.resolve(),
+      acceptAdvancement: () => Promise.resolve(testCurriculum()),
       retry,
     };
     renderLearn(
@@ -1550,8 +1599,22 @@ describe("LearnScreen advancement", () => {
 
   it("offers actual metrics and unlocks only U into its introduction", async () => {
     const fake = makeFakeAudio();
-    renderLearn(fake.audio);
+    const acceptAdvancement = vi.fn((acceptance: AdvancementAcceptance) =>
+      Promise.resolve(acceptedCurriculum(acceptance)),
+    );
+    const onSaveCurriculum = vi.fn();
+    const onAdoptCurriculum = vi.fn();
+    renderLearn(
+      fake.audio,
+      {},
+      {
+        acceptAdvancement,
+        onSaveCurriculum,
+        onAdoptCurriculum,
+      },
+    );
     await completeContinuousCopy(fake);
+    const savesBeforeAcceptance = onSaveCurriculum.mock.calls.length;
 
     expect(
       screen.getByRole("heading", {
@@ -1566,6 +1629,9 @@ describe("LearnScreen advancement", () => {
     fireEvent.click(learnNext);
     await flush();
 
+    expect(acceptAdvancement).toHaveBeenCalledOnce();
+    expect(onSaveCurriculum).toHaveBeenCalledTimes(savesBeforeAcceptance);
+    expect(onAdoptCurriculum).toHaveBeenCalledOnce();
     const saved = JSON.parse(
       localStorage.getItem("k1frx.curriculum.v2") ?? "[]",
     ) as Array<{ character: string }>;
@@ -1587,11 +1653,13 @@ describe("LearnScreen advancement", () => {
       .fn<LearnSessionPersistence["acceptAdvancement"]>()
       .mockImplementationOnce(
         () =>
-          new Promise<void>((_resolve, reject) => {
+          new Promise<ReturnType<typeof testCurriculum>>((_resolve, reject) => {
             rejectAcceptance = reject;
           }),
       )
-      .mockResolvedValue(undefined);
+      .mockImplementation((acceptance) =>
+        Promise.resolve(acceptedCurriculum(acceptance)),
+      );
     const persistence: LearnSessionPersistence = {
       recordAttempt: () => Promise.resolve(),
       finish: () => Promise.resolve(),
@@ -1636,7 +1704,7 @@ describe("LearnScreen advancement", () => {
 
     expect(acceptAdvancement).toHaveBeenCalledTimes(2);
     expect(startLearnSessionPersistence).toHaveBeenCalledTimes(2);
-    expect(acceptAdvancement.mock.calls[0]?.[1]).toEqual({
+    expect(acceptAdvancement.mock.calls[0]?.[0]).toEqual({
       type: "character-unlocked",
       character: "U",
     });
@@ -1659,7 +1727,7 @@ describe("LearnScreen advancement", () => {
         events.push("finalize");
       },
       interrupt: () => Promise.resolve(),
-      acceptAdvancement: () => Promise.resolve(),
+      acceptAdvancement: () => Promise.resolve(testCurriculum()),
       retry: () => Promise.resolve(),
     };
     renderLearn(
@@ -1717,7 +1785,7 @@ describe("LearnScreen advancement", () => {
       recordAttempt: () => Promise.resolve(),
       finish,
       interrupt: () => Promise.resolve(),
-      acceptAdvancement: () => Promise.resolve(),
+      acceptAdvancement: () => Promise.resolve(testCurriculum()),
       retry: () => Promise.resolve(),
     };
     renderLearn(

@@ -12,6 +12,11 @@ import {
 } from "../core/curriculum.ts";
 import type { ContinuousCopyResult } from "./continuous-copy.ts";
 
+type AdvancementEvidence = Pick<
+  ContinuousCopyResult,
+  "abandoned" | "perCharacterResults"
+>;
+
 export type AdvancementReason =
   | "READY"
   | "ABANDONED"
@@ -42,6 +47,60 @@ export type AdvancementAcceptance =
   | { type: "character-unlocked"; character: string }
   | { type: "curriculum-completed" };
 
+export type AdvancementTransitionRequest = {
+  activeCharacters: string[];
+  type: AdvancementAcceptance["type"];
+  unlockedCharacter?: string;
+};
+
+export type AdvancementTransitionResult = {
+  acceptance: AdvancementAcceptance;
+  newlyMasteredCharacters: string[];
+};
+
+export function applyAdvancementTransition(
+  state: CurriculumState,
+  request: AdvancementTransitionRequest,
+  at?: string,
+): AdvancementTransitionResult | undefined {
+  if (
+    state.characters.some(({ needsReview }) => needsReview) ||
+    request.activeCharacters.length !== state.characters.length ||
+    request.activeCharacters.some(
+      (character, index) => character !== state.characters[index]?.character,
+    )
+  ) {
+    return undefined;
+  }
+  const nextCharacter = nextLockedCharacter(state);
+  if (
+    (request.type === "character-unlocked" &&
+      (request.unlockedCharacter === undefined ||
+        request.unlockedCharacter !== nextCharacter)) ||
+    (request.type === "curriculum-completed" &&
+      (request.unlockedCharacter !== undefined || nextCharacter !== undefined))
+  ) {
+    return undefined;
+  }
+
+  const newlyMasteredCharacters = state.characters
+    .filter(({ state }) => state !== "mastered")
+    .map(({ character }) => character);
+  completeCurriculum(state, at);
+  if (request.type === "curriculum-completed") {
+    return {
+      acceptance: { type: "curriculum-completed" },
+      newlyMasteredCharacters,
+    };
+  }
+  const character = forceUnlockNext(state, at);
+  if (character === undefined) return undefined;
+  return {
+    acceptance: { type: "character-unlocked", character },
+    newlyMasteredCharacters,
+  };
+}
+
 export function minimumAdvancementObservations(
   activeCharacterCount: number,
   config: AdvancementConfig = DEFAULT_ADVANCEMENT_CONFIG,
@@ -70,7 +129,7 @@ export function minimumAdvancementObservations(
 
 export function evaluateAdvancementEvidence(
   state: CurriculumState,
-  result: ContinuousCopyResult,
+  result: AdvancementEvidence,
   config: AdvancementConfig = DEFAULT_ADVANCEMENT_CONFIG,
 ): AdvancementAssessment {
   const activeCharacters = unlockedCharacters(state);
@@ -196,11 +255,22 @@ export function acceptAdvancement(
     return undefined;
   }
   if (currentAssessment.reason === "COMPLETE") {
-    completeCurriculum(state, at);
-    return { type: "curriculum-completed" };
+    return applyAdvancementTransition(
+      state,
+      {
+        activeCharacters: currentAssessment.activeCharacters,
+        type: "curriculum-completed",
+      },
+      at,
+    )?.acceptance;
   }
-  const character = forceUnlockNext(state, at);
-  return character === undefined
-    ? undefined
-    : { type: "character-unlocked", character };
+  return applyAdvancementTransition(
+    state,
+    {
+      activeCharacters: currentAssessment.activeCharacters,
+      type: "character-unlocked",
+      unlockedCharacter: currentAssessment.nextCharacter!,
+    },
+    at,
+  )?.acceptance;
 }

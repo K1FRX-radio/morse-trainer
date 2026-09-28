@@ -367,19 +367,37 @@ describe("acceptAdvancement", () => {
     };
   }
 
-  it("unlocks exactly the offered next character", () => {
+  it("masters the assessed set and unlocks exactly the offered next character", () => {
     const state = stateWith();
+    state.characters[0].rx.totalAttempts = 9;
+    state.characters[0].reviewStreak = 2;
     const { result, assessment } = qualifyingOffer(state);
 
-    expect(acceptAdvancement(state, result, assessment)).toEqual({
-      type: "character-unlocked",
-      character: "U",
-    });
+    expect(
+      acceptAdvancement(state, result, assessment, "2026-09-24T18:00:00.000Z"),
+    ).toEqual({ type: "character-unlocked", character: "U" });
     expect(state.characters.map(({ character }) => character)).toEqual([
       "K",
       "M",
       "U",
     ]);
+    expect(state.characters.slice(0, 2)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          state: "mastered",
+          masteredAt: "2026-09-24T18:00:00.000Z",
+        }),
+      ]),
+    );
+    expect(state.characters[0]).toMatchObject({
+      rx: { totalAttempts: 9 },
+      reviewStreak: 2,
+    });
+    expect(state.characters[2]).toMatchObject({
+      character: "U",
+      state: "learning",
+      unlockedAt: "2026-09-24T18:00:00.000Z",
+    });
   });
 
   it("rejects duplicate acceptance", () => {
@@ -416,7 +434,7 @@ describe("acceptAdvancement", () => {
     expect(state.characters).toHaveLength(2);
   });
 
-  it("marks the final active set mastered only after completion acceptance", () => {
+  it("marks the final active set mastered on completion acceptance", () => {
     const state = stateWith(DEFAULT_CURRICULUM_CONFIG.order.length);
     const result = stream(
       state.characters.flatMap(({ character }) => observations(character, 8)),

@@ -13,6 +13,7 @@ import type {
 export type TrainingDataContextValue = {
   loadCurriculum: () => CurriculumState;
   saveCurriculum: (state: CurriculumState) => void;
+  adoptCurriculum: (state: CurriculumState) => void;
   loadIntroductions: () => string[];
   saveIntroductions: (characters: string[]) => void;
   startLearnSessionPersistence: (

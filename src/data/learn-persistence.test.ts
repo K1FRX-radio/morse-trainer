@@ -1,7 +1,7 @@
 import { IDBKeyRange, indexedDB } from "fake-indexeddb";
 import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_CURRICULUM_CONFIG } from "../content/curriculum-data.ts";
-import { createInitialState, forceUnlockNext } from "../core/curriculum.ts";
+import { createInitialState } from "../core/curriculum.ts";
 import { TrainerDatabase } from "./indexeddb.ts";
 import { DurableLearnSession } from "./learn-persistence.ts";
 import { DexieTrainingRepository } from "./repository.ts";
@@ -17,8 +17,9 @@ async function setup() {
     indexedDB,
     IDBKeyRange,
   });
+  let id = 0;
   const repository = new DexieTrainingRepository(database, {
-    createId: () => "dataset-generation",
+    createId: () => `repository-id-${++id}`,
   });
   await repository.open();
   return { database, repository };
@@ -113,8 +114,6 @@ describe("DurableLearnSession", () => {
   it("accepts advancement with the finalized session evidence idempotently", async () => {
     const { database, repository } = await setup();
     const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
-    const advanced = structuredClone(state);
-    forceUnlockNext(advanced, "2026-09-25T17:02:00.000Z");
     const ids = [
       "owner-advancement",
       "session-advancement",
@@ -150,11 +149,12 @@ describe("DurableLearnSession", () => {
         curriculum: state,
         introductions: ["K", "M"],
       };
+      const qualifyingTarget = `${"K".repeat(16)}${"M".repeat(8)}`;
       await session.recordAttempt(
         {
           exerciseType: "continuous-copy",
-          target: "KMKM",
-          response: "KMKM",
+          target: qualifyingTarget,
+          response: qualifyingTarget,
           assisted: false,
           replayed: false,
           abandoned: false,
@@ -165,15 +165,21 @@ describe("DurableLearnSession", () => {
       );
       await session.finish(snapshot);
 
-      await session.acceptAdvancement(advanced, {
+      const accepted = await session.acceptAdvancement({
         type: "character-unlocked",
         character: "U",
       });
-      await session.acceptAdvancement(advanced, {
+      const retried = await session.acceptAdvancement({
         type: "character-unlocked",
         character: "U",
       });
 
+      expect(accepted.characters).toMatchObject([
+        { character: "K", state: "mastered" },
+        { character: "M", state: "mastered" },
+        { character: "U", state: "learning" },
+      ]);
+      expect(retried).toEqual(accepted);
       expect(await database.progressionEvents.toArray()).toMatchObject([
         {
           idempotencyKey:
@@ -183,7 +189,7 @@ describe("DurableLearnSession", () => {
           unlockedCharacter: "U",
         },
       ]);
-      expect(await database.milestones.count()).toBe(1);
+      expect(await database.milestones.count()).toBe(3);
       expect(
         (await database.curriculum.get("curriculum-state"))?.characters.map(
           ({ character }) => character,

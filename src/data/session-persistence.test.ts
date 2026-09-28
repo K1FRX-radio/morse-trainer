@@ -1,10 +1,7 @@
 import { IDBKeyRange, indexedDB } from "fake-indexeddb";
 import { DEFAULT_CURRICULUM_CONFIG } from "../content/curriculum-data.ts";
-import {
-  completeCurriculum,
-  createInitialState,
-  forceUnlockNext,
-} from "../core/curriculum.ts";
+import { createInitialState, forceUnlockNext } from "../core/curriculum.ts";
+import { minimumAdvancementObservations } from "../training/advancement.ts";
 import type {
   CurriculumStateRecord,
   TrainingAttemptRecord,
@@ -91,6 +88,39 @@ function attempt(
     noiseLevel: 0,
     ...overrides,
   };
+}
+
+function advancementEvidence(
+  activeCharacters: string[],
+  readinessReason: "READY" | "COMPLETE",
+): TrainingAttemptRecord {
+  const newest = activeCharacters.at(-1)!;
+  const targets = [
+    ...activeCharacters,
+    ...Array.from({ length: 7 }, () => newest),
+  ];
+  while (
+    targets.length < minimumAdvancementObservations(activeCharacters.length)
+  ) {
+    targets.push(activeCharacters[0]!);
+  }
+  const text = targets.join("");
+  return attempt({
+    exerciseType: "continuous-copy",
+    readinessReason,
+    rawTarget: text,
+    rawResponse: text,
+    normalizedTarget: text,
+    normalizedResponse: text,
+    observations: targets.map((character, index) => ({
+      kind: "match",
+      correct: true,
+      targetIndex: index,
+      target: character,
+      answerIndex: index,
+      answer: character,
+    })),
+  });
 }
 
 function curriculum(): CurriculumStateRecord {
@@ -458,8 +488,8 @@ describe("session persistence", () => {
     const { database, repository } = await setupRepository();
     const acceptedAt = "2026-09-24T18:00:00.000Z";
     const before = createInitialState(DEFAULT_CURRICULUM_CONFIG);
-    const after = structuredClone(before);
-    forceUnlockNext(after, acceptedAt);
+    before.characters[0].rx.totalAttempts = 7;
+    before.characters[0].rx.recentResults = [true, false, true];
     const completed = session({
       status: "completed",
       endedAt: {
@@ -476,12 +506,8 @@ describe("session persistence", () => {
       finalizationKey: "learn-completed:session-1",
       unlockedAtEnd: ["K", "M"],
     });
-    const evidence = attempt({
-      exerciseType: "continuous-copy",
-      readinessReason: "READY",
-    });
+    const evidence = advancementEvidence(["K", "M"], "READY");
     const command = {
-      state: after,
       sessionId: completed.id,
       evidenceAttemptId: evidence.id,
       idempotencyKey: "advancement:session-1:attempt-1",
@@ -506,24 +532,33 @@ describe("session persistence", () => {
           sessionId: completed.id,
           evidenceAttemptId: evidence.id,
           activeCharacters: ["K", "M"],
-          masteredCharacters: [],
+          masteredCharacters: ["K", "M"],
           unlockedCharacter: "U",
         },
       });
-      expect(retry).toEqual({ committed: false, event: first.event });
-      expect(
-        (await database.curriculum.get("curriculum-state"))?.characters.map(
-          ({ character }) => character,
-        ),
-      ).toEqual(["K", "M", "U"]);
-      expect(await database.progressionEvents.toArray()).toEqual([first.event]);
-      expect(await database.milestones.toArray()).toMatchObject([
+      expect(retry).toEqual({
+        committed: false,
+        event: first.event,
+        curriculum: first.curriculum,
+      });
+      expect(first.curriculum.characters).toMatchObject([
         {
-          idempotencyKey: `${command.idempotencyKey}:unlocked:U`,
-          eventId: first.event.id,
-          type: "character-unlocked",
-          character: "U",
+          character: "K",
+          state: "mastered",
+          rx: { totalAttempts: 7, recentResults: [true, false, true] },
         },
+        { character: "M", state: "mastered" },
+        { character: "U", state: "learning" },
+      ]);
+      expect(await database.progressionEvents.toArray()).toEqual([first.event]);
+      expect(
+        (await database.milestones.toArray())
+          .map(({ type, character }) => `${type}:${character ?? ""}`)
+          .sort(),
+      ).toEqual([
+        "character-mastered:K",
+        "character-mastered:M",
+        "character-unlocked:U",
       ]);
       expect(
         await database.metadata
@@ -531,6 +566,39 @@ describe("session persistence", () => {
           .equals("accept-advancement")
           .count(),
       ).toBe(1);
+      await expect(
+        repository.acceptAdvancement({
+          ...command,
+          unlockedCharacter: "R",
+        }),
+      ).rejects.toThrow(/idempotency key was reused with different data/);
+      await expect(
+        repository.acceptAdvancement({
+          ...command,
+          sessionId: "different-session",
+        }),
+      ).rejects.toThrow(/idempotency key was reused with different data/);
+      await expect(
+        repository.acceptAdvancement({
+          ...command,
+          evidenceAttemptId: "different-attempt",
+        }),
+      ).rejects.toThrow(/idempotency key was reused with different data/);
+      await expect(
+        repository.acceptAdvancement({
+          ...command,
+          activeCharacters: ["K"],
+        }),
+      ).rejects.toThrow(/idempotency key was reused with different data/);
+      await expect(
+        repository.acceptAdvancement({
+          sessionId: command.sessionId,
+          evidenceAttemptId: command.evidenceAttemptId,
+          idempotencyKey: command.idempotencyKey,
+          activeCharacters: command.activeCharacters,
+          type: "curriculum-completed",
+        }),
+      ).rejects.toThrow(/idempotency key was reused with different data/);
     } finally {
       repository.close();
       await database.delete();
@@ -546,8 +614,6 @@ describe("session persistence", () => {
     const activeCharacters = before.characters.map(
       ({ character }) => character,
     );
-    const after = structuredClone(before);
-    completeCurriculum(after, "2026-09-24T18:00:00.000Z");
     const completed = session({
       status: "completed",
       updatedAt: "2026-09-24T18:00:00.000Z",
@@ -558,10 +624,7 @@ describe("session persistence", () => {
       finalizationKey: "learn-completed:session-1",
       unlockedAtEnd: activeCharacters,
     });
-    const evidence = attempt({
-      exerciseType: "continuous-copy",
-      readinessReason: "COMPLETE",
-    });
+    const evidence = advancementEvidence(activeCharacters, "COMPLETE");
 
     try {
       await database.sessions.add(completed);
@@ -569,7 +632,6 @@ describe("session persistence", () => {
       await repository.saveCurriculumState(before);
 
       const result = await repository.acceptAdvancement({
-        state: after,
         sessionId: completed.id,
         evidenceAttemptId: evidence.id,
         idempotencyKey: "advancement:session-1:complete",
@@ -600,11 +662,9 @@ describe("session persistence", () => {
     }
   });
 
-  it("rolls back all advancement writes when a milestone write fails", async () => {
+  it("rejects advancement when intervening review state invalidates the offer", async () => {
     const { database, repository } = await setupRepository();
     const before = createInitialState(DEFAULT_CURRICULUM_CONFIG);
-    const after = structuredClone(before);
-    forceUnlockNext(after, "2026-09-24T18:00:00.000Z");
     const completed = session({
       status: "completed",
       updatedAt: "2026-09-24T18:00:00.000Z",
@@ -615,10 +675,52 @@ describe("session persistence", () => {
       finalizationKey: "learn-completed:session-1",
       unlockedAtEnd: ["K", "M"],
     });
-    const evidence = attempt({
-      exerciseType: "continuous-copy",
-      readinessReason: "READY",
+    const evidence = advancementEvidence(["K", "M"], "READY");
+
+    try {
+      await database.sessions.add(completed);
+      await database.attempts.add(evidence);
+      await repository.saveCurriculumState(before);
+      const intervening = await database.curriculum.get("curriculum-state");
+      intervening!.characters[0]!.needsReview = true;
+      intervening!.characters[0]!.reviewStreak = 2;
+      await database.curriculum.put(intervening!);
+
+      await expect(
+        repository.acceptAdvancement({
+          sessionId: completed.id,
+          evidenceAttemptId: evidence.id,
+          idempotencyKey: "advancement:session-1:attempt-1",
+          activeCharacters: ["K", "M"],
+          type: "character-unlocked",
+          unlockedCharacter: "U",
+        }),
+      ).rejects.toThrow(/stale or invalidated/);
+      expect(await database.progressionEvents.count()).toBe(0);
+      expect(await database.milestones.count()).toBe(0);
+      expect(
+        (await database.curriculum.get("curriculum-state"))?.characters[0],
+      ).toMatchObject({ needsReview: true, reviewStreak: 2 });
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
+  it("rolls back all advancement writes when a milestone write fails", async () => {
+    const { database, repository } = await setupRepository();
+    const before = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    const completed = session({
+      status: "completed",
+      updatedAt: "2026-09-24T18:00:00.000Z",
+      attemptCount: 1,
+      finalizedAttemptCount: 1,
+      valid: true,
+      revision: 1,
+      finalizationKey: "learn-completed:session-1",
+      unlockedAtEnd: ["K", "M"],
     });
+    const evidence = advancementEvidence(["K", "M"], "READY");
 
     try {
       await database.sessions.add(completed);
@@ -638,7 +740,6 @@ describe("session persistence", () => {
 
       await expect(
         repository.acceptAdvancement({
-          state: after,
           sessionId: completed.id,
           evidenceAttemptId: evidence.id,
           idempotencyKey: "advancement:session-1:attempt-1",

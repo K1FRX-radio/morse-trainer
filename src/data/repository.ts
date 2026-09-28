@@ -6,6 +6,10 @@ import type {
 } from "../core/settings.ts";
 import type { CurriculumState } from "../core/curriculum.ts";
 import {
+  applyAdvancementTransition,
+  evaluateAdvancementEvidence,
+} from "../training/advancement.ts";
+import {
   LEGACY_MIGRATION_ID,
   type LegacyMigrationRepository,
 } from "./legacy-migration.ts";
@@ -65,7 +69,6 @@ export type LearnAttemptCommit = BaseAttemptCommit & {
 export type PracticeAttemptCommit = BaseAttemptCommit;
 
 export type AdvancementCommit = {
-  state: CurriculumState;
   sessionId: string;
   evidenceAttemptId: string;
   idempotencyKey: string;
@@ -77,6 +80,7 @@ export type AdvancementCommit = {
 export type AdvancementResult = {
   committed: boolean;
   event: ProgressionEventRecord;
+  curriculum: CurriculumStateRecord;
 };
 
 type SharedAttemptCommit = BaseAttemptCommit & {
@@ -219,6 +223,19 @@ function curriculumRecord(
     reviewDecayAccuracy: state.config.reviewDecayAccuracy,
     characters: structuredClone(state.characters),
   });
+}
+
+function curriculumState(record: CurriculumStateRecord): CurriculumState {
+  return {
+    config: {
+      order: [...record.order],
+      startCount: record.startCount,
+      windowSize: record.windowSize,
+      minNewCharObservations: record.minNewCharObservations,
+      reviewDecayAccuracy: record.reviewDecayAccuracy,
+    },
+    characters: structuredClone(record.characters),
+  };
 }
 
 export class DexieTrainingRepository implements TrainingDataRepository {
@@ -400,7 +417,35 @@ export class DexieTrainingRepository implements TrainingDataRepository {
           if (existingEvent === undefined) {
             throw new Error("advancement ledger references a missing event");
           }
-          return { committed: false, event: existingEvent };
+          const expectedEventType =
+            commit.type === "curriculum-completed"
+              ? "curriculum-completed"
+              : "advancement-accepted";
+          if (
+            existingEvent.idempotencyKey !== commit.idempotencyKey ||
+            existingEvent.type !== expectedEventType ||
+            existingEvent.sessionId !== commit.sessionId ||
+            existingEvent.evidenceAttemptId !== commit.evidenceAttemptId ||
+            !recordsEqual(
+              existingEvent.activeCharacters,
+              commit.activeCharacters,
+            ) ||
+            existingEvent.unlockedCharacter !== commit.unlockedCharacter
+          ) {
+            throw new Error(
+              "advancement idempotency key was reused with different data",
+            );
+          }
+          const currentCurriculum =
+            await this.database.curriculum.get("curriculum-state");
+          if (currentCurriculum === undefined) {
+            throw new Error("curriculum does not exist");
+          }
+          return {
+            committed: false,
+            event: existingEvent,
+            curriculum: parseCurriculumStateRecord(currentCurriculum),
+          };
         }
 
         const storedSession = await this.database.sessions.get(
@@ -455,43 +500,50 @@ export class DexieTrainingRepository implements TrainingDataRepository {
         }
 
         const occurredAt = captureDateTime(this.now());
-        const nextCurriculum = curriculumRecord(
-          commit.state,
-          laterTimestamp(storedCurriculum.updatedAt, occurredAt.utc),
-        );
-        const nextCharacters = nextCurriculum.characters.map(
-          ({ character }) => character,
-        );
-        if (commit.type === "character-unlocked") {
-          if (
-            commit.unlockedCharacter === undefined ||
-            !recordsEqual(nextCharacters, [
-              ...commit.activeCharacters,
-              commit.unlockedCharacter,
-            ])
-          ) {
-            throw new Error("advancement must unlock exactly one character");
-          }
-        } else if (
-          commit.unlockedCharacter !== undefined ||
-          !recordsEqual(nextCharacters, commit.activeCharacters) ||
-          !recordsEqual(nextCharacters, nextCurriculum.order) ||
-          nextCurriculum.characters.some(({ state }) => state !== "mastered")
+        const nextState = curriculumState(storedCurriculum);
+        const currentAssessment = evaluateAdvancementEvidence(nextState, {
+          abandoned: evidenceAttempt.abandoned,
+          perCharacterResults: evidenceAttempt.observations.flatMap(
+            (observation) =>
+              observation.target === undefined
+                ? []
+                : [
+                    {
+                      character: observation.target,
+                      correct: observation.correct,
+                    },
+                  ],
+          ),
+        });
+        const expectedReason =
+          commit.type === "curriculum-completed" ? "COMPLETE" : "READY";
+        if (
+          !currentAssessment.eligible ||
+          currentAssessment.reason !== expectedReason
         ) {
-          throw new Error("curriculum completion must master every character");
+          throw new Error("advancement offer is stale or invalidated");
         }
-
-        const previouslyMastered = new Set(
-          storedCurriculum.characters
-            .filter(({ state }) => state === "mastered")
-            .map(({ character }) => character),
+        const transition = applyAdvancementTransition(
+          nextState,
+          {
+            activeCharacters: commit.activeCharacters,
+            type: commit.type,
+            ...(commit.unlockedCharacter === undefined
+              ? {}
+              : { unlockedCharacter: commit.unlockedCharacter }),
+          },
+          occurredAt.utc,
+        );
+        if (transition === undefined) {
+          throw new Error("advancement offer is stale or invalidated");
+        }
+        const nextCurriculum = curriculumRecord(
+          nextState,
+          laterTimestamp(storedCurriculum.updatedAt, occurredAt.utc),
         );
         const masteredCharacters = nextCurriculum.characters
           .filter(({ state }) => state === "mastered")
           .map(({ character }) => character);
-        const newlyMastered = masteredCharacters.filter(
-          (character) => !previouslyMastered.has(character),
-        );
         const eventId = this.createId();
         const event: ProgressionEventRecord = {
           id: eventId,
@@ -512,8 +564,8 @@ export class DexieTrainingRepository implements TrainingDataRepository {
             : { unlockedCharacter: commit.unlockedCharacter }),
           migrationDerived: false,
         };
-        const milestones: MilestoneRecord[] = newlyMastered.map(
-          (character) => ({
+        const milestones: MilestoneRecord[] =
+          transition.newlyMasteredCharacters.map((character) => ({
             id: this.createId(),
             schemaVersion: RECORD_SCHEMA_VERSION,
             updatedAt: occurredAt.utc,
@@ -523,8 +575,7 @@ export class DexieTrainingRepository implements TrainingDataRepository {
             occurredAt,
             character,
             migrationDerived: false,
-          }),
-        );
+          }));
         if (commit.type === "character-unlocked") {
           milestones.push({
             id: this.createId(),
@@ -564,7 +615,7 @@ export class DexieTrainingRepository implements TrainingDataRepository {
         await this.database.progressionEvents.add(event);
         await this.database.milestones.bulkAdd(milestones);
         await this.database.metadata.add(operation);
-        return { committed: true, event };
+        return { committed: true, event, curriculum: nextCurriculum };
       },
     );
   }

@@ -60,6 +60,9 @@ export function TrainingDataProvider({
     },
     [persistCurriculum],
   );
+  const adoptCurriculum = useCallback((state: CurriculumState) => {
+    curriculum.current = structuredClone(state);
+  }, []);
   const loadIntroductions = useCallback(() => [...introductions.current], []);
   const saveIntroductions = useCallback(
     (characters: string[]) => {
@@ -76,6 +79,7 @@ export function TrainingDataProvider({
     () => ({
       loadCurriculum,
       saveCurriculum,
+      adoptCurriculum,
       loadIntroductions,
       saveIntroductions,
       startLearnSessionPersistence,
@@ -84,6 +88,7 @@ export function TrainingDataProvider({
     [
       loadCurriculum,
       saveCurriculum,
+      adoptCurriculum,
       loadIntroductions,
       saveIntroductions,
       startLearnSessionPersistence,

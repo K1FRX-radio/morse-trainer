@@ -68,9 +68,8 @@ export interface LearnSessionPersistence {
   finish(snapshot: LearnPersistenceSnapshot): Promise<void>;
   interrupt(snapshot: LearnPersistenceSnapshot): Promise<void>;
   acceptAdvancement(
-    state: CurriculumState,
     acceptance: AdvancementAcceptance,
-  ): Promise<void>;
+  ): Promise<CurriculumState>;
   retry(): Promise<void>;
 }
 
@@ -288,9 +287,8 @@ export class DurableLearnSession implements LearnSessionPersistence {
   }
 
   async acceptAdvancement(
-    state: CurriculumState,
     acceptance: AdvancementAcceptance,
-  ): Promise<void> {
+  ): Promise<CurriculumState> {
     if (!this.terminal || this.record.status !== "completed") {
       throw new Error("advancement requires a finalized Learn session");
     }
@@ -302,8 +300,7 @@ export class DurableLearnSession implements LearnSessionPersistence {
       throw new Error("finalized Learn session has no curriculum snapshot");
     }
 
-    await this.repository.acceptAdvancement({
-      state,
+    const result = await this.repository.acceptAdvancement({
       sessionId: this.record.id,
       evidenceAttemptId: this.continuousCopyAttemptId,
       idempotencyKey: `learn-advancement:${this.record.id}:${this.continuousCopyAttemptId}`,
@@ -313,6 +310,16 @@ export class DurableLearnSession implements LearnSessionPersistence {
         ? { unlockedCharacter: acceptance.character }
         : {}),
     });
+    return {
+      config: {
+        order: [...result.curriculum.order],
+        startCount: result.curriculum.startCount,
+        windowSize: result.curriculum.windowSize,
+        minNewCharObservations: result.curriculum.minNewCharObservations,
+        reviewDecayAccuracy: result.curriculum.reviewDecayAccuracy,
+      },
+      characters: structuredClone(result.curriculum.characters),
+    };
   }
 
   async retry(): Promise<void> {
