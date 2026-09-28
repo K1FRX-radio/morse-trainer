@@ -37,10 +37,11 @@ describe("Learn phase contracts", () => {
   });
 
   it("keeps playback submission locked for prompt-bound exercises", () => {
-    const promptPhases = LEARN_PHASE_ORDER.filter((phaseId) =>
-      LEARN_PHASES[phaseId].permittedEventTypes.some((eventType) =>
-        eventType.startsWith("copy-"),
-      ),
+    const promptPhases = LEARN_PHASE_ORDER.filter(
+      (phaseId) =>
+        LEARN_PHASES[phaseId].permittedEventTypes.some((eventType) =>
+          eventType.startsWith("copy-"),
+        ),
     );
     expect(
       promptPhases.every(
