@@ -24,10 +24,17 @@ export type LessonPhase =
 
 export type LearnPhaseId = LessonPhase | "continuous-copy" | "summary";
 
+export type LearnPhaseEventType =
+  | LearnExerciseType
+  | "transition"
+  | "notification"
+  | "continuous-copy"
+  | "summary";
+
 export type LearnPhaseContract = {
   id: LearnPhaseId;
   label: string;
-  permittedExerciseTypes: readonly LearnExerciseType[];
+  permittedEventTypes: readonly LearnPhaseEventType[];
   entryCondition: string;
   completionCondition: string;
   transitionTo: readonly LearnPhaseId[];
@@ -55,7 +62,7 @@ export const LEARN_PHASES: Readonly<Record<LearnPhaseId, LearnPhaseContract>> =
     introduce: {
       id: "introduce",
       label: "Introduction",
-      permittedExerciseTypes: ["introduce"],
+      permittedEventTypes: ["introduce"],
       entryCondition: "An active character has not been introduced.",
       completionCondition: "The learner completes its introduction.",
       transitionTo: ["acquire"],
@@ -68,7 +75,7 @@ export const LEARN_PHASES: Readonly<Record<LearnPhaseId, LearnPhaseContract>> =
     acquire: {
       id: "acquire",
       label: "Acquisition",
-      permittedExerciseTypes: ["copy-character"],
+      permittedEventTypes: ["copy-character"],
       entryCondition: "A newly introduced character needs isolated practice.",
       completionCondition:
         "The configured recent-correct threshold or attempt cap is reached.",
@@ -82,7 +89,7 @@ export const LEARN_PHASES: Readonly<Record<LearnPhaseId, LearnPhaseContract>> =
     remediate: {
       id: "remediate",
       label: "Remediation",
-      permittedExerciseTypes: ["copy-character"],
+      permittedEventTypes: ["copy-character"],
       entryCondition: "An active character is flagged for isolated review.",
       completionCondition:
         "The configured isolated remediation prompts are completed.",
@@ -96,7 +103,7 @@ export const LEARN_PHASES: Readonly<Record<LearnPhaseId, LearnPhaseContract>> =
     contrast: {
       id: "contrast",
       label: "Contrast",
-      permittedExerciseTypes: ["copy-character"],
+      permittedEventTypes: ["copy-character"],
       entryCondition: "Acquisition and any isolated remediation are complete.",
       completionCondition:
         "The configured mixed-recognition threshold or attempt cap is reached.",
@@ -110,7 +117,7 @@ export const LEARN_PHASES: Readonly<Record<LearnPhaseId, LearnPhaseContract>> =
     "groups-2": {
       id: "groups-2",
       label: "Two-character groups",
-      permittedExerciseTypes: ["copy-group"],
+      permittedEventTypes: ["transition", "copy-group"],
       entryCondition: "Mixed isolated recognition is complete.",
       completionCondition:
         "The configured two-character group count is completed.",
@@ -124,7 +131,7 @@ export const LEARN_PHASES: Readonly<Record<LearnPhaseId, LearnPhaseContract>> =
     "groups-3": {
       id: "groups-3",
       label: "Three-character groups",
-      permittedExerciseTypes: ["copy-group"],
+      permittedEventTypes: ["notification", "copy-group"],
       entryCondition: "Two-character groups are complete.",
       completionCondition:
         "The configured three-character group count is completed.",
@@ -138,7 +145,7 @@ export const LEARN_PHASES: Readonly<Record<LearnPhaseId, LearnPhaseContract>> =
     words: {
       id: "words",
       label: "Focused words",
-      permittedExerciseTypes: ["copy-word"],
+      permittedEventTypes: ["transition", "copy-word"],
       entryCondition: "The unlocked character set has enough eligible words.",
       completionCondition: "The configured focused-word count is completed.",
       transitionTo: ["continuous-copy"],
@@ -151,7 +158,7 @@ export const LEARN_PHASES: Readonly<Record<LearnPhaseId, LearnPhaseContract>> =
     "continuous-copy": {
       id: "continuous-copy",
       label: "Continuous copy",
-      permittedExerciseTypes: [],
+      permittedEventTypes: ["transition", "continuous-copy"],
       entryCondition: "The planned card sequence is complete.",
       completionCondition: "The stream completes or the learner abandons it.",
       transitionTo: ["summary"],
@@ -164,7 +171,7 @@ export const LEARN_PHASES: Readonly<Record<LearnPhaseId, LearnPhaseContract>> =
     summary: {
       id: "summary",
       label: "Summary",
-      permittedExerciseTypes: [],
+      permittedEventTypes: ["summary"],
       entryCondition: "The session ends.",
       completionCondition: "The learner chooses a next action.",
       transitionTo: [],

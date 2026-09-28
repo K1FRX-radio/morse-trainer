@@ -36,6 +36,9 @@ npm run dev       # start the dev server
 
 The `src/core` and `src/content` layers are pure domain logic and must not
 import React, the DOM, storage, or UI code. ESLint enforces this boundary.
+The [Learn architecture guide](docs/learn-architecture.md) defines stable phase
+contracts, orchestration boundaries, test strategy, and the extension path for
+future non-curriculum RX content.
 
 ```
 src/
