@@ -707,6 +707,64 @@ describe("session persistence", () => {
     }
   });
 
+  it.each([
+    ["READY", "assisted"],
+    ["READY", "replayed"],
+    ["COMPLETE", "assisted"],
+    ["COMPLETE", "replayed"],
+  ] as const)(
+    "rejects %s advancement when evidence is %s",
+    async (readinessReason, excludedFlag) => {
+      const { database, repository } = await setupRepository();
+      const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+      if (readinessReason === "COMPLETE") {
+        while (state.characters.length < state.config.order.length) {
+          forceUnlockNext(state);
+        }
+      }
+      const activeCharacters = state.characters.map(
+        ({ character }) => character,
+      );
+      const completed = session({
+        status: "completed",
+        updatedAt: "2026-09-24T18:00:00.000Z",
+        attemptCount: 1,
+        finalizedAttemptCount: 1,
+        valid: true,
+        revision: 1,
+        finalizationKey: "learn-completed:session-1",
+        unlockedAtEnd: activeCharacters,
+      });
+      const evidence = advancementEvidence(activeCharacters, readinessReason);
+      evidence[excludedFlag] = true;
+
+      try {
+        await database.sessions.add(completed);
+        await database.attempts.add(evidence);
+        await repository.saveCurriculumState(state);
+
+        await expect(
+          repository.acceptAdvancement({
+            sessionId: completed.id,
+            evidenceAttemptId: evidence.id,
+            idempotencyKey: `advancement:${readinessReason}:${excludedFlag}`,
+            activeCharacters,
+            type:
+              readinessReason === "COMPLETE"
+                ? "curriculum-completed"
+                : "character-unlocked",
+            ...(readinessReason === "READY" ? { unlockedCharacter: "U" } : {}),
+          }),
+        ).rejects.toThrow(/continuous-copy evidence/);
+        expect(await database.progressionEvents.count()).toBe(0);
+        expect(await database.milestones.count()).toBe(0);
+      } finally {
+        repository.close();
+        await database.delete();
+      }
+    },
+  );
+
   it("rolls back all advancement writes when a milestone write fails", async () => {
     const { database, repository } = await setupRepository();
     const before = createInitialState(DEFAULT_CURRICULUM_CONFIG);

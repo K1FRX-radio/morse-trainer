@@ -43,7 +43,9 @@ export type TrainingDataBootstrap = {
 
 type BootstrapSnapshot = Omit<TrainingDataBootstrap, "repository">;
 
-function curriculumState(record: CurriculumStateRecord): CurriculumState {
+export function curriculumState(
+  record: CurriculumStateRecord,
+): CurriculumState {
   return {
     config: {
       order: record.order,

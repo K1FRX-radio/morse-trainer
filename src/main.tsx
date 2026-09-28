@@ -2,7 +2,10 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import { App } from "./App.tsx";
-import { createTrainingDataBootstrap } from "./data/bootstrap.ts";
+import {
+  createTrainingDataBootstrap,
+  curriculumState,
+} from "./data/bootstrap.ts";
 import { DurableLearnSession } from "./data/learn-persistence.ts";
 import type { PracticeSettings } from "./core/settings.ts";
 import { LearnAudioProvider } from "./ui/learn-audio.tsx";
@@ -40,6 +43,13 @@ async function start(): Promise<void> {
             persistCurriculum={(state) =>
               bootstrap.repository.saveCurriculumState(state)
             }
+            loadPersistedCurriculum={async () => {
+              const record = await bootstrap.repository.getCurriculumState();
+              if (record === undefined) {
+                throw new Error("curriculum does not exist");
+              }
+              return curriculumState(record);
+            }}
             persistIntroductions={(characters) =>
               bootstrap.repository.saveIntroductions(characters)
             }

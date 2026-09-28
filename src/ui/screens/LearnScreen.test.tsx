@@ -7,7 +7,7 @@ import {
   screen,
 } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import { App } from "../../App.tsx";
 import { DEFAULT_CURRICULUM_CONFIG } from "../../content/curriculum-data.ts";
 import { createInitialState, forceUnlockNext } from "../../core/curriculum.ts";
@@ -116,6 +116,7 @@ function acceptedCurriculum(acceptance: AdvancementAcceptance) {
   if (transition === undefined) {
     throw new Error("test advancement transition was rejected");
   }
+  localStorage.setItem("k1frx.curriculum.v2", JSON.stringify(state.characters));
   return state;
 }
 
@@ -129,7 +130,7 @@ function TrainingDataFixture({
   getRetryClassification,
   acceptAdvancement,
   onSaveCurriculum,
-  onAdoptCurriculum,
+  onReconcileCurriculum,
 }: {
   children: ReactNode;
   retryClassification?: RetryClassification;
@@ -139,8 +140,9 @@ function TrainingDataFixture({
   getRetryClassification?: () => Promise<RetryClassification>;
   acceptAdvancement?: LearnSessionPersistence["acceptAdvancement"];
   onSaveCurriculum?: () => void;
-  onAdoptCurriculum?: () => void;
+  onReconcileCurriculum?: () => void;
 }) {
+  const curriculum = useRef(testCurriculum());
   const persistence: LearnSessionPersistence = {
     recordAttempt: () => Promise.resolve(),
     finish: () => Promise.resolve(),
@@ -153,20 +155,20 @@ function TrainingDataFixture({
   return (
     <TrainingDataContext.Provider
       value={{
-        loadCurriculum: testCurriculum,
+        loadCurriculum: () => structuredClone(curriculum.current),
         saveCurriculum: (state) => {
+          curriculum.current = structuredClone(state);
           onSaveCurriculum?.();
           localStorage.setItem(
             "k1frx.curriculum.v2",
             JSON.stringify(state.characters),
           );
         },
-        adoptCurriculum: (state) => {
-          onAdoptCurriculum?.();
-          localStorage.setItem(
-            "k1frx.curriculum.v2",
-            JSON.stringify(state.characters),
-          );
+        reconcileCurriculum: () => {
+          const state = testCurriculum();
+          curriculum.current = structuredClone(state);
+          onReconcileCurriculum?.();
+          return Promise.resolve(structuredClone(state));
         },
         loadIntroductions: testIntroductions,
         saveIntroductions: (characters) =>
@@ -198,7 +200,7 @@ function renderLearn(
     getRetryClassification?: () => Promise<RetryClassification>;
     acceptAdvancement?: LearnSessionPersistence["acceptAdvancement"];
     onSaveCurriculum?: () => void;
-    onAdoptCurriculum?: () => void;
+    onReconcileCurriculum?: () => void;
   } = {},
 ) {
   return render(
@@ -224,8 +226,8 @@ function renderLearn(
         {...(options.onSaveCurriculum
           ? { onSaveCurriculum: options.onSaveCurriculum }
           : {})}
-        {...(options.onAdoptCurriculum
-          ? { onAdoptCurriculum: options.onAdoptCurriculum }
+        {...(options.onReconcileCurriculum
+          ? { onReconcileCurriculum: options.onReconcileCurriculum }
           : {})}
         {...(options.acceptAdvancement
           ? { acceptAdvancement: options.acceptAdvancement }
@@ -239,11 +241,29 @@ function renderLearn(
   );
 }
 
-function renderApp(audio: LearnAudio) {
+function renderApp(
+  audio: LearnAudio,
+  options: {
+    startLearnSessionPersistence?: (
+      options: LearnPersistenceStart,
+    ) => Promise<LearnSessionPersistence>;
+    onReconcileCurriculum?: () => void;
+  } = {},
+) {
   return render(
     <MemoryRouter initialEntries={["/learn"]}>
       <SettingsProvider>
-        <TrainingDataFixture>
+        <TrainingDataFixture
+          {...(options.startLearnSessionPersistence
+            ? {
+                startLearnSessionPersistence:
+                  options.startLearnSessionPersistence,
+              }
+            : {})}
+          {...(options.onReconcileCurriculum
+            ? { onReconcileCurriculum: options.onReconcileCurriculum }
+            : {})}
+        >
           <LearnAudioContext.Provider value={audio}>
             <App />
           </LearnAudioContext.Provider>
@@ -1603,14 +1623,14 @@ describe("LearnScreen advancement", () => {
       Promise.resolve(acceptedCurriculum(acceptance)),
     );
     const onSaveCurriculum = vi.fn();
-    const onAdoptCurriculum = vi.fn();
+    const onReconcileCurriculum = vi.fn();
     renderLearn(
       fake.audio,
       {},
       {
         acceptAdvancement,
         onSaveCurriculum,
-        onAdoptCurriculum,
+        onReconcileCurriculum,
       },
     );
     await completeContinuousCopy(fake);
@@ -1631,7 +1651,7 @@ describe("LearnScreen advancement", () => {
 
     expect(acceptAdvancement).toHaveBeenCalledOnce();
     expect(onSaveCurriculum).toHaveBeenCalledTimes(savesBeforeAcceptance);
-    expect(onAdoptCurriculum).toHaveBeenCalledOnce();
+    expect(onReconcileCurriculum).toHaveBeenCalledOnce();
     const saved = JSON.parse(
       localStorage.getItem("k1frx.curriculum.v2") ?? "[]",
     ) as Array<{ character: string }>;
@@ -1712,6 +1732,57 @@ describe("LearnScreen advancement", () => {
       localStorage.getItem("k1frx.curriculum.v2") ?? "[]",
     ) as Array<{ character: string }>;
     expect(saved.map(({ character }) => character)).toEqual(["K", "M", "U"]);
+  });
+
+  it("reconciles advancement that commits after navigating away", async () => {
+    const fake = makeFakeAudio();
+    let resolveAcceptance: (() => void) | undefined;
+    const acceptAdvancement = vi.fn(
+      (acceptance: AdvancementAcceptance) =>
+        new Promise<ReturnType<typeof testCurriculum>>((resolve) => {
+          resolveAcceptance = () => resolve(acceptedCurriculum(acceptance));
+        }),
+    );
+    const persistence: LearnSessionPersistence = {
+      recordAttempt: () => Promise.resolve(),
+      finish: () => Promise.resolve(),
+      interrupt: () => Promise.resolve(),
+      acceptAdvancement,
+      retry: () => Promise.resolve(),
+    };
+    const startLearnSessionPersistence = vi.fn(() =>
+      Promise.resolve(persistence),
+    );
+    const onReconcileCurriculum = vi.fn();
+    renderApp(fake.audio, {
+      startLearnSessionPersistence,
+      onReconcileCurriculum,
+    });
+    await completeContinuousCopy(fake);
+
+    fireEvent.click(screen.getByRole("button", { name: "Learn U" }));
+    fireEvent.click(screen.getByRole("link", { name: "Practice" }));
+    await flush();
+    expect(
+      screen.getByRole("heading", { name: "Practice" }),
+    ).toBeInTheDocument();
+
+    await act(async () => resolveAcceptance?.());
+    await flush();
+
+    expect(onReconcileCurriculum).toHaveBeenCalledOnce();
+    expect(startLearnSessionPersistence).toHaveBeenCalledOnce();
+    expect(
+      screen.getByRole("heading", { name: "Practice" }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("link", { name: "Learn" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
+    await flush();
+
+    expect(startLearnSessionPersistence).toHaveBeenCalledTimes(2);
+    expect(fake.pending[0]?.text).toBe("U");
+    expect(screen.getByText("U")).toBeInTheDocument();
   });
 
   it("finalizes durable Learn evidence before reading retry history", async () => {

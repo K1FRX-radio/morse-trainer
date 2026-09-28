@@ -467,6 +467,8 @@ export class DexieTrainingRepository implements TrainingDataRepository {
           evidenceAttempt.sessionId !== storedSession.id ||
           evidenceAttempt.exerciseType !== "continuous-copy" ||
           evidenceAttempt.abandoned ||
+          evidenceAttempt.assisted ||
+          evidenceAttempt.replayed ||
           (commit.type === "character-unlocked" &&
             evidenceAttempt.readinessReason !== "READY") ||
           (commit.type === "curriculum-completed" &&

@@ -95,7 +95,7 @@ export function useLearnSession() {
   const {
     loadCurriculum,
     saveCurriculum,
-    adoptCurriculum,
+    reconcileCurriculum,
     loadIntroductions,
     saveIntroductions,
     startLearnSessionPersistence,
@@ -866,9 +866,8 @@ export function useLearnSession() {
       setPersistenceStatus("pending");
       setPersistenceError(undefined);
       try {
-        const canonicalState = await work.persistence.acceptAdvancement(
-          work.acceptance,
-        );
+        await work.persistence.acceptAdvancement(work.acceptance);
+        const canonicalState = await reconcileCurriculum();
         if (
           persistenceRef.current !== work.persistence ||
           persistenceOperation.current !== token
@@ -876,7 +875,6 @@ export function useLearnSession() {
           return;
         }
         stateRef.current = canonicalState;
-        adoptCurriculum(canonicalState);
         advancementRef.current = undefined;
         setPersistenceStatus("ready");
         if (work.acceptance.type === "character-unlocked") {
@@ -903,7 +901,7 @@ export function useLearnSession() {
         }
       }
     },
-    [adoptCurriculum, setPersistenceFailed, startSession],
+    [reconcileCurriculum, setPersistenceFailed, startSession],
   );
 
   const acceptAdvancement = useCallback(() => {

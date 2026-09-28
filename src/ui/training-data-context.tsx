@@ -16,6 +16,7 @@ type TrainingDataProviderProps = {
   initialCurriculum: CurriculumState;
   initialIntroductions: string[];
   persistCurriculum?: (state: CurriculumState) => unknown;
+  loadPersistedCurriculum: () => Promise<CurriculumState>;
   persistIntroductions?: (characters: string[]) => unknown;
   startLearnSessionPersistence: (
     options: LearnPersistenceStart,
@@ -39,6 +40,7 @@ export function TrainingDataProvider({
   initialCurriculum,
   initialIntroductions,
   persistCurriculum,
+  loadPersistedCurriculum,
   persistIntroductions,
   startLearnSessionPersistence,
   getRetryClassification,
@@ -60,9 +62,11 @@ export function TrainingDataProvider({
     },
     [persistCurriculum],
   );
-  const adoptCurriculum = useCallback((state: CurriculumState) => {
-    curriculum.current = structuredClone(state);
-  }, []);
+  const reconcileCurriculum = useCallback(async () => {
+    const snapshot = structuredClone(await loadPersistedCurriculum());
+    curriculum.current = snapshot;
+    return structuredClone(snapshot);
+  }, [loadPersistedCurriculum]);
   const loadIntroductions = useCallback(() => [...introductions.current], []);
   const saveIntroductions = useCallback(
     (characters: string[]) => {
@@ -79,7 +83,7 @@ export function TrainingDataProvider({
     () => ({
       loadCurriculum,
       saveCurriculum,
-      adoptCurriculum,
+      reconcileCurriculum,
       loadIntroductions,
       saveIntroductions,
       startLearnSessionPersistence,
@@ -88,7 +92,7 @@ export function TrainingDataProvider({
     [
       loadCurriculum,
       saveCurriculum,
-      adoptCurriculum,
+      reconcileCurriculum,
       loadIntroductions,
       saveIntroductions,
       startLearnSessionPersistence,
