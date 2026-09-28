@@ -31,6 +31,7 @@ import { sanitizeCopyInput } from "../copy-input.ts";
 import { LearnAudioContext, type LearnAudio } from "../learn-audio-context.ts";
 import { SettingsProvider } from "../settings-provider.tsx";
 import { TrainingDataContext } from "../training-data-context.ts";
+import { createLearnTestDriver } from "../test/learn-test-driver.ts";
 import { LearnScreen } from "./LearnScreen.tsx";
 
 type PendingPlay = {
@@ -298,6 +299,17 @@ async function tick(ms: number) {
   await flush();
 }
 
+function learnDriver(fake: ReturnType<typeof makeFakeAudio>) {
+  return createLearnTestDriver({
+    audio: {
+      currentText: () => fake.pending[0]?.text,
+      resolveNext: () => resolvePlay(fake),
+    },
+    flush,
+    advanceTime: tick,
+  });
+}
+
 /** Drives from onboarding to the first isolated copy card (acquire of K). */
 async function toFirstCopy(fake: ReturnType<typeof makeFakeAudio>) {
   fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
@@ -345,69 +357,31 @@ async function answerIsolatedWithMobileInput(
   await tick(450);
 }
 
-async function toMultiCharacterTransition(
-  fake: ReturnType<typeof makeFakeAudio>,
-  manual = false,
-) {
+async function toMultiCharacterTransition(fake: ReturnType<typeof makeFakeAudio>) {
   if (!localStorage.getItem("k1frx.introduced.v1")) {
     localStorage.setItem("k1frx.introduced.v1", JSON.stringify(["K", "M"]));
   }
-  fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
-  await flush();
-  for (let attempt = 0; attempt < 16; attempt++) {
-    const target = fake.pending[0]?.text;
-    expect(target).toHaveLength(1);
-    await resolvePlay(fake);
-    fireEvent.change(screen.getByLabelText("Your copy"), {
-      target: { value: target },
-    });
-    await flush();
-    if (manual) {
-      fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-      await flush();
-    } else {
-      await tick(450);
-    }
-  }
+  const driver = learnDriver(fake);
+  await driver.start();
+  await driver.advanceUntilPhase("groups-2");
 }
 
 async function toThreeCharacterNotice(fake: ReturnType<typeof makeFakeAudio>) {
   await toMultiCharacterTransition(fake);
-  fireEvent.click(screen.getByRole("button", { name: "Go" }));
-  await flush();
-  for (let group = 0; group < 8; group++) {
-    const target = fake.pending[0]?.text;
-    expect(target).toHaveLength(2);
-    await resolvePlay(fake);
-    fireEvent.change(screen.getByLabelText("Your copy"), {
-      target: { value: target },
-    });
-    await flush();
-    await tick(450);
-  }
+  await learnDriver(fake).completePhaseCorrectly("groups-2");
 }
 
 async function toContinuousCopyTransition(
   fake: ReturnType<typeof makeFakeAudio>,
 ) {
   await toThreeCharacterNotice(fake);
-  fireEvent.click(screen.getByRole("button", { name: "Go" }));
-  await flush();
-  for (let group = 0; group < 8; group++) {
-    const target = fake.pending[0]?.text;
-    expect(target).toHaveLength(3);
-    await resolvePlay(fake);
-    fireEvent.change(screen.getByLabelText("Your copy"), {
-      target: { value: target },
-    });
-    await flush();
-    await tick(450);
-  }
+  await learnDriver(fake).completePhaseCorrectly("groups-3");
 }
 
 beforeEach(() => {
   localStorage.clear();
   vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-09-28T12:00:00.000Z"));
 });
 
 afterEach(() => {
@@ -416,6 +390,19 @@ afterEach(() => {
 });
 
 describe("LearnScreen input gating", () => {
+  it("exposes phase identity without relying on display text", async () => {
+    localStorage.setItem("k1frx.introduced.v1", JSON.stringify(["K", "M"]));
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+    const driver = learnDriver(fake);
+
+    expect(driver.phase()).toBe("onboarding");
+    await driver.start();
+    expect(driver.phase()).toBe("contrast");
+    await driver.advanceUntilPhase("groups-2");
+    expect(driver.phase()).toBe("groups-2");
+  });
+
   it("preserves every supported punctuation character", () => {
     expect(sanitizeCopyInput("a .,-=/ ?~")).toBe("A.,-=/?");
   });
@@ -1396,7 +1383,7 @@ describe("LearnScreen audio sequencing", () => {
   it("keeps manual pacing coherent after queued group submission", async () => {
     const fake = makeFakeAudio();
     renderLearn(fake.audio, { pacing: "manual" });
-    await toMultiCharacterTransition(fake, true);
+    await toMultiCharacterTransition(fake);
     fireEvent.click(screen.getByRole("button", { name: "Go" }));
     await flush();
     const target = fake.pending[0]?.text ?? "KM";
@@ -1572,7 +1559,9 @@ describe("LearnScreen audio sequencing", () => {
     expect(fake.playCount()).toBe(0);
     fireEvent.click(screen.getByRole("button", { name: "Go" }));
     await flush();
-    for (let index = 0; index < DEFAULT_LESSON_CONFIG.wordCopyCount; index++) {
+    const driver = learnDriver(fake);
+    let completedWords = 0;
+    while (driver.phase() === "words") {
       const target = fake.pending[0]?.text ?? "";
       expect(target.length).toBeGreaterThanOrEqual(2);
       expect([...target].every((character) => active.includes(character))).toBe(
@@ -1581,14 +1570,10 @@ describe("LearnScreen audio sequencing", () => {
       expect(screen.queryByText(/characters/)).not.toBeInTheDocument();
       const input = screen.getByLabelText("Your copy") as HTMLInputElement;
       expect(input).toBeEnabled();
-      fireEvent.change(input, { target: { value: target } });
-      fireEvent.keyDown(input, { key: "Enter" });
-      await flush();
-      expect(screen.queryByRole("status")).not.toBeInTheDocument();
-      await resolvePlay(fake);
-      expect(screen.getByRole("status")).toHaveTextContent("✓");
-      await tick(450);
+      await driver.answerCurrentPrompt(target);
+      completedWords += 1;
     }
+    expect(completedWords).toBe(DEFAULT_LESSON_CONFIG.wordCopyCount);
 
     expect(
       screen.getByRole("heading", { name: "Ready for continuous copy?" }),
@@ -1605,17 +1590,11 @@ describe("LearnScreen advancement", () => {
     answer?: (target: string) => string,
   ) {
     await toContinuousCopyTransition(fake);
-    fireEvent.click(screen.getByRole("button", { name: "Go" }));
-    await flush();
-    const target = fake.pending[0]?.text ?? "";
+    const driver = learnDriver(fake);
+    const target = await driver.completeContinuousCopy(
+      answer ? (currentTarget) => answer(currentTarget) : undefined,
+    );
     expect(target.length).toBeGreaterThanOrEqual(24);
-    fireEvent.change(screen.getByLabelText("Continuous copy"), {
-      target: { value: answer ? answer(target) : target },
-    });
-    await resolvePlay(fake);
-    await tick(2000);
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    await flush();
     return target;
   }
 

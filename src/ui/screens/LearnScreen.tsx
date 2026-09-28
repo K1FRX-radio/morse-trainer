@@ -182,7 +182,7 @@ export function LearnScreen() {
 
   if (learn.phase === "onboarding") {
     return (
-      <section>
+      <section data-learn-phase="onboarding">
         <h2>Learn</h2>
         {persistenceNotice}
         <p>
@@ -232,7 +232,7 @@ export function LearnScreen() {
       </button>
     );
     return (
-      <section>
+      <section data-learn-phase={learn.phaseId}>
         <h2>Session complete</h2>
         {persistenceNotice}
         <ul className="summary">
@@ -397,7 +397,7 @@ export function LearnScreen() {
       learn.continuousCopy.recommendedDurationMs / 60000;
     const selectedMinutes = learn.continuousCopy.selectedDurationMs / 60000;
     return (
-      <section>
+      <section data-learn-phase={learn.phaseId}>
         {persistenceNotice}
         <div className="learn__top">
           <span className="field__label" aria-live="polite">
@@ -432,7 +432,7 @@ export function LearnScreen() {
 
   if (learn.notification) {
     return (
-      <section>
+      <section data-learn-phase={learn.phaseId}>
         {persistenceNotice}
         <div className="learn__top">
           <span className="field__label" aria-live="polite">
@@ -457,7 +457,7 @@ export function LearnScreen() {
   if (learn.continuousCopy.stage === "result" && learn.continuousCopy.result) {
     const result = learn.continuousCopy.result;
     return (
-      <section>
+      <section data-learn-phase={learn.phaseId}>
         {persistenceNotice}
         <div className="learn__top">
           <span className="field__label">Continuous copy</span>
@@ -493,7 +493,7 @@ export function LearnScreen() {
       ? Math.round(((totalMs - remainingMs) / totalMs) * 100)
       : 0;
     return (
-      <section>
+      <section data-learn-phase={learn.phaseId}>
         {persistenceNotice}
         <div className="learn__top">
           <span className="field__label" aria-live="polite">
@@ -549,7 +549,7 @@ export function LearnScreen() {
   const assisted = exercise.assisted && exercise.type === "copy-character";
 
   return (
-    <section>
+    <section data-learn-phase={learn.phaseId}>
       {persistenceNotice}
       <div className="learn__top">
         <span className="field__label" aria-live="polite">
