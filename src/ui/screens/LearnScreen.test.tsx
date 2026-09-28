@@ -357,7 +357,9 @@ async function answerIsolatedWithMobileInput(
   await tick(450);
 }
 
-async function toMultiCharacterTransition(fake: ReturnType<typeof makeFakeAudio>) {
+async function toMultiCharacterTransition(
+  fake: ReturnType<typeof makeFakeAudio>,
+) {
   if (!localStorage.getItem("k1frx.introduced.v1")) {
     localStorage.setItem("k1frx.introduced.v1", JSON.stringify(["K", "M"]));
   }
