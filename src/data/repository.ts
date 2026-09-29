@@ -15,7 +15,11 @@ import {
 } from "./legacy-migration.ts";
 import {
   RECORD_SCHEMA_VERSION,
+  type AttemptDirection,
+  type CharacterProjectionRecord,
+  type ConfusionProjectionRecord,
   type CurriculumStateRecord,
+  type DailyProjectionRecord,
   type IntroductionsRecord,
   type LegacyMigrationBundle,
   type MilestoneRecord,
@@ -35,6 +39,9 @@ import {
 } from "./retry-history.ts";
 import {
   parseCurriculumStateRecord,
+  parseCharacterProjectionRecord,
+  parseConfusionProjectionRecord,
+  parseDailyProjectionRecord,
   parseIntroductionsRecord,
   parseLegacyMigrationBundle,
   parseMigrationLedger,
@@ -83,6 +90,22 @@ export type AdvancementResult = {
   curriculum: CurriculumStateRecord;
 };
 
+export type DailyProjectionQuery = {
+  fromLocalDate: string;
+  toLocalDate: string;
+  limit: number;
+};
+
+export type CharacterProjectionQuery = {
+  direction: AttemptDirection;
+  character?: string;
+  limit: number;
+};
+
+export type ConfusionProjectionQuery = {
+  limit: number;
+};
+
 type SharedAttemptCommit = BaseAttemptCommit & {
   curriculum?: CurriculumStateRecord;
   introductions?: IntroductionsRecord;
@@ -96,6 +119,9 @@ const PROHIBITED_PRACTICE_COMMIT_FIELDS = [
   "advancement",
   "mastery",
 ] as const;
+
+const MAX_PROJECTION_QUERY_LIMIT = 500;
+const LOCAL_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 export interface TrainingDataRepository extends LegacyMigrationRepository {
   open(): Promise<SchemaMetadataRecord>;
@@ -135,8 +161,19 @@ export interface TrainingDataRepository extends LegacyMigrationRepository {
     identity: RetryCounterIdentity,
     threshold: SpeedSuggestionAfterAttempts,
   ): Promise<RetryClassification>;
+  listDailyProjections(
+    query: DailyProjectionQuery,
+  ): Promise<DailyProjectionRecord[]>;
+  listCharacterProjections(
+    query: CharacterProjectionQuery,
+  ): Promise<CharacterProjectionRecord[]>;
+  listConfusionProjections(
+    query: ConfusionProjectionQuery,
+  ): Promise<ConfusionProjectionRecord[]>;
   rebuildProjections(): Promise<void>;
 }
+
+export { MAX_PROJECTION_QUERY_LIMIT };
 
 function defaultId(): string {
   if (typeof crypto === "undefined" || !crypto.randomUUID) {
@@ -165,6 +202,23 @@ function instant(value: string, label: string): number {
     throw new RangeError(`${label} must be a valid timestamp`);
   }
   return parsed;
+}
+
+function assertLocalDate(value: string, label: string): void {
+  if (!LOCAL_DATE_PATTERN.test(value)) {
+    throw new RangeError(`${label} must be in YYYY-MM-DD format`);
+  }
+}
+
+function assertBoundedLimit(limit: number, label = "limit"): void {
+  if (!Number.isInteger(limit) || limit <= 0) {
+    throw new RangeError(`${label} must be a positive integer`);
+  }
+  if (limit > MAX_PROJECTION_QUERY_LIMIT) {
+    throw new RangeError(
+      `${label} must be at most ${MAX_PROJECTION_QUERY_LIMIT}`,
+    );
+  }
 }
 
 function laterTimestamp(left: string, right: string): string {
@@ -927,6 +981,84 @@ export class DexieTrainingRepository implements TrainingDataRepository {
           threshold,
         );
       },
+    );
+  }
+
+  async listDailyProjections(
+    query: DailyProjectionQuery,
+  ): Promise<DailyProjectionRecord[]> {
+    assertLocalDate(query.fromLocalDate, "fromLocalDate");
+    assertLocalDate(query.toLocalDate, "toLocalDate");
+    if (query.fromLocalDate > query.toLocalDate) {
+      throw new RangeError(
+        "fromLocalDate must be less than or equal to toLocalDate",
+      );
+    }
+    assertBoundedLimit(query.limit);
+
+    const rows = await this.database.dailyProjections
+      .where("localDate")
+      .between(query.fromLocalDate, query.toLocalDate, true, true)
+      .limit(query.limit)
+      .toArray();
+
+    return rows.map((row) =>
+      structuredClone(parseDailyProjectionRecord(structuredClone(row))),
+    );
+  }
+
+  async listCharacterProjections(
+    query: CharacterProjectionQuery,
+  ): Promise<CharacterProjectionRecord[]> {
+    assertBoundedLimit(query.limit);
+    if (query.character !== undefined && query.character.length === 0) {
+      throw new RangeError("character cannot be empty when provided");
+    }
+
+    const rows =
+      query.character === undefined
+        ? await this.database.characterProjections
+            .where("direction")
+            .equals(query.direction)
+            .limit(query.limit)
+            .toArray()
+        : await this.database.characterProjections
+            .where("[character+direction]")
+            .equals([query.character, query.direction])
+            .limit(query.limit)
+            .toArray();
+
+    const ordered = rows.sort(
+      (left, right) =>
+        left.character.localeCompare(right.character) ||
+        left.id.localeCompare(right.id),
+    );
+
+    return ordered.map((row) =>
+      structuredClone(parseCharacterProjectionRecord(structuredClone(row))),
+    );
+  }
+
+  async listConfusionProjections(
+    query: ConfusionProjectionQuery,
+  ): Promise<ConfusionProjectionRecord[]> {
+    assertBoundedLimit(query.limit);
+
+    const rows = await this.database.confusionProjections
+      .orderBy("count")
+      .reverse()
+      .limit(query.limit)
+      .toArray();
+
+    const ordered = rows.sort(
+      (left, right) =>
+        right.count - left.count ||
+        left.target.localeCompare(right.target) ||
+        left.answer.localeCompare(right.answer),
+    );
+
+    return ordered.map((row) =>
+      structuredClone(parseConfusionProjectionRecord(structuredClone(row))),
     );
   }
 

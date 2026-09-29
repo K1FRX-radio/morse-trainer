@@ -4,7 +4,10 @@ import { normalizeCopy } from "../core/scoring.ts";
 import { isValidTrainingSession } from "../core/session-validity.ts";
 import { SETTING_RANGES } from "../core/settings.ts";
 import type {
+  CharacterProjectionRecord,
+  ConfusionProjectionRecord,
   CurriculumStateRecord,
+  DailyProjectionRecord,
   IntroductionsRecord,
   LegacyMigrationBundle,
   PortableSettingsRecord,
@@ -12,6 +15,7 @@ import type {
   TrainingSessionRecord,
 } from "./models.ts";
 import {
+  PROJECTION_VERSION,
   RECORD_SCHEMA_VERSION,
   SCORING_ALGORITHM_VERSION,
   type SchemaMetadataRecord,
@@ -713,6 +717,51 @@ const legacyMigrationBundleSchema = z
     });
   });
 
+const dailyProjectionRecordSchema = persistedRecordSchema
+  .extend({
+    projectionVersion: z.literal(PROJECTION_VERSION),
+    localDate: localDateSchema,
+    activeMs: z.number().finite().nonnegative(),
+    sessionCount: z.number().int().nonnegative(),
+    attemptCount: z.number().int().nonnegative(),
+    rxCorrect: z.number().int().nonnegative(),
+    rxTotal: z.number().int().nonnegative(),
+    txCorrect: z.number().int().nonnegative(),
+    txTotal: z.number().int().nonnegative(),
+    effectiveWpmTotal: z.number().finite().nonnegative(),
+    effectiveWpmSamples: z.number().int().nonnegative(),
+  })
+  .strict();
+
+const recentCharacterObservationSchema = z
+  .object({
+    attemptId: z.string().min(1),
+    occurredAt: capturedDateTimeSchema,
+    correct: z.boolean(),
+    answer: z.string().optional(),
+    kind: z.enum(["match", "substitution", "deletion", "insertion"]),
+    responseMs: z.number().finite().nonnegative().optional(),
+  })
+  .strict();
+
+const characterProjectionRecordSchema = persistedRecordSchema
+  .extend({
+    projectionVersion: z.literal(PROJECTION_VERSION),
+    character: z.string().min(1),
+    direction: z.enum(["rx", "tx"]),
+    recent: z.array(recentCharacterObservationSchema),
+  })
+  .strict();
+
+const confusionProjectionRecordSchema = persistedRecordSchema
+  .extend({
+    projectionVersion: z.literal(PROJECTION_VERSION),
+    target: z.string().min(1),
+    answer: z.string().min(1),
+    count: z.number().int().nonnegative(),
+  })
+  .strict();
+
 const trainingDatasetSchema = z
   .object({
     sessions: z.array(trainingSessionRecordSchema),
@@ -839,4 +888,26 @@ export function parseCurriculumStateRecord(
 
 export function parseIntroductionsRecord(value: unknown): IntroductionsRecord {
   return introductionsRecordSchema.parse(value) as IntroductionsRecord;
+}
+
+export function parseDailyProjectionRecord(
+  value: unknown,
+): DailyProjectionRecord {
+  return dailyProjectionRecordSchema.parse(value) as DailyProjectionRecord;
+}
+
+export function parseCharacterProjectionRecord(
+  value: unknown,
+): CharacterProjectionRecord {
+  return characterProjectionRecordSchema.parse(
+    value,
+  ) as CharacterProjectionRecord;
+}
+
+export function parseConfusionProjectionRecord(
+  value: unknown,
+): ConfusionProjectionRecord {
+  return confusionProjectionRecordSchema.parse(
+    value,
+  ) as ConfusionProjectionRecord;
 }
