@@ -2,9 +2,19 @@ import { createContext, useContext } from "react";
 import type { CurriculumState } from "../core/curriculum.ts";
 import type { SpeedSuggestionAfterAttempts } from "../core/settings.ts";
 import type {
+  CharacterProjectionQuery,
+  ConfusionProjectionQuery,
+  DailyProjectionQuery,
+} from "../data/repository.ts";
+import type {
   RetryClassification,
   RetryCounterIdentity,
 } from "../data/retry-history.ts";
+import type {
+  CharacterProjectionRecord,
+  ConfusionProjectionRecord,
+  DailyProjectionRecord,
+} from "../data/models.ts";
 import type {
   LearnPersistenceStart,
   LearnSessionPersistence,
@@ -30,6 +40,15 @@ export type TrainingDataContextValue = {
     identity: RetryCounterIdentity,
     threshold: SpeedSuggestionAfterAttempts,
   ) => Promise<RetryClassification>;
+  listDailyProjections: (
+    query: DailyProjectionQuery,
+  ) => Promise<DailyProjectionRecord[]>;
+  listCharacterProjections: (
+    query: CharacterProjectionQuery,
+  ) => Promise<CharacterProjectionRecord[]>;
+  listConfusionProjections: (
+    query: ConfusionProjectionQuery,
+  ) => Promise<ConfusionProjectionRecord[]>;
 };
 
 export const TrainingDataContext = createContext<

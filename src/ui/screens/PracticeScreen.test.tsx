@@ -86,6 +86,9 @@ function renderPractice(child: ReactNode, session: PracticeSessionPersistence) {
               consecutiveAccuracyMisses: 0,
               shouldSuggestSpacing: false,
             }),
+          listDailyProjections: () => Promise.resolve([]),
+          listCharacterProjections: () => Promise.resolve([]),
+          listConfusionProjections: () => Promise.resolve([]),
         }}
       >
         <NavigationGuardHarness>{child}</NavigationGuardHarness>

@@ -63,6 +63,15 @@ async function start(): Promise<void> {
             getRetryClassification={(identity, threshold) =>
               bootstrap.repository.getRetryClassification(identity, threshold)
             }
+            listDailyProjections={(query) =>
+              bootstrap.repository.listDailyProjections(query)
+            }
+            listCharacterProjections={(query) =>
+              bootstrap.repository.listCharacterProjections(query)
+            }
+            listConfusionProjections={(query) =>
+              bootstrap.repository.listConfusionProjections(query)
+            }
           >
             <LearnAudioProvider>
               <App />

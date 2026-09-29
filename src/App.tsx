@@ -3,26 +3,15 @@ import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { NavigationGuardContext } from "./ui/navigation-guard-context.ts";
 import { LearnScreen } from "./ui/screens/LearnScreen.tsx";
 import { PracticeScreen } from "./ui/screens/PracticeScreen.tsx";
+import { StatsHistoryScreen } from "./ui/screens/StatsHistoryScreen.tsx";
 import { SettingsScreen } from "./ui/screens/SettingsScreen.tsx";
 
 const NAV = [
   { to: "/learn", label: "Learn" },
   { to: "/practice", label: "Practice" },
-  { to: "/progress", label: "Progress" },
+  { to: "/history", label: "History" },
   { to: "/settings", label: "Settings" },
 ] as const;
-
-function Placeholder({ title }: { title: string }) {
-  return (
-    <section>
-      <h2>{title}</h2>
-      <p style={{ color: "var(--k1frx-muted)" }}>
-        Coming soon. The tested pure core (Morse, timing, curriculum, scheduler)
-        is in place; screens are built in later milestones.
-      </p>
-    </section>
-  );
-}
 
 export function App() {
   const [navigationBlocked, setNavigationBlocked] = useState(false);
@@ -51,9 +40,10 @@ export function App() {
             <Route path="/" element={<Navigate to="/learn" replace />} />
             <Route path="/learn" element={<LearnScreen />} />
             <Route path="/practice" element={<PracticeScreen />} />
+            <Route path="/history" element={<StatsHistoryScreen />} />
             <Route
               path="/progress"
-              element={<Placeholder title="Progress" />}
+              element={<Navigate to="/history" replace />}
             />
             <Route path="/settings" element={<SettingsScreen />} />
             <Route path="*" element={<Navigate to="/learn" replace />} />
