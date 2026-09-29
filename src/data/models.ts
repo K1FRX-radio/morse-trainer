@@ -23,8 +23,10 @@ export type CapturedDateTime = {
   timeZone?: string;
 };
 
-export type SessionSource = "learn" | "copy-practice" | "send-practice";
-export type SessionMode = "learn" | "copy" | "send" | "review";
+export type SessionSource =
+  "learn" | "copy-practice" | "send-practice" | "imported-text-rx";
+export type SessionMode =
+  "learn" | "copy" | "send" | "review" | "imported-text-rx";
 export type SessionStatus = "active" | "completed" | "interrupted";
 export type AttemptDirection = "rx" | "tx";
 

@@ -1,9 +1,13 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { useState, type ReactNode } from "react";
+import { DEFAULT_CURRICULUM_CONFIG } from "../../content/curriculum-data.ts";
+import { createInitialState } from "../../core/curriculum.ts";
 import { DEFAULT_SETTINGS } from "../../core/settings.ts";
+import type { PracticeSessionPersistence } from "../../data/practice-persistence.ts";
 import { NavigationGuardContext } from "../navigation-guard-context.ts";
 import { SettingsContext } from "../settings-context.ts";
+import { TrainingDataContext } from "../training-data-context.ts";
 import { ImportedTextPractice } from "./ImportedTextPractice.tsx";
 
 const audio = vi.hoisted(() => {
@@ -49,8 +53,21 @@ function NavigationGuardHarness({ children }: { children: ReactNode }) {
   );
 }
 
+function persistence(): PracticeSessionPersistence {
+  return {
+    recordAttempt: vi.fn(() => Promise.resolve()),
+    finish: vi.fn(() => Promise.resolve()),
+    interrupt: vi.fn(() => Promise.resolve()),
+    retry: vi.fn(() => Promise.resolve()),
+  };
+}
+
 function renderImportedTextPractice(noiseLevel = DEFAULT_SETTINGS.noiseLevel) {
-  return render(
+  const session = persistence();
+  const curriculum = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+  const startPracticeSessionPersistence = vi.fn(() => Promise.resolve(session));
+
+  const view = render(
     <SettingsContext.Provider
       value={{
         settings: { ...DEFAULT_SETTINGS, noiseLevel },
@@ -59,11 +76,90 @@ function renderImportedTextPractice(noiseLevel = DEFAULT_SETTINGS.noiseLevel) {
         setOutputDeviceId: vi.fn(),
       }}
     >
-      <NavigationGuardHarness>
-        <ImportedTextPractice />
-      </NavigationGuardHarness>
+      <TrainingDataContext.Provider
+        value={{
+          loadCurriculum: () => structuredClone(curriculum),
+          saveCurriculum: vi.fn(),
+          reconcileCurriculum: () => Promise.resolve(curriculum),
+          loadIntroductions: () => [],
+          saveIntroductions: vi.fn(),
+          startLearnSessionPersistence: () =>
+            Promise.reject(new Error("Learn persistence is not used here")),
+          startPracticeSessionPersistence,
+          getRetryClassification: () =>
+            Promise.resolve({
+              consecutiveAccuracyMisses: 0,
+              shouldSuggestSpacing: false,
+            }),
+          listDailyProjections: () => Promise.resolve([]),
+          listCharacterProjections: () => Promise.resolve([]),
+          listConfusionProjections: () => Promise.resolve([]),
+        }}
+      >
+        <NavigationGuardHarness>
+          <ImportedTextPractice />
+        </NavigationGuardHarness>
+      </TrainingDataContext.Provider>
     </SettingsContext.Provider>,
   );
+
+  return { ...view, session, startPracticeSessionPersistence };
+}
+
+function renderWithSwitchHarness() {
+  const session = persistence();
+  const curriculum = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+  const startPracticeSessionPersistence = vi.fn(() => Promise.resolve(session));
+
+  function SwitchHarness() {
+    const [showImported, setShowImported] = useState(true);
+    return (
+      <>
+        <button type="button" onClick={() => setShowImported(false)}>
+          Switch away
+        </button>
+        {showImported ? <ImportedTextPractice /> : <p>Other practice</p>}
+      </>
+    );
+  }
+
+  const view = render(
+    <SettingsContext.Provider
+      value={{
+        settings: { ...DEFAULT_SETTINGS, noiseLevel: 0.3 },
+        update: vi.fn(),
+        outputDeviceId: "",
+        setOutputDeviceId: vi.fn(),
+      }}
+    >
+      <TrainingDataContext.Provider
+        value={{
+          loadCurriculum: () => structuredClone(curriculum),
+          saveCurriculum: vi.fn(),
+          reconcileCurriculum: () => Promise.resolve(curriculum),
+          loadIntroductions: () => [],
+          saveIntroductions: vi.fn(),
+          startLearnSessionPersistence: () =>
+            Promise.reject(new Error("Learn persistence is not used here")),
+          startPracticeSessionPersistence,
+          getRetryClassification: () =>
+            Promise.resolve({
+              consecutiveAccuracyMisses: 0,
+              shouldSuggestSpacing: false,
+            }),
+          listDailyProjections: () => Promise.resolve([]),
+          listCharacterProjections: () => Promise.resolve([]),
+          listConfusionProjections: () => Promise.resolve([]),
+        }}
+      >
+        <NavigationGuardHarness>
+          <SwitchHarness />
+        </NavigationGuardHarness>
+      </TrainingDataContext.Provider>
+    </SettingsContext.Provider>,
+  );
+
+  return { ...view, session, startPracticeSessionPersistence };
 }
 
 describe("ImportedTextPractice", () => {
@@ -138,32 +234,7 @@ describe("ImportedTextPractice", () => {
         }),
     );
 
-    function SwitchHarness() {
-      const [showImported, setShowImported] = useState(true);
-      return (
-        <>
-          <button type="button" onClick={() => setShowImported(false)}>
-            Switch away
-          </button>
-          {showImported ? <ImportedTextPractice /> : <p>Other practice</p>}
-        </>
-      );
-    }
-
-    render(
-      <SettingsContext.Provider
-        value={{
-          settings: { ...DEFAULT_SETTINGS, noiseLevel: 0.3 },
-          update: vi.fn(),
-          outputDeviceId: "",
-          setOutputDeviceId: vi.fn(),
-        }}
-      >
-        <NavigationGuardHarness>
-          <SwitchHarness />
-        </NavigationGuardHarness>
-      </SettingsContext.Provider>,
-    );
+    const { session } = renderWithSwitchHarness();
 
     fireEvent.change(screen.getByLabelText("Imported text"), {
       target: { value: "A B" },
@@ -178,6 +249,7 @@ describe("ImportedTextPractice", () => {
 
     await waitFor(() => expect(audio.cancel).toHaveBeenCalled());
     await waitFor(() => expect(audio.noiseStop).toHaveBeenCalled());
+    await waitFor(() => expect(session.interrupt).toHaveBeenCalledOnce());
   });
 
   it("unmount during playback cancels audio and stops noise", async () => {
@@ -204,6 +276,22 @@ describe("ImportedTextPractice", () => {
 
     await waitFor(() => expect(audio.cancel).toHaveBeenCalled());
     await waitFor(() => expect(audio.noiseStop).toHaveBeenCalled());
+    await waitFor(() => expect(view.session.interrupt).toHaveBeenCalledOnce());
+  });
+
+  it("marks imported playback completed after full playback and unmount", async () => {
+    const view = renderImportedTextPractice();
+
+    fireEvent.change(screen.getByLabelText("Imported text"), {
+      target: { value: "A" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+
+    await waitFor(() => expect(audio.playText).toHaveBeenCalled());
+    view.unmount();
+
+    await waitFor(() => expect(view.session.finish).toHaveBeenCalledOnce());
+    expect(view.session.interrupt).not.toHaveBeenCalled();
   });
 
   it("normal stop returns the navigation guard to unblocked", async () => {

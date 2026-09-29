@@ -110,6 +110,24 @@ describe("persisted record semantics", () => {
     ]);
   });
 
+  it("accepts imported-text sessions as valid without attempts", () => {
+    const imported = validSession({
+      source: "imported-text-rx",
+      mode: "imported-text-rx",
+      attemptCount: 0,
+      finalizedAttemptCount: 0,
+      completedCards: 0,
+      valid: true,
+    });
+    expect(parseTrainingSessions([imported])).toEqual([imported]);
+  });
+
+  it("preserves compatibility with existing v2 source/mode pairs", () => {
+    const copy = validSession({ source: "copy-practice", mode: "copy" });
+    const send = validSession({ source: "send-practice", mode: "send" });
+    expect(parseTrainingSessions([copy, send])).toEqual([copy, send]);
+  });
+
   it.each([
     {
       name: "match marked incorrect",

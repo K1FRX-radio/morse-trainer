@@ -4,6 +4,8 @@ import type {
   PracticeSessionPersistence,
 } from "../../data/practice-persistence.ts";
 
+type FinalizationStatus = "completed" | "interrupted";
+
 type AttemptWork = {
   evidence: PracticeAttemptEvidence;
   snapshot: PracticePersistenceSnapshot;
@@ -16,6 +18,7 @@ export class PracticeWorkQueue {
   private readonly attempts: AttemptWork[] = [];
   private processing: Promise<void> | undefined;
   private finalSnapshot: PracticePersistenceSnapshot | undefined;
+  private finalStatus: FinalizationStatus = "completed";
   private terminal = false;
 
   constructor(
@@ -58,9 +61,13 @@ export class PracticeWorkQueue {
     return this.drain();
   }
 
-  requestFinalization(snapshot: PracticePersistenceSnapshot): Promise<void> {
+  requestFinalization(
+    snapshot: PracticePersistenceSnapshot,
+    status: FinalizationStatus = "completed",
+  ): Promise<void> {
     if (this.terminal) return Promise.resolve();
     this.finalSnapshot = structuredClone(snapshot);
+    this.finalStatus = status;
     return this.drain();
   }
 
@@ -98,7 +105,11 @@ export class PracticeWorkQueue {
 
     if (this.finalSnapshot !== undefined && !this.terminal) {
       const persistence = await this.start();
-      await persistence.finish(this.finalSnapshot);
+      if (this.finalStatus === "interrupted") {
+        await persistence.interrupt(this.finalSnapshot);
+      } else {
+        await persistence.finish(this.finalSnapshot);
+      }
       this.terminal = true;
     }
   }

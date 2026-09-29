@@ -76,4 +76,36 @@ describe("buildProjectionRows session eligibility", () => {
       { localDate: "2026-09-24", sessionCount: 1, activeMs: 45000 },
     ]);
   });
+
+  it("counts imported-text sessions in daily time/session totals", () => {
+    const rows = buildProjectionRows(
+      [
+        session({
+          source: "imported-text-rx",
+          mode: "imported-text-rx",
+          attemptCount: 0,
+          finalizedAttemptCount: 0,
+          completedCards: 0,
+          valid: true,
+        }),
+      ],
+      [],
+      "2026-09-24T18:00:00.000Z",
+    );
+
+    expect(rows.daily).toMatchObject([
+      {
+        localDate: "2026-09-24",
+        sessionCount: 1,
+        activeMs: 45000,
+        attemptCount: 0,
+        rxCorrect: 0,
+        rxTotal: 0,
+        txCorrect: 0,
+        txTotal: 0,
+      },
+    ]);
+    expect(rows.characters).toEqual([]);
+    expect(rows.confusions).toEqual([]);
+  });
 });

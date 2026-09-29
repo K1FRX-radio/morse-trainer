@@ -46,6 +46,83 @@ const settings = {
 };
 
 describe("DurablePracticeSession", () => {
+  it("persists a completed imported-text session without attempts", async () => {
+    const { database, repository } = await setup();
+    const ids = ["imported-owner", "imported-session"];
+
+    try {
+      const session = await DurablePracticeSession.create(
+        repository,
+        {
+          source: "imported-text-rx",
+          activeCharacters: ["K", "M"],
+          settings,
+        },
+        {
+          now: clock("2026-09-28T11:00:00.000Z", "2026-09-28T11:00:45.000Z"),
+          createId: () => ids.shift()!,
+          scheduleLeaseRenewal: () => () => undefined,
+        },
+      );
+
+      await session.finish(snapshot(45000, 0));
+
+      expect(await database.sessions.get("imported-session")).toMatchObject({
+        source: "imported-text-rx",
+        mode: "imported-text-rx",
+        status: "completed",
+        activeMs: 45000,
+        attemptCount: 0,
+        finalizedAttemptCount: 0,
+        completedCards: 0,
+        valid: true,
+      });
+      expect(await database.attempts.count()).toBe(0);
+      expect(await database.progressionEvents.count()).toBe(0);
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
+  it("persists interrupted imported-text sessions on interruption", async () => {
+    const { database, repository } = await setup();
+    const ids = ["imported-owner", "imported-session"];
+
+    try {
+      const session = await DurablePracticeSession.create(
+        repository,
+        {
+          source: "imported-text-rx",
+          activeCharacters: ["K", "M"],
+          settings,
+        },
+        {
+          now: clock("2026-09-28T11:30:00.000Z", "2026-09-28T11:30:10.000Z"),
+          createId: () => ids.shift()!,
+          scheduleLeaseRenewal: () => () => undefined,
+        },
+      );
+
+      await session.interrupt(snapshot(10000, 0));
+
+      expect(await database.sessions.get("imported-session")).toMatchObject({
+        source: "imported-text-rx",
+        mode: "imported-text-rx",
+        status: "interrupted",
+        activeMs: 10000,
+        attemptCount: 0,
+        finalizedAttemptCount: 0,
+        valid: false,
+      });
+      expect(await database.attempts.count()).toBe(0);
+      expect(await database.progressionEvents.count()).toBe(0);
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
   it("persists a finalized Copy Practice attempt and session", async () => {
     const { database, repository } = await setup();
     const ids = ["copy-owner", "copy-session", "copy-attempt"];

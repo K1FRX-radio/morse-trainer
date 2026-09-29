@@ -16,10 +16,18 @@ import { PracticeWorkQueue } from "./practice-work-queue.ts";
 
 export type PracticePersistenceStatus = "ready" | "pending" | "error";
 
+type PracticeUnmountStatus = "completed" | "interrupted";
+
+type UsePracticeSessionOptions = {
+  unmountStatus?: PracticeUnmountStatus | (() => PracticeUnmountStatus);
+};
+
 export function usePracticeSession(
-  source: "copy-practice" | "send-practice",
+  source: "copy-practice" | "send-practice" | "imported-text-rx",
   settings: PracticeSettings,
+  options: UsePracticeSessionOptions = {},
 ) {
+  const unmountStatus = options.unmountStatus;
   const { loadCurriculum, startPracticeSessionPersistence } = useTrainingData();
   const { setBlocked } = useNavigationGuard();
   const timerRef = useRef(new PracticeSessionTimer());
@@ -128,6 +136,47 @@ export function usePracticeSession(
     }
   }, [setBlocked]);
 
+  const finish = useCallback(async (): Promise<void> => {
+    setStatus("pending");
+    setError(undefined);
+    try {
+      await workQueueRef.current!.requestFinalization(snapshot(), "completed");
+      if (mountedRef.current) setStatus("ready");
+    } catch (cause) {
+      if (mountedRef.current) {
+        setStatus("error");
+        setError(
+          cause instanceof Error
+            ? cause.message
+            : "Practice session could not be finalized.",
+        );
+      }
+      throw cause;
+    }
+  }, [snapshot]);
+
+  const interrupt = useCallback(async (): Promise<void> => {
+    setStatus("pending");
+    setError(undefined);
+    try {
+      await workQueueRef.current!.requestFinalization(
+        snapshot(),
+        "interrupted",
+      );
+      if (mountedRef.current) setStatus("ready");
+    } catch (cause) {
+      if (mountedRef.current) {
+        setStatus("error");
+        setError(
+          cause instanceof Error
+            ? cause.message
+            : "Practice session could not be interrupted.",
+        );
+      }
+      throw cause;
+    }
+  }, [snapshot]);
+
   useEffect(() => {
     const timer = timerRef.current;
     const onVisibility = () => {
@@ -149,16 +198,22 @@ export function usePracticeSession(
       mountedRef.current = false;
       if (!workQueue.hasStarted) return;
       timer.finish(currentActiveTimePoint());
-      void workQueue.requestFinalization(snapshot()).catch(() => {
+      const status =
+        typeof unmountStatus === "function"
+          ? unmountStatus()
+          : (unmountStatus ?? "completed");
+      void workQueue.requestFinalization(snapshot(), status).catch(() => {
         if (workQueue.hasPendingAttempts) setBlocked(true);
       });
     };
-  }, [setBlocked, snapshot]);
+  }, [setBlocked, snapshot, unmountStatus]);
 
   return {
     start,
     recordActivity,
     recordAttempt,
+    finish,
+    interrupt,
     retry,
     status,
     error,

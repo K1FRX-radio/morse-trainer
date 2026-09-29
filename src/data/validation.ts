@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { KOCH_ORDER } from "../content/curriculum-data.ts";
 import { normalizeCopy } from "../core/scoring.ts";
-import { isValidTrainingSession } from "../core/session-validity.ts";
 import { SETTING_RANGES } from "../core/settings.ts";
 import type {
   CharacterProjectionRecord,
@@ -20,6 +19,7 @@ import {
   SCORING_ALGORITHM_VERSION,
   type SchemaMetadataRecord,
 } from "./models.ts";
+import { isValidSessionForSource } from "./session-validity-policy.ts";
 
 const utcTimestampSchema = z.string().datetime({ offset: true });
 const localDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -58,8 +58,13 @@ const activeDateBucketSchema = z
 
 export const trainingSessionRecordSchema = persistedRecordSchema
   .extend({
-    source: z.enum(["learn", "copy-practice", "send-practice"]),
-    mode: z.enum(["learn", "copy", "send", "review"]),
+    source: z.enum([
+      "learn",
+      "copy-practice",
+      "send-practice",
+      "imported-text-rx",
+    ]),
+    mode: z.enum(["learn", "copy", "send", "review", "imported-text-rx"]),
     status: z.enum(["active", "completed", "interrupted"]),
     startedAt: capturedDateTimeSchema,
     endedAt: capturedDateTimeSchema.optional(),
@@ -87,6 +92,7 @@ export const trainingSessionRecordSchema = persistedRecordSchema
       learn: ["learn", "review"],
       "copy-practice": ["copy"],
       "send-practice": ["send"],
+      "imported-text-rx": ["imported-text-rx"],
     }[session.source];
     if (!allowedModes.includes(session.mode)) {
       context.addIssue({
@@ -112,7 +118,8 @@ export const trainingSessionRecordSchema = persistedRecordSchema
         message: "finalizedAttemptCount cannot exceed attemptCount",
       });
     }
-    const expectedValidity = isValidTrainingSession({
+    const expectedValidity = isValidSessionForSource({
+      source: session.source,
       activeMs: session.activeMs,
       attemptCount: session.finalizedAttemptCount ?? session.attemptCount,
     });
@@ -120,8 +127,7 @@ export const trainingSessionRecordSchema = persistedRecordSchema
       context.addIssue({
         code: "custom",
         path: ["valid"],
-        message:
-          "valid must require at least 30 seconds active and one finalized attempt",
+        message: "valid does not match source-specific validity policy",
       });
     }
     const bucketTotal = session.activeDateBuckets.reduce(
