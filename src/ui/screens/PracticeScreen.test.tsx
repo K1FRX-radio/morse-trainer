@@ -144,6 +144,18 @@ describe("CopyPractice persistence", () => {
 });
 
 describe("SendPractice persistence", () => {
+  it("shows Imported Text RX from the Practice tabs", () => {
+    const session = persistence();
+    renderPractice(<PracticeScreen />, session);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Text RX" }));
+
+    expect(
+      screen.getByRole("heading", { name: "Imported Text RX" }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Imported text")).toBeInTheDocument();
+  });
+
   it("starts on first contact and commits an exact decode once", async () => {
     vi.spyOn(Math, "random").mockReturnValue(19 / 36);
     let now = 0;

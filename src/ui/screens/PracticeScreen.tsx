@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { useNavigationGuard } from "../navigation-guard-context.ts";
 import { CopyPractice } from "./CopyPractice.tsx";
+import { ImportedTextPractice } from "./ImportedTextPractice.tsx";
 import { SendPractice } from "./SendPractice.tsx";
 
-type Tab = "copy" | "send";
+type Tab = "copy" | "send" | "imported";
 
 export function PracticeScreen() {
   const [tab, setTab] = useState<Tab>("copy");
@@ -33,9 +34,25 @@ export function PracticeScreen() {
         >
           Send
         </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "imported"}
+          className={tab === "imported" ? "tab is-active" : "tab"}
+          disabled={blocked && tab !== "imported"}
+          onClick={() => setTab("imported")}
+        >
+          Text RX
+        </button>
       </div>
 
-      {tab === "copy" ? <CopyPractice /> : <SendPractice />}
+      {tab === "copy" ? (
+        <CopyPractice />
+      ) : tab === "send" ? (
+        <SendPractice />
+      ) : (
+        <ImportedTextPractice />
+      )}
     </section>
   );
 }

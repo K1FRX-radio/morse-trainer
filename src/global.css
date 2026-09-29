@@ -188,6 +188,17 @@ textarea {
   text-transform: uppercase;
 }
 
+.imported-rx {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.imported-rx__input {
+  min-height: 10rem;
+  resize: vertical;
+  line-height: 1.5;
+}
+
 .feedback {
   font-weight: 600;
   margin: 0.5rem 0;
