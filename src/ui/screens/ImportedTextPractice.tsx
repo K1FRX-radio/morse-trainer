@@ -1,13 +1,15 @@
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createImportedTextPlan } from "../../training/imported-text.ts";
 import { useSettings } from "../settings-context.ts";
 import { useAudioEngine } from "../hooks/useAudioEngine.ts";
+import { useNavigationGuard } from "../navigation-guard-context.ts";
 
 type PlaybackState = "idle" | "playing" | "paused";
 
 export function ImportedTextPractice() {
   const { settings } = useSettings();
   const { engine, noise, unlock } = useAudioEngine();
+  const { setBlocked } = useNavigationGuard();
 
   const [text, setText] = useState("");
   const [state, setState] = useState<PlaybackState>("idle");
@@ -17,6 +19,8 @@ export function ImportedTextPractice() {
   const [completedWords, setCompletedWords] = useState(0);
 
   const runId = useRef(0);
+  const mountedRef = useRef(true);
+  const noiseRunId = useRef<number | undefined>(undefined);
   const resumeIndex = useRef(0);
   const chunksRef = useRef<string[]>([]);
 
@@ -39,13 +43,29 @@ export function ImportedTextPractice() {
     [settings.charWpm, settings.effectiveWpm],
   );
 
+  const stopNoiseForRun = useCallback(
+    (run: number): void => {
+      if (noiseRunId.current !== run) {
+        return;
+      }
+      noise.stop();
+      noiseRunId.current = undefined;
+    },
+    [noise],
+  );
+
   async function stopPlayback(
     nextState: PlaybackState,
     restartAtZero: boolean,
-  ) {
+  ): Promise<void> {
+    const previousRun = runId.current;
     runId.current += 1;
+    setBlocked(false);
+    stopNoiseForRun(previousRun);
     await engine.cancel();
-    noise.stop();
+    if (!mountedRef.current) {
+      return;
+    }
     if (restartAtZero) {
       resumeIndex.current = 0;
       setCompletedWords(0);
@@ -55,29 +75,63 @@ export function ImportedTextPractice() {
 
   async function playFrom(index: number): Promise<void> {
     const currentRun = ++runId.current;
-    setError(undefined);
-    setState("playing");
-    await unlock();
-    if (settings.noiseLevel > 0) {
-      noise.start(settings.toneHz, settings.noiseLevel);
+    if (mountedRef.current) {
+      setError(undefined);
+      setState("playing");
     }
+    setBlocked(true);
 
     try {
+      await unlock();
+      if (currentRun !== runId.current || !mountedRef.current) {
+        return;
+      }
+
+      if (settings.noiseLevel > 0) {
+        noise.start(settings.toneHz, settings.noiseLevel);
+        noiseRunId.current = currentRun;
+      }
+
       let cursor = index;
       while (cursor < chunksRef.current.length) {
         await engine.playText(chunksRef.current[cursor], timing, {
           toneHz: settings.toneHz,
         });
-        if (currentRun !== runId.current) return;
+        if (currentRun !== runId.current || !mountedRef.current) {
+          return;
+        }
         cursor += 1;
         resumeIndex.current = cursor;
         setCompletedWords(cursor);
       }
       setState("idle");
+    } catch (cause) {
+      if (currentRun !== runId.current || !mountedRef.current) {
+        return;
+      }
+      const message =
+        cause instanceof Error ? cause.message : "Playback could not start.";
+      setError(message);
+      setState("idle");
     } finally {
-      noise.stop();
+      stopNoiseForRun(currentRun);
+      if (currentRun === runId.current) {
+        setBlocked(false);
+      }
     }
   }
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      const previousRun = runId.current;
+      runId.current += 1;
+      stopNoiseForRun(previousRun);
+      setBlocked(false);
+      void engine.cancel();
+    };
+  }, [engine, setBlocked, stopNoiseForRun]);
 
   function preparePlan(): boolean {
     try {

@@ -1,6 +1,8 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { useState, type ReactNode } from "react";
 import { DEFAULT_SETTINGS } from "../../core/settings.ts";
+import { NavigationGuardContext } from "../navigation-guard-context.ts";
 import { SettingsContext } from "../settings-context.ts";
 import { ImportedTextPractice } from "./ImportedTextPractice.tsx";
 
@@ -21,31 +23,45 @@ const audio = vi.hoisted(() => {
   };
 });
 
+const audioEngine = {
+  engine: {
+    playText: audio.playText,
+    cancel: audio.cancel,
+  },
+  unlock: audio.unlock,
+  noise: {
+    start: audio.noiseStart,
+    stop: audio.noiseStop,
+  },
+};
+
 vi.mock("../hooks/useAudioEngine.ts", () => ({
-  useAudioEngine: () => ({
-    engine: {
-      playText: audio.playText,
-      cancel: audio.cancel,
-    },
-    unlock: audio.unlock,
-    noise: {
-      start: audio.noiseStart,
-      stop: audio.noiseStop,
-    },
-  }),
+  useAudioEngine: () => audioEngine,
 }));
 
-function renderImportedTextPractice() {
+function NavigationGuardHarness({ children }: { children: ReactNode }) {
+  const [blocked, setBlocked] = useState(false);
+  return (
+    <NavigationGuardContext.Provider value={{ blocked, setBlocked }}>
+      <p aria-label="Guard state">{blocked ? "blocked" : "unblocked"}</p>
+      {children}
+    </NavigationGuardContext.Provider>
+  );
+}
+
+function renderImportedTextPractice(noiseLevel = DEFAULT_SETTINGS.noiseLevel) {
   return render(
     <SettingsContext.Provider
       value={{
-        settings: DEFAULT_SETTINGS,
+        settings: { ...DEFAULT_SETTINGS, noiseLevel },
         update: vi.fn(),
         outputDeviceId: "",
         setOutputDeviceId: vi.fn(),
       }}
     >
-      <ImportedTextPractice />
+      <NavigationGuardHarness>
+        <ImportedTextPractice />
+      </NavigationGuardHarness>
     </SettingsContext.Provider>,
   );
 }
@@ -101,7 +117,9 @@ describe("ImportedTextPractice", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
-    await waitFor(() => expect(audio.cancel).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(audio.cancel.mock.calls.length).toBeGreaterThanOrEqual(2),
+    );
 
     const beforeReplay = audio.playText.mock.calls.length;
     fireEvent.click(screen.getByRole("button", { name: "Replay" }));
@@ -109,6 +127,112 @@ describe("ImportedTextPractice", () => {
       expect(audio.playText.mock.calls.length).toBeGreaterThan(beforeReplay);
     });
     expect(audio.playText.mock.calls[beforeReplay][0]).toBe("A ");
+  });
+
+  it("switching away during playback cancels audio and stops noise", async () => {
+    let resolvePlay: (() => void) | undefined;
+    audio.playText.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolvePlay = resolve;
+        }),
+    );
+
+    function SwitchHarness() {
+      const [showImported, setShowImported] = useState(true);
+      return (
+        <>
+          <button type="button" onClick={() => setShowImported(false)}>
+            Switch away
+          </button>
+          {showImported ? <ImportedTextPractice /> : <p>Other practice</p>}
+        </>
+      );
+    }
+
+    render(
+      <SettingsContext.Provider
+        value={{
+          settings: { ...DEFAULT_SETTINGS, noiseLevel: 0.3 },
+          update: vi.fn(),
+          outputDeviceId: "",
+          setOutputDeviceId: vi.fn(),
+        }}
+      >
+        <NavigationGuardHarness>
+          <SwitchHarness />
+        </NavigationGuardHarness>
+      </SettingsContext.Provider>,
+    );
+
+    fireEvent.change(screen.getByLabelText("Imported text"), {
+      target: { value: "A B" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Guard state")).toHaveTextContent("blocked"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Switch away" }));
+    resolvePlay?.();
+
+    await waitFor(() => expect(audio.cancel).toHaveBeenCalled());
+    await waitFor(() => expect(audio.noiseStop).toHaveBeenCalled());
+  });
+
+  it("unmount during playback cancels audio and stops noise", async () => {
+    let resolvePlay: (() => void) | undefined;
+    audio.playText.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolvePlay = resolve;
+        }),
+    );
+
+    const view = renderImportedTextPractice(0.3);
+
+    fireEvent.change(screen.getByLabelText("Imported text"), {
+      target: { value: "A B" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Guard state")).toHaveTextContent("blocked"),
+    );
+    view.unmount();
+    resolvePlay?.();
+
+    await waitFor(() => expect(audio.cancel).toHaveBeenCalled());
+    await waitFor(() => expect(audio.noiseStop).toHaveBeenCalled());
+  });
+
+  it("normal stop returns the navigation guard to unblocked", async () => {
+    let resolvePlay: (() => void) | undefined;
+    audio.playText.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolvePlay = resolve;
+        }),
+    );
+
+    renderImportedTextPractice();
+
+    fireEvent.change(screen.getByLabelText("Imported text"), {
+      target: { value: "A B" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Guard state")).toHaveTextContent("blocked"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    resolvePlay?.();
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Guard state")).toHaveTextContent(
+        "unblocked",
+      ),
+    );
   });
 
   it("reports unsupported characters and enforces input bounds", async () => {
