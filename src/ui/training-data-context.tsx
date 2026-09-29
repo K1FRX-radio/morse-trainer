@@ -2,9 +2,19 @@ import { useCallback, useMemo, useRef, type ReactNode } from "react";
 import type { CurriculumState } from "../core/curriculum.ts";
 import type { SpeedSuggestionAfterAttempts } from "../core/settings.ts";
 import type {
+  CharacterProjectionQuery,
+  ConfusionProjectionQuery,
+  DailyProjectionQuery,
+} from "../data/repository.ts";
+import type {
   RetryClassification,
   RetryCounterIdentity,
 } from "../data/retry-history.ts";
+import type {
+  CharacterProjectionRecord,
+  ConfusionProjectionRecord,
+  DailyProjectionRecord,
+} from "../data/models.ts";
 import type {
   LearnPersistenceStart,
   LearnSessionPersistence,
@@ -32,6 +42,15 @@ type TrainingDataProviderProps = {
     identity: RetryCounterIdentity,
     threshold: SpeedSuggestionAfterAttempts,
   ) => Promise<RetryClassification>;
+  listDailyProjections: (
+    query: DailyProjectionQuery,
+  ) => Promise<DailyProjectionRecord[]>;
+  listCharacterProjections: (
+    query: CharacterProjectionQuery,
+  ) => Promise<CharacterProjectionRecord[]>;
+  listConfusionProjections: (
+    query: ConfusionProjectionQuery,
+  ) => Promise<ConfusionProjectionRecord[]>;
 };
 
 function persistBestEffort(operation: () => unknown): void {
@@ -52,6 +71,9 @@ export function TrainingDataProvider({
   startLearnSessionPersistence,
   startPracticeSessionPersistence,
   getRetryClassification,
+  listDailyProjections,
+  listCharacterProjections,
+  listConfusionProjections,
 }: TrainingDataProviderProps) {
   const curriculum = useRef(structuredClone(initialCurriculum));
   const introductions = useRef([...initialIntroductions]);
@@ -97,6 +119,9 @@ export function TrainingDataProvider({
       startLearnSessionPersistence,
       startPracticeSessionPersistence,
       getRetryClassification,
+      listDailyProjections,
+      listCharacterProjections,
+      listConfusionProjections,
     }),
     [
       loadCurriculum,
@@ -107,6 +132,9 @@ export function TrainingDataProvider({
       startLearnSessionPersistence,
       startPracticeSessionPersistence,
       getRetryClassification,
+      listDailyProjections,
+      listCharacterProjections,
+      listConfusionProjections,
     ],
   );
 

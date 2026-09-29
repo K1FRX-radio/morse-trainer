@@ -184,6 +184,9 @@ function TrainingDataFixture({
         getRetryClassification:
           getRetryClassification ??
           (() => Promise.resolve(retryClassification)),
+        listDailyProjections: () => Promise.resolve([]),
+        listCharacterProjections: () => Promise.resolve([]),
+        listConfusionProjections: () => Promise.resolve([]),
       }}
     >
       {children}
