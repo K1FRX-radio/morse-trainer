@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { useState, type ReactNode } from "react";
 import { DEFAULT_CURRICULUM_CONFIG } from "../../content/curriculum-data.ts";
 import { createInitialState } from "../../core/curriculum.ts";
@@ -42,6 +42,10 @@ const audioEngine = {
 vi.mock("../hooks/useAudioEngine.ts", () => ({
   useAudioEngine: () => audioEngine,
 }));
+
+afterEach(() => {
+  vi.clearAllMocks();
+});
 
 function NavigationGuardHarness({ children }: { children: ReactNode }) {
   const [blocked, setBlocked] = useState(false);
@@ -104,6 +108,54 @@ function renderImportedTextPractice(noiseLevel = DEFAULT_SETTINGS.noiseLevel) {
   );
 
   return { ...view, session, startPracticeSessionPersistence };
+}
+
+function renderImportedTextPracticeWithSessions(
+  sessions: PracticeSessionPersistence[],
+) {
+  const curriculum = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+  let index = 0;
+  const startPracticeSessionPersistence = vi.fn(() =>
+    Promise.resolve(sessions[Math.min(index++, sessions.length - 1)]!),
+  );
+
+  const view = render(
+    <SettingsContext.Provider
+      value={{
+        settings: { ...DEFAULT_SETTINGS },
+        update: vi.fn(),
+        outputDeviceId: "",
+        setOutputDeviceId: vi.fn(),
+      }}
+    >
+      <TrainingDataContext.Provider
+        value={{
+          loadCurriculum: () => structuredClone(curriculum),
+          saveCurriculum: vi.fn(),
+          reconcileCurriculum: () => Promise.resolve(curriculum),
+          loadIntroductions: () => [],
+          saveIntroductions: vi.fn(),
+          startLearnSessionPersistence: () =>
+            Promise.reject(new Error("Learn persistence is not used here")),
+          startPracticeSessionPersistence,
+          getRetryClassification: () =>
+            Promise.resolve({
+              consecutiveAccuracyMisses: 0,
+              shouldSuggestSpacing: false,
+            }),
+          listDailyProjections: () => Promise.resolve([]),
+          listCharacterProjections: () => Promise.resolve([]),
+          listConfusionProjections: () => Promise.resolve([]),
+        }}
+      >
+        <NavigationGuardHarness>
+          <ImportedTextPractice />
+        </NavigationGuardHarness>
+      </TrainingDataContext.Provider>
+    </SettingsContext.Provider>,
+  );
+
+  return { ...view, startPracticeSessionPersistence };
 }
 
 function renderWithSwitchHarness() {
@@ -279,7 +331,7 @@ describe("ImportedTextPractice", () => {
     await waitFor(() => expect(view.session.interrupt).toHaveBeenCalledOnce());
   });
 
-  it("marks imported playback completed after full playback and unmount", async () => {
+  it("finalizes completed playback while component remains mounted", async () => {
     const view = renderImportedTextPractice();
 
     fireEvent.change(screen.getByLabelText("Imported text"), {
@@ -288,10 +340,59 @@ describe("ImportedTextPractice", () => {
     fireEvent.click(screen.getByRole("button", { name: "Start" }));
 
     await waitFor(() => expect(audio.playText).toHaveBeenCalled());
-    view.unmount();
-
     await waitFor(() => expect(view.session.finish).toHaveBeenCalledOnce());
     expect(view.session.interrupt).not.toHaveBeenCalled();
+
+    view.unmount();
+    await waitFor(() => expect(view.session.finish).toHaveBeenCalledTimes(1));
+  });
+
+  it("stop finalizes interrupted playback while component remains mounted", async () => {
+    let resolvePlay: (() => void) | undefined;
+    audio.playText.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolvePlay = resolve;
+        }),
+    );
+
+    const view = renderImportedTextPractice();
+
+    fireEvent.change(screen.getByLabelText("Imported text"), {
+      target: { value: "A B" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Guard state")).toHaveTextContent("blocked"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    resolvePlay?.();
+
+    await waitFor(() => expect(view.session.interrupt).toHaveBeenCalledOnce());
+    expect(view.session.finish).not.toHaveBeenCalled();
+
+    view.unmount();
+    await waitFor(() =>
+      expect(view.session.interrupt).toHaveBeenCalledTimes(1),
+    );
+  });
+
+  it("starts a new persistence session after a completed run", async () => {
+    const first = persistence();
+    const second = persistence();
+    const view = renderImportedTextPracticeWithSessions([first, second]);
+
+    fireEvent.change(screen.getByLabelText("Imported text"), {
+      target: { value: "A" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+
+    await waitFor(() => expect(first.finish).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole("button", { name: "Replay" }));
+    await waitFor(() => expect(second.finish).toHaveBeenCalledOnce());
+
+    expect(view.startPracticeSessionPersistence).toHaveBeenCalledTimes(2);
   });
 
   it("normal stop returns the navigation guard to unblocked", async () => {

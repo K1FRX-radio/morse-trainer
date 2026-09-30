@@ -116,7 +116,9 @@ export function ImportedTextPractice() {
         practice.recordActivity();
         setCompletedWords(cursor);
       }
+      practice.recordActivity();
       completedPlaybackRef.current = true;
+      await practice.finish();
       setState("idle");
     } catch (cause) {
       if (currentRun !== runId.current || !mountedRef.current) {
@@ -188,6 +190,7 @@ export function ImportedTextPractice() {
   async function stop(): Promise<void> {
     completedPlaybackRef.current = false;
     await stopPlayback("idle", true);
+    await practice.interrupt();
   }
 
   async function replay(): Promise<void> {

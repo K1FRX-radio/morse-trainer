@@ -33,6 +33,10 @@ export class PracticeWorkQueue {
     return this.persistence !== undefined || this.startPromise !== undefined;
   }
 
+  get isTerminal(): boolean {
+    return this.terminal;
+  }
+
   async start(): Promise<PracticeSessionPersistence> {
     if (this.persistence) return this.persistence;
     if (this.startPromise) return this.startPromise;

@@ -39,23 +39,39 @@ export function usePracticeSession(
     startPracticeSessionPersistence,
   });
   dependenciesRef.current = { loadCurriculum, startPracticeSessionPersistence };
+  const createWorkQueue = useCallback(
+    () =>
+      new PracticeWorkQueue(() => {
+        const dependencies = dependenciesRef.current;
+        const currentSettings = settingsRef.current;
+        return dependencies.startPracticeSessionPersistence({
+          source,
+          activeCharacters: unlockedCharacters(dependencies.loadCurriculum()),
+          settings: {
+            charWpm: currentSettings.charWpm,
+            effectiveWpm: currentSettings.effectiveWpm,
+            toneHz: currentSettings.toneHz,
+            noiseLevel: currentSettings.noiseLevel,
+          },
+        });
+      }),
+    [source],
+  );
   const workQueueRef = useRef<PracticeWorkQueue | undefined>(undefined);
   if (!workQueueRef.current) {
-    workQueueRef.current = new PracticeWorkQueue(() => {
-      const dependencies = dependenciesRef.current;
-      const currentSettings = settingsRef.current;
-      return dependencies.startPracticeSessionPersistence({
-        source,
-        activeCharacters: unlockedCharacters(dependencies.loadCurriculum()),
-        settings: {
-          charWpm: currentSettings.charWpm,
-          effectiveWpm: currentSettings.effectiveWpm,
-          toneHz: currentSettings.toneHz,
-          noiseLevel: currentSettings.noiseLevel,
-        },
-      });
-    });
+    workQueueRef.current = createWorkQueue();
   }
+
+  const restartIfTerminal = useCallback(() => {
+    const currentQueue = workQueueRef.current;
+    if (!currentQueue?.isTerminal) {
+      return;
+    }
+    timerRef.current = new PracticeSessionTimer();
+    completedCardsRef.current = 0;
+    workQueueRef.current = createWorkQueue();
+  }, [createWorkQueue]);
+
   const mountedRef = useRef(true);
   const [status, setStatus] = useState<PracticePersistenceStatus>("ready");
   const [error, setError] = useState<string | undefined>(undefined);
@@ -69,6 +85,7 @@ export function usePracticeSession(
   }, []);
 
   const start = useCallback(async (): Promise<PracticeSessionPersistence> => {
+    restartIfTerminal();
     timerRef.current.recordActivity(currentActiveTimePoint());
     setStatus("pending");
     setError(undefined);
@@ -87,7 +104,7 @@ export function usePracticeSession(
       }
       throw cause;
     }
-  }, []);
+  }, [restartIfTerminal]);
 
   const recordActivity = useCallback(() => {
     timerRef.current.recordActivity(currentActiveTimePoint());
