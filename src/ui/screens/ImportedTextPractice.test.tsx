@@ -395,6 +395,39 @@ describe("ImportedTextPractice", () => {
     expect(view.startPracticeSessionPersistence).toHaveBeenCalledTimes(2);
   });
 
+  it("interrupts the active second session once when unmounting after restart", async () => {
+    let resolveSecondRun: (() => void) | undefined;
+    audio.playText.mockImplementationOnce(() => Promise.resolve());
+    audio.playText.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSecondRun = resolve;
+        }),
+    );
+
+    const first = persistence();
+    const second = persistence();
+    const view = renderImportedTextPracticeWithSessions([first, second]);
+
+    fireEvent.change(screen.getByLabelText("Imported text"), {
+      target: { value: "A" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+    await waitFor(() => expect(first.finish).toHaveBeenCalledOnce());
+
+    fireEvent.click(screen.getByRole("button", { name: "Replay" }));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Guard state")).toHaveTextContent("blocked"),
+    );
+
+    view.unmount();
+    resolveSecondRun?.();
+
+    await waitFor(() => expect(second.interrupt).toHaveBeenCalledOnce());
+    expect(second.finish).not.toHaveBeenCalled();
+    expect(first.interrupt).not.toHaveBeenCalled();
+  });
+
   it("normal stop returns the navigation guard to unblocked", async () => {
     let resolvePlay: (() => void) | undefined;
     audio.playText.mockImplementationOnce(

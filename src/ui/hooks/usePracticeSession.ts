@@ -195,8 +195,8 @@ export function usePracticeSession(
   }, [snapshot]);
 
   useEffect(() => {
-    const timer = timerRef.current;
     const onVisibility = () => {
+      const timer = timerRef.current;
       if (document.visibilityState === "hidden") {
         timer.pause(currentActiveTimePoint());
       } else {
@@ -208,12 +208,12 @@ export function usePracticeSession(
   }, []);
 
   useEffect(() => {
-    const timer = timerRef.current;
-    const workQueue = workQueueRef.current!;
     mountedRef.current = true;
     return () => {
+      const timer = timerRef.current;
+      const workQueue = workQueueRef.current;
       mountedRef.current = false;
-      if (!workQueue.hasStarted) return;
+      if (!workQueue?.hasStarted) return;
       timer.finish(currentActiveTimePoint());
       const status =
         typeof unmountStatus === "function"
