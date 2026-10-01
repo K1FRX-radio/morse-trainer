@@ -1,5 +1,4 @@
 import { DATABASE_VERSION, TrainerDatabase } from "./indexeddb.ts";
-import { isValidTrainingSession } from "../core/session-validity.ts";
 import type {
   PracticeSettings,
   SpeedSuggestionAfterAttempts,
@@ -51,6 +50,7 @@ import {
   parseTrainingDataset,
   parseTrainingSession,
 } from "./validation.ts";
+import { isValidSessionRecord } from "./session-validity-policy.ts";
 
 export type RepositoryDependencies = {
   now?: () => Date;
@@ -1138,7 +1138,7 @@ export class DexieTrainingRepository implements TrainingDataRepository {
             status: "interrupted",
             endedAt,
             updatedAt: laterTimestamp(session.updatedAt, endedAt.utc),
-            valid: isValidTrainingSession(session),
+            valid: isValidSessionRecord(session),
             revision: session.revision + 1,
             finalizationKey,
           };

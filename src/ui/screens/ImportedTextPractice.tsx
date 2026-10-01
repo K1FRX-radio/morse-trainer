@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createImportedTextPlan } from "../../training/imported-text.ts";
+import { usePracticeSession } from "../hooks/usePracticeSession.ts";
 import { useSettings } from "../settings-context.ts";
 import { useAudioEngine } from "../hooks/useAudioEngine.ts";
 import { useNavigationGuard } from "../navigation-guard-context.ts";
@@ -21,8 +22,16 @@ export function ImportedTextPractice() {
   const runId = useRef(0);
   const mountedRef = useRef(true);
   const noiseRunId = useRef<number | undefined>(undefined);
+  const completedPlaybackRef = useRef(false);
   const resumeIndex = useRef(0);
   const chunksRef = useRef<string[]>([]);
+  const resolveUnmountStatus = useCallback(
+    () => (completedPlaybackRef.current ? "completed" : "interrupted"),
+    [],
+  );
+  const practice = usePracticeSession("imported-text-rx", settings, {
+    unmountStatus: resolveUnmountStatus,
+  });
 
   const progressLabel = useMemo(() => {
     if (planWords === 0) return "No playback plan";
@@ -58,6 +67,7 @@ export function ImportedTextPractice() {
     nextState: PlaybackState,
     restartAtZero: boolean,
   ): Promise<void> {
+    practice.recordActivity();
     const previousRun = runId.current;
     runId.current += 1;
     setBlocked(false);
@@ -82,6 +92,7 @@ export function ImportedTextPractice() {
     setBlocked(true);
 
     try {
+      await practice.start();
       await unlock();
       if (currentRun !== runId.current || !mountedRef.current) {
         return;
@@ -102,8 +113,12 @@ export function ImportedTextPractice() {
         }
         cursor += 1;
         resumeIndex.current = cursor;
+        practice.recordActivity();
         setCompletedWords(cursor);
       }
+      practice.recordActivity();
+      completedPlaybackRef.current = true;
+      await practice.finish();
       setState("idle");
     } catch (cause) {
       if (currentRun !== runId.current || !mountedRef.current) {
@@ -155,6 +170,7 @@ export function ImportedTextPractice() {
 
   async function start(): Promise<void> {
     if (!preparePlan()) return;
+    completedPlaybackRef.current = false;
     resumeIndex.current = 0;
     setCompletedWords(0);
     await playFrom(0);
@@ -172,13 +188,16 @@ export function ImportedTextPractice() {
   }
 
   async function stop(): Promise<void> {
+    completedPlaybackRef.current = false;
     await stopPlayback("idle", true);
+    await practice.interrupt();
   }
 
   async function replay(): Promise<void> {
     if (chunksRef.current.length === 0) {
       if (!preparePlan()) return;
     }
+    completedPlaybackRef.current = false;
     await stopPlayback("idle", true);
     await playFrom(0);
   }
@@ -281,6 +300,16 @@ export function ImportedTextPractice() {
           Replay
         </button>
       </div>
+
+      {practice.status === "pending" && <p role="status">Saving…</p>}
+      {practice.error && (
+        <div role="alert">
+          <span>{practice.error}</span>
+          <button type="button" onClick={() => void practice.retry()}>
+            Retry save
+          </button>
+        </div>
+      )}
     </section>
   );
 }

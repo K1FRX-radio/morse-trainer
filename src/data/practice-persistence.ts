@@ -1,5 +1,4 @@
 import { gradeCopyDetailed, normalizeCopy } from "../core/scoring.ts";
-import { isValidTrainingSession } from "../core/session-validity.ts";
 import {
   RECORD_SCHEMA_VERSION,
   SCORING_ALGORITHM_VERSION,
@@ -9,12 +8,13 @@ import {
   type TrainingSessionRecord,
 } from "./models.ts";
 import type { TrainingDataRepository } from "./repository.ts";
+import { isValidSessionForSource } from "./session-validity-policy.ts";
 import { captureDateTime } from "./time.ts";
 
 const DEFAULT_LEASE_DURATION_MS = 60000;
 const DEFAULT_LEASE_RENEWAL_MS = 20000;
 
-type PracticeSource = "copy-practice" | "send-practice";
+type PracticeSource = "copy-practice" | "send-practice" | "imported-text-rx";
 
 export type PracticePersistenceSettings = {
   charWpm: number;
@@ -81,12 +81,28 @@ function defaultLeaseRenewal(renew: () => void): () => void {
   return () => globalThis.clearInterval(handle);
 }
 
-function modeForSource(source: PracticeSource): "copy" | "send" {
-  return source === "copy-practice" ? "copy" : "send";
+function modeForSource(
+  source: PracticeSource,
+): "copy" | "send" | "imported-text-rx" {
+  switch (source) {
+    case "copy-practice":
+      return "copy";
+    case "send-practice":
+      return "send";
+    case "imported-text-rx":
+      return "imported-text-rx";
+  }
 }
 
 function directionForSource(source: PracticeSource): "rx" | "tx" {
-  return source === "copy-practice" ? "rx" : "tx";
+  switch (source) {
+    case "copy-practice":
+      return "rx";
+    case "send-practice":
+      return "tx";
+    case "imported-text-rx":
+      throw new Error("Imported text sessions do not persist attempts");
+  }
 }
 
 function assertEvidenceMatchesSource(
@@ -94,6 +110,9 @@ function assertEvidenceMatchesSource(
   evidence: PracticeAttemptEvidence,
 ): void {
   const isCopy = evidence.exerciseType.startsWith("copy-");
+  if (source === "imported-text-rx") {
+    throw new Error("Imported text sessions cannot record scored attempts");
+  }
   if ((source === "copy-practice") !== isCopy) {
     throw new Error("Practice attempt type does not match its session source");
   }
@@ -278,9 +297,13 @@ export class DurablePracticeSession implements PracticeSessionPersistence {
         activeMs: frozenSnapshot.activeMs,
         activeDateBuckets: frozenSnapshot.activeDateBuckets,
         completedCards: frozenSnapshot.completedCards,
-        valid: isValidTrainingSession({
+        valid: isValidSessionForSource({
+          source: current.source,
           activeMs: frozenSnapshot.activeMs,
           attemptCount: current.attemptCount,
+          ...(current.finalizedAttemptCount === undefined
+            ? {}
+            : { finalizedAttemptCount: current.finalizedAttemptCount }),
         }),
         revision: current.revision + 1,
         finalizationKey: `${current.source}-${status}:${current.id}`,
@@ -313,9 +336,11 @@ export class DurablePracticeSession implements PracticeSessionPersistence {
       attemptCount,
       finalizedAttemptCount: attemptCount,
       completedCards: snapshot.completedCards,
-      valid: isValidTrainingSession({
+      valid: isValidSessionForSource({
+        source: this.source,
         activeMs: snapshot.activeMs,
         attemptCount,
+        finalizedAttemptCount: attemptCount,
       }),
       leaseExpiresAt: new Date(
         Date.parse(at.utc) + DEFAULT_LEASE_DURATION_MS,

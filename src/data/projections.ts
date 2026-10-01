@@ -1,4 +1,3 @@
-import { isValidTrainingSession } from "../core/session-validity.ts";
 import {
   PROJECTION_VERSION,
   type CharacterProjectionRecord,
@@ -8,6 +7,7 @@ import {
   type TrainingAttemptRecord,
   type TrainingSessionRecord,
 } from "./models.ts";
+import { isValidSessionRecord } from "./session-validity-policy.ts";
 
 export const CHARACTER_RECENT_WINDOW = 50;
 
@@ -87,7 +87,7 @@ export function buildProjectionRows(
   };
 
   for (const session of sessions) {
-    if (!isValidTrainingSession(session)) continue;
+    if (!isValidSessionRecord(session)) continue;
     const startDay = getDaily(session.startedAt.localDate);
     startDay.sessionCount += 1;
     startDay.effectiveWpmTotal += session.effectiveWpm;
