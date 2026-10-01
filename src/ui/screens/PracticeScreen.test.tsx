@@ -125,9 +125,9 @@ function sendCurriculum(order: string[]): CurriculumState {
   });
 }
 
-function selectSendLength(length: 1 | 2 | 3) {
-  fireEvent.change(screen.getByLabelText("Length"), {
-    target: { value: String(length) },
+function selectSendMode(mode: "character" | "group-2" | "group-3" | "word") {
+  fireEvent.change(screen.getByLabelText("Exercise"), {
+    target: { value: mode },
   });
 }
 
@@ -356,7 +356,7 @@ describe("SendPractice persistence", () => {
         "T",
       ),
     );
-    selectSendLength(2);
+    selectSendMode("group-2");
     await waitFor(() =>
       expect(screen.getByLabelText("Send this character")).toHaveTextContent(
         "TT",
@@ -394,7 +394,7 @@ describe("SendPractice persistence", () => {
         "T",
       ),
     );
-    selectSendLength(3);
+    selectSendMode("group-3");
     await waitFor(() =>
       expect(screen.getByLabelText("Send this character")).toHaveTextContent(
         "TTT",
@@ -418,28 +418,160 @@ describe("SendPractice persistence", () => {
     );
   });
 
-  it("changing exercise length does not save an empty attempt", async () => {
+  it("selects Word mode targets from unlocked characters", async () => {
     const session = persistence();
     renderPractice(<SendPractice />, session, {
-      curriculum: sendCurriculum(["T", "M"]),
+      curriculum: sendCurriculum(["A", "M", "N"]),
+      characterProjections: [
+        {
+          id: "character:tx:M",
+          schemaVersion: 1,
+          updatedAt: "2026-10-01T00:00:00.000Z",
+          projectionVersion: 1,
+          character: "M",
+          direction: "tx",
+          recent: [
+            {
+              attemptId: "m-1",
+              occurredAt: {
+                utc: "2026-10-01T00:00:00.000Z",
+                localDate: "2026-10-01",
+                utcOffsetMinutes: 0,
+              },
+              correct: false,
+              kind: "substitution",
+              answer: "A",
+            },
+          ],
+        },
+      ],
+    });
+
+    selectSendMode("word");
+    await waitFor(() => expect(sendTargetText()).toMatch(/^[AMN]{2,4}$/));
+    const target = sendTargetText();
+    for (const character of target) {
+      expect(["A", "M", "N"]).toContain(character);
+    }
+  });
+
+  it("shows fallback state in Word mode when no eligible words exist", async () => {
+    const session = persistence();
+    renderPractice(<SendPractice />, session, {
+      curriculum: sendCurriculum(["K"]),
+    });
+
+    selectSendMode("word");
+
+    await screen.findByRole("alert");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "No eligible words are available for the unlocked character set.",
+    );
+    expect(sendTargetText()).toBe("-");
+    expect(
+      screen.getByRole("button", { name: "Straight key (hold to send)" }),
+    ).toBeDisabled();
+  });
+
+  it("commits an exact word decode once as send-word", async () => {
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    const session = persistence();
+    renderPractice(<SendPractice />, session, {
+      curriculum: sendCurriculum(["E", "S"]),
+    });
+
+    selectSendMode("word");
+    await waitFor(() =>
+      expect(screen.getByLabelText("Send this character")).toHaveTextContent(
+        "ES",
+      ),
+    );
+
+    // Send E (.), then S (...) with timing around default 20 WPM thresholds.
+    fireEvent.keyDown(window, { key: " " });
+    now += 60;
+    fireEvent.keyUp(window, { key: " " });
+    now += 220;
+
+    fireEvent.keyDown(window, { key: " " });
+    now += 60;
+    fireEvent.keyUp(window, { key: " " });
+    now += 60;
+
+    fireEvent.keyDown(window, { key: " " });
+    now += 60;
+    fireEvent.keyUp(window, { key: " " });
+    now += 60;
+
+    fireEvent.keyDown(window, { key: " " });
+    now += 60;
+    fireEvent.keyUp(window, { key: " " });
+
+    await waitFor(() => expect(session.recordAttempt).toHaveBeenCalledOnce());
+    expect(session.recordAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        exerciseType: "send-word",
+        target: "ES",
+        response: "ES",
+        schedulerReason: expect.any(String),
+        keying: expect.objectContaining({ encoding: "u32-ms-le-v1" }),
+      }),
+      expect.objectContaining({ completedCards: 1 }),
+    );
+  });
+
+  it("commits a non-empty word miss once on New target", async () => {
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => (now += 200));
+    const session = persistence();
+    renderPractice(<SendPractice />, session, {
+      curriculum: sendCurriculum(["E", "S"]),
+    });
+
+    selectSendMode("word");
+    await waitFor(() =>
+      expect(screen.getByLabelText("Send this character")).toHaveTextContent(
+        "ES",
+      ),
+    );
+
+    fireEvent.keyDown(window, { key: " " });
+    fireEvent.keyUp(window, { key: " " });
+    fireEvent.click(screen.getByRole("button", { name: "New target" }));
+
+    await waitFor(() => expect(session.recordAttempt).toHaveBeenCalledOnce());
+    const firstCall = vi.mocked(session.recordAttempt).mock.calls[0]?.[0];
+    expect(firstCall?.exerciseType).toBe("send-word");
+    expect(firstCall?.target).toBe("ES");
+    expect(firstCall?.response.trim().length).toBeGreaterThan(0);
+    expect(firstCall?.keying?.encoding).toBe("u32-ms-le-v1");
+  });
+
+  it("changing exercise mode does not save an empty attempt", async () => {
+    const session = persistence();
+    renderPractice(<SendPractice />, session, {
+      curriculum: sendCurriculum(["T", "U"]),
     });
 
     await waitFor(() =>
       expect(screen.getByLabelText("Send this character")).toHaveTextContent(
-        /[TM]/,
+        /[TU]/,
       ),
     );
-    selectSendLength(2);
-    await waitFor(() => expect(sendTargetText()).toMatch(/^[TM]{2}$/));
-    selectSendLength(3);
-    await waitFor(() => expect(sendTargetText()).toMatch(/^[TM]{3}$/));
-    selectSendLength(1);
-    await waitFor(() => expect(sendTargetText()).toMatch(/^[TM]$/));
+    selectSendMode("group-2");
+    await waitFor(() => expect(sendTargetText()).toMatch(/^[TU]{2}$/));
+    selectSendMode("word");
+    await waitFor(() => expect(sendTargetText()).toBe("TU"));
+    selectSendMode("group-3");
+    await waitFor(() => expect(sendTargetText()).toMatch(/^[TU]{3}$/));
+    selectSendMode("character");
+    await waitFor(() => expect(sendTargetText()).toMatch(/^[TU]$/));
 
     expect(session.recordAttempt).not.toHaveBeenCalled();
   });
 
-  it("changing length performs one target-selection query and does not re-replace target", async () => {
+  it("changing mode performs one target-selection query and does not re-replace target", async () => {
     const session = persistence();
     const deferredRows = vi.fn(() => {
       let resolve!: (value: CharacterProjectionRecord[]) => void;
@@ -459,7 +591,7 @@ describe("SendPractice persistence", () => {
     deferredRows.resolve([]);
     await waitFor(() => expect(sendTargetText()).toMatch(/^[TM]$/));
 
-    // Prepare next query promise and change length once.
+    // Prepare next query promise and change mode once.
     const nextRows = (() => {
       let resolve!: (value: CharacterProjectionRecord[]) => void;
       const promise = new Promise<CharacterProjectionRecord[]>((done) => {
@@ -469,7 +601,7 @@ describe("SendPractice persistence", () => {
     })();
     listCharacterProjections.mockImplementationOnce(() => nextRows.promise);
 
-    selectSendLength(2);
+    selectSendMode("group-2");
     expect(listCharacterProjections).toHaveBeenCalledTimes(2);
 
     nextRows.resolve([]);
@@ -479,7 +611,7 @@ describe("SendPractice persistence", () => {
     await waitFor(() => expect(sendTargetText()).toBe(settled));
   });
 
-  it("invalidates stale target during pending length-change query and re-enables when settled", async () => {
+  it("invalidates stale target during pending mode-change query and re-enables when settled", async () => {
     const session = persistence();
 
     const firstRows = (() => {
@@ -511,7 +643,7 @@ describe("SendPractice persistence", () => {
     firstRows.resolve([]);
     await waitFor(() => expect(sendTargetText()).toMatch(/^[TM]$/));
 
-    selectSendLength(3);
+    selectSendMode("group-3");
 
     // While replacement is pending, the previous target must be non-actionable.
     expect(sendTargetText()).toBe("-");
@@ -526,7 +658,7 @@ describe("SendPractice persistence", () => {
     ).toBeEnabled();
   });
 
-  it("ignores space-key input during pending length-change transition", async () => {
+  it("ignores space-key input during pending mode-change transition", async () => {
     const session = persistence();
 
     const firstRows = (() => {
@@ -554,15 +686,15 @@ describe("SendPractice persistence", () => {
       <SendPractice />,
       session,
       {
-        curriculum: sendCurriculum(["T", "M"]),
+        curriculum: sendCurriculum(["T", "U"]),
         listCharacterProjections,
       },
     );
 
     firstRows.resolve([]);
-    await waitFor(() => expect(sendTargetText()).toMatch(/^[TM]$/));
+    await waitFor(() => expect(sendTargetText()).toMatch(/^[TU]$/));
 
-    selectSendLength(3);
+    selectSendMode("word");
     expect(sendTargetText()).toBe("-");
     expect(
       screen.getByRole("button", { name: "Straight key (hold to send)" }),
@@ -576,7 +708,7 @@ describe("SendPractice persistence", () => {
     expect(decodedText().trim()).toBe("");
 
     secondRows.resolve([]);
-    await waitFor(() => expect(sendTargetText()).toMatch(/^[TM]{3}$/));
+    await waitFor(() => expect(sendTargetText()).toBe("TU"));
     expect(decodedText().trim()).toBe("");
   });
 
@@ -616,7 +748,7 @@ describe("SendPractice persistence", () => {
         /[KM]/,
       ),
     );
-    selectSendLength(2);
+    selectSendMode("group-2");
     await waitFor(() =>
       expect(screen.getByLabelText("Send this character")).toHaveTextContent(
         /[KM]{2}/,

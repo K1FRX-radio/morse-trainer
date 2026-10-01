@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  buildSendWordTarget,
   buildSendTarget,
   type SendTargetLength,
 } from "../../core/scheduler.ts";
+import type { CurriculumState } from "../../core/curriculum.ts";
 import { createRng, type Rng } from "../../core/rng.ts";
 import type { SchedulerReason } from "../../core/types.ts";
 import { thresholdsForWpm } from "../../core/keying.ts";
@@ -11,21 +13,75 @@ import { attachKeyboardKey } from "../../input/keyboard-key.ts";
 import { attachPointerKey } from "../../input/pointer-key.ts";
 import { encodeKeyingTiming } from "../../data/keying-timing.ts";
 import type { CharacterProjectionRecord } from "../../data/models.ts";
+import { DEFAULT_LESSON_CONFIG } from "../../training/lesson-plan.ts";
 import { useSettings } from "../settings-context.ts";
 import { useAudioEngine } from "../hooks/useAudioEngine.ts";
 import { usePracticeSession } from "../hooks/usePracticeSession.ts";
 import { useTrainingData } from "../training-data-context.ts";
 
-type ExerciseLength = SendTargetLength;
+type SendExerciseMode = "character" | "group-2" | "group-3" | "word";
+
+type TargetSelection = {
+  target: string | undefined;
+  reason: SchedulerReason;
+};
 
 function normalizeDecoded(value: string): string {
   return value.toUpperCase().replace(/\s+/g, "");
 }
 
-function exerciseTypeForLength(
-  length: ExerciseLength,
-): "send-character" | "send-group" {
-  return length === 1 ? "send-character" : "send-group";
+function modeLength(mode: SendExerciseMode): SendTargetLength | undefined {
+  switch (mode) {
+    case "character":
+      return 1;
+    case "group-2":
+      return 2;
+    case "group-3":
+      return 3;
+    case "word":
+      return undefined;
+  }
+}
+
+function exerciseTypeForMode(
+  mode: SendExerciseMode,
+): "send-character" | "send-group" | "send-word" {
+  switch (mode) {
+    case "character":
+      return "send-character";
+    case "group-2":
+    case "group-3":
+      return "send-group";
+    case "word":
+      return "send-word";
+  }
+}
+
+function selectTarget(
+  mode: SendExerciseMode,
+  txRows: CharacterProjectionRecord[],
+  rng: Rng,
+  curriculum: CurriculumState,
+): TargetSelection {
+  const performance = txAccuracy(txRows);
+  const length = modeLength(mode);
+  if (length !== undefined) {
+    const selection = buildSendTarget(curriculum, rng, length, performance);
+    return {
+      target: selection.target,
+      reason: selection.reason,
+    };
+  }
+
+  const selection = buildSendWordTarget(curriculum, rng, {
+    minimumLength: DEFAULT_LESSON_CONFIG.initialWordMinLength,
+    maximumLength: DEFAULT_LESSON_CONFIG.initialWordMaxLength,
+    performance,
+  });
+  return {
+    target: selection.target,
+    reason: selection.reason,
+  };
 }
 
 function txAccuracy(
@@ -60,20 +116,21 @@ export function SendPractice() {
   const buttonRef = useRef<HTMLButtonElement>(null);
   const keyRef = useRef<StraightKey | undefined>(undefined);
   const targetRef = useRef<string | undefined>(undefined);
-  const targetLengthRef = useRef<ExerciseLength | undefined>(undefined);
+  const targetModeRef = useRef<SendExerciseMode | undefined>(undefined);
   const schedulerReasonRef = useRef<SchedulerReason | undefined>(undefined);
   const promptToken = useRef(1);
   const committedToken = useRef<number | undefined>(undefined);
   const targetRequestIdRef = useRef(0);
 
   const [decoded, setDecoded] = useState("");
-  const [exerciseLength, setExerciseLength] = useState<ExerciseLength>(1);
+  const [exerciseMode, setExerciseMode] =
+    useState<SendExerciseMode>("character");
   const [target, setTarget] = useState<string | undefined>(undefined);
   const [targetError, setTargetError] = useState<string | undefined>(undefined);
   targetRef.current = target;
 
   const chooseTarget = useCallback(
-    async (length: ExerciseLength): Promise<void> => {
+    async (mode: SendExerciseMode): Promise<void> => {
       const requestId = targetRequestIdRef.current + 1;
       targetRequestIdRef.current = requestId;
       const curriculum = loadCurriculum();
@@ -83,7 +140,7 @@ export function SendPractice() {
         setTargetError(
           "No unlocked characters are available for Send Practice.",
         );
-        targetLengthRef.current = undefined;
+        targetModeRef.current = undefined;
         schedulerReasonRef.current = undefined;
         return;
       }
@@ -93,13 +150,17 @@ export function SendPractice() {
         limit: curriculum.characters.length,
       });
       if (requestId !== targetRequestIdRef.current) return;
-      const selection = buildSendTarget(
-        curriculum,
-        rng.current,
-        length,
-        txAccuracy(txRows),
-      );
-      targetLengthRef.current = length;
+      const selection = selectTarget(mode, txRows, rng.current, curriculum);
+      if (!selection.target) {
+        targetModeRef.current = undefined;
+        schedulerReasonRef.current = undefined;
+        setTarget(undefined);
+        setTargetError(
+          "No eligible words are available for the unlocked character set.",
+        );
+        return;
+      }
+      targetModeRef.current = mode;
       schedulerReasonRef.current = selection.reason;
       setTarget(selection.target);
       setTargetError(undefined);
@@ -108,12 +169,13 @@ export function SendPractice() {
   );
 
   useEffect(() => {
-    void chooseTarget(exerciseLength).catch(() => {
+    void chooseTarget(exerciseMode).catch(() => {
       setTarget(undefined);
       setTargetError("Unable to load a target right now.");
       schedulerReasonRef.current = undefined;
+      targetModeRef.current = undefined;
     });
-  }, [chooseTarget, exerciseLength]);
+  }, [chooseTarget, exerciseMode]);
 
   if (!keyRef.current) {
     keyRef.current = new StraightKey({
@@ -121,7 +183,7 @@ export function SendPractice() {
       onMarkStart: () => {
         if (
           targetRef.current === undefined ||
-          targetLengthRef.current === undefined
+          targetModeRef.current === undefined
         ) {
           keyRef.current?.reset();
           return;
@@ -133,7 +195,7 @@ export function SendPractice() {
       onMarkEnd: () => {
         if (
           targetRef.current === undefined ||
-          targetLengthRef.current === undefined
+          targetModeRef.current === undefined
         ) {
           engine.stopTone();
           return;
@@ -144,7 +206,7 @@ export function SendPractice() {
       onDecodeChange: (result) => {
         if (
           targetRef.current === undefined ||
-          targetLengthRef.current === undefined
+          targetModeRef.current === undefined
         ) {
           return;
         }
@@ -157,14 +219,14 @@ export function SendPractice() {
         ) {
           return;
         }
-        const targetLength = targetLengthRef.current;
-        if (targetLength === undefined) {
+        const targetMode = targetModeRef.current;
+        if (targetMode === undefined) {
           return;
         }
         committedToken.current = token;
         void practice
           .recordAttempt({
-            exerciseType: exerciseTypeForLength(targetLength),
+            exerciseType: exerciseTypeForMode(targetMode),
             target: targetRef.current,
             response: result.text,
             assisted: false,
@@ -214,7 +276,7 @@ export function SendPractice() {
 
   async function nextTarget(): Promise<void> {
     if (!target) {
-      await chooseTarget(exerciseLength);
+      await chooseTarget(exerciseMode);
       return;
     }
     practice.recordActivity();
@@ -225,14 +287,14 @@ export function SendPractice() {
       result.text.trim() !== "" &&
       committedToken.current !== token
     ) {
-      const targetLength = targetLengthRef.current;
-      if (targetLength === undefined) {
+      const targetMode = targetModeRef.current;
+      if (targetMode === undefined) {
         return;
       }
       committedToken.current = token;
       try {
         await practice.recordAttempt({
-          exerciseType: exerciseTypeForLength(targetLength),
+          exerciseType: exerciseTypeForMode(targetMode),
           target,
           response: result.text,
           assisted: false,
@@ -252,15 +314,15 @@ export function SendPractice() {
     }
     clear();
     beginNewPrompt();
-    await chooseTarget(exerciseLength);
+    await chooseTarget(exerciseMode);
   }
 
-  async function changeLength(length: ExerciseLength): Promise<void> {
+  async function changeMode(mode: SendExerciseMode): Promise<void> {
     setTarget(undefined);
     setTargetError(undefined);
-    targetLengthRef.current = undefined;
+    targetModeRef.current = undefined;
     schedulerReasonRef.current = undefined;
-    setExerciseLength(length);
+    setExerciseMode(mode);
     clear();
     beginNewPrompt();
   }
@@ -275,17 +337,18 @@ export function SendPractice() {
       </div>
 
       <label className="field">
-        <span className="field__label">Length</span>
+        <span className="field__label">Exercise</span>
         <select
-          value={exerciseLength}
+          value={exerciseMode}
           onChange={(event) => {
-            const length = Number(event.target.value) as ExerciseLength;
-            void changeLength(length);
+            const mode = event.target.value as SendExerciseMode;
+            void changeMode(mode);
           }}
         >
-          <option value={1}>1 character</option>
-          <option value={2}>2 characters</option>
-          <option value={3}>3 characters</option>
+          <option value="character">1 character</option>
+          <option value="group-2">2 characters</option>
+          <option value="group-3">3 characters</option>
+          <option value="word">Word</option>
         </select>
       </label>
 
