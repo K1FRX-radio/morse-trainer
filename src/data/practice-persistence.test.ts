@@ -217,6 +217,7 @@ describe("DurablePracticeSession", () => {
           response: "A",
           assisted: false,
           replayed: false,
+          schedulerReason: "WEAK_TX",
           keying,
         },
         snapshot(10000, 1),
@@ -235,6 +236,7 @@ describe("DurablePracticeSession", () => {
         direction: "tx",
         exerciseType: "send-character",
         correct: true,
+        schedulerReason: "WEAK_TX",
         keying,
       });
     } finally {

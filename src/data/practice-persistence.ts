@@ -7,6 +7,7 @@ import {
   type TrainingAttemptRecord,
   type TrainingSessionRecord,
 } from "./models.ts";
+import type { SchedulerReason } from "../core/types.ts";
 import type { TrainingDataRepository } from "./repository.ts";
 import { isValidSessionForSource } from "./session-validity-policy.ts";
 import { captureDateTime } from "./time.ts";
@@ -48,6 +49,7 @@ export type PracticeAttemptEvidence = {
   response: string;
   assisted: boolean;
   replayed: boolean;
+  schedulerReason?: SchedulerReason;
   responseMs?: number;
   keying?: EncodedKeyingTiming;
 };
@@ -240,6 +242,9 @@ export class DurablePracticeSession implements PracticeSessionPersistence {
       ...(evidence.keying === undefined
         ? {}
         : { keying: structuredClone(evidence.keying) }),
+      ...(evidence.schedulerReason === undefined
+        ? {}
+        : { schedulerReason: evidence.schedulerReason }),
       ...this.settings,
     };
     const frozenSnapshot = structuredClone(snapshot);

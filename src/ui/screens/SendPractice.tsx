@@ -1,36 +1,88 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { selectExercise } from "../../core/scheduler.ts";
+import { createRng, type Rng } from "../../core/rng.ts";
+import type { SchedulerReason } from "../../core/types.ts";
 import { thresholdsForWpm } from "../../core/keying.ts";
 import { StraightKey } from "../../input/key-input.ts";
 import { attachKeyboardKey } from "../../input/keyboard-key.ts";
 import { attachPointerKey } from "../../input/pointer-key.ts";
 import { encodeKeyingTiming } from "../../data/keying-timing.ts";
+import type { CharacterProjectionRecord } from "../../data/models.ts";
 import { useSettings } from "../settings-context.ts";
 import { useAudioEngine } from "../hooks/useAudioEngine.ts";
 import { usePracticeSession } from "../hooks/usePracticeSession.ts";
+import { useTrainingData } from "../training-data-context.ts";
 
-const TARGETS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-
-function randomTarget(): string {
-  return TARGETS[Math.floor(Math.random() * TARGETS.length)];
+function txAccuracy(
+  rows: CharacterProjectionRecord[],
+): Partial<Record<string, number>> {
+  const byCharacter: Partial<Record<string, number>> = {};
+  for (const row of rows) {
+    if (row.direction !== "tx") {
+      continue;
+    }
+    if (row.recent.length === 0) {
+      continue;
+    }
+    const correct = row.recent.filter(
+      (observation) => observation.correct,
+    ).length;
+    byCharacter[row.character] = correct / row.recent.length;
+  }
+  return byCharacter;
 }
 
 export function SendPractice() {
   const { settings } = useSettings();
+  const { loadCurriculum, listCharacterProjections } = useTrainingData();
   const { engine, unlock } = useAudioEngine();
   const practice = usePracticeSession("send-practice", settings);
+  const rng = useRef<Rng>(createRng(Date.now() >>> 0));
 
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
   const buttonRef = useRef<HTMLButtonElement>(null);
   const keyRef = useRef<StraightKey | undefined>(undefined);
-  const targetRef = useRef("");
+  const targetRef = useRef<string | undefined>(undefined);
+  const schedulerReasonRef = useRef<SchedulerReason | undefined>(undefined);
   const promptToken = useRef(1);
   const committedToken = useRef<number | undefined>(undefined);
 
   const [decoded, setDecoded] = useState("");
-  const [target, setTarget] = useState<string>(randomTarget);
+  const [target, setTarget] = useState<string | undefined>(undefined);
+  const [targetError, setTargetError] = useState<string | undefined>(undefined);
   targetRef.current = target;
+
+  const chooseTarget = useCallback(async (): Promise<void> => {
+    const curriculum = loadCurriculum();
+    if (curriculum.characters.length === 0) {
+      setTarget(undefined);
+      setTargetError("No unlocked characters are available for Send Practice.");
+      schedulerReasonRef.current = undefined;
+      return;
+    }
+
+    const txRows = await listCharacterProjections({
+      direction: "tx",
+      limit: curriculum.characters.length,
+    });
+    const selection = selectExercise(curriculum, rng.current, {
+      direction: "tx",
+      performance: txAccuracy(txRows),
+    });
+    schedulerReasonRef.current = selection.reason;
+    setTarget(selection.character);
+    setTargetError(undefined);
+  }, [listCharacterProjections, loadCurriculum]);
+
+  useEffect(() => {
+    void chooseTarget().catch(() => {
+      setTarget(undefined);
+      setTargetError("Unable to load a target right now.");
+      schedulerReasonRef.current = undefined;
+    });
+  }, [chooseTarget]);
 
   if (!keyRef.current) {
     keyRef.current = new StraightKey({
@@ -48,6 +100,7 @@ export function SendPractice() {
         setDecoded(result.text);
         const token = promptToken.current;
         if (
+          targetRef.current === undefined ||
           result.text.trim().toUpperCase() !== targetRef.current ||
           committedToken.current === token
         ) {
@@ -61,6 +114,9 @@ export function SendPractice() {
             response: result.text,
             assisted: false,
             replayed: false,
+            ...(schedulerReasonRef.current === undefined
+              ? {}
+              : { schedulerReason: schedulerReasonRef.current }),
             keying: encodeKeyingTiming(
               result.marksMs,
               result.spacesMs,
@@ -98,6 +154,10 @@ export function SendPractice() {
   }
 
   async function nextTarget(): Promise<void> {
+    if (!target) {
+      await chooseTarget();
+      return;
+    }
     practice.recordActivity();
     const result = keyRef.current?.decode();
     const token = promptToken.current;
@@ -114,6 +174,9 @@ export function SendPractice() {
           response: result.text,
           assisted: false,
           replayed: false,
+          ...(schedulerReasonRef.current === undefined
+            ? {}
+            : { schedulerReason: schedulerReasonRef.current }),
           keying: encodeKeyingTiming(
             result.marksMs,
             result.spacesMs,
@@ -126,23 +189,31 @@ export function SendPractice() {
     }
     clear();
     promptToken.current += 1;
-    setTarget(randomTarget());
+    await chooseTarget();
   }
 
-  const matched = decoded.trim().toUpperCase() === target;
+  const matched =
+    target !== undefined && decoded.trim().toUpperCase() === target;
 
   return (
     <div className="practice">
       <div className="send__target" aria-label="Send this character">
         <span className="send__target-label">Send</span>
-        <span className="send__target-char">{target}</span>
+        <span className="send__target-char">{target ?? "-"}</span>
       </div>
+
+      {targetError && (
+        <p className="feedback feedback--bad" role="alert">
+          {targetError}
+        </p>
+      )}
 
       <button
         ref={buttonRef}
         type="button"
         className="send__key"
         aria-label="Straight key (hold to send)"
+        disabled={!target}
       >
         Key
       </button>

@@ -8,7 +8,10 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useState, type ReactNode } from "react";
 import { DEFAULT_CURRICULUM_CONFIG } from "../../content/curriculum-data.ts";
-import { createInitialState } from "../../core/curriculum.ts";
+import {
+  createInitialState,
+  type CurriculumState,
+} from "../../core/curriculum.ts";
 import { DEFAULT_SETTINGS } from "../../core/settings.ts";
 import type { PracticeSessionPersistence } from "../../data/practice-persistence.ts";
 import { NavigationGuardContext } from "../navigation-guard-context.ts";
@@ -59,9 +62,19 @@ function NavigationGuardHarness({ children }: { children: ReactNode }) {
   );
 }
 
-function renderPractice(child: ReactNode, session: PracticeSessionPersistence) {
+type RenderPracticeOptions = {
+  curriculum?: CurriculumState;
+};
+
+function renderPractice(
+  child: ReactNode,
+  session: PracticeSessionPersistence,
+  options: RenderPracticeOptions = {},
+) {
   const startPracticeSessionPersistence = vi.fn(() => Promise.resolve(session));
-  const curriculum = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+  const saveCurriculum = vi.fn();
+  const curriculum =
+    options.curriculum ?? createInitialState(DEFAULT_CURRICULUM_CONFIG);
   const view = render(
     <SettingsContext.Provider
       value={{
@@ -74,7 +87,7 @@ function renderPractice(child: ReactNode, session: PracticeSessionPersistence) {
       <TrainingDataContext.Provider
         value={{
           loadCurriculum: () => structuredClone(curriculum),
-          saveCurriculum: vi.fn(),
+          saveCurriculum,
           reconcileCurriculum: () => Promise.resolve(curriculum),
           loadIntroductions: () => [],
           saveIntroductions: vi.fn(),
@@ -95,7 +108,15 @@ function renderPractice(child: ReactNode, session: PracticeSessionPersistence) {
       </TrainingDataContext.Provider>
     </SettingsContext.Provider>,
   );
-  return { ...view, startPracticeSessionPersistence };
+  return { ...view, startPracticeSessionPersistence, saveCurriculum };
+}
+
+function sendCurriculum(order: string[]): CurriculumState {
+  return createInitialState({
+    ...DEFAULT_CURRICULUM_CONFIG,
+    order,
+    startCount: order.length,
+  });
 }
 
 beforeEach(() => {
@@ -157,13 +178,18 @@ describe("SendPractice persistence", () => {
   });
 
   it("starts on first contact and commits an exact decode once", async () => {
-    vi.spyOn(Math, "random").mockReturnValue(19 / 36);
     let now = 0;
     vi.spyOn(performance, "now").mockImplementation(() => (now += 200));
     const session = persistence();
-    const { startPracticeSessionPersistence } = renderPractice(
+    const { startPracticeSessionPersistence, saveCurriculum } = renderPractice(
       <SendPractice />,
       session,
+      { curriculum: sendCurriculum(["T"]) },
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText("Send this character")).toHaveTextContent(
+        "T",
+      ),
     );
     expect(screen.getByLabelText("Send this character")).toHaveTextContent("T");
 
@@ -179,18 +205,26 @@ describe("SendPractice persistence", () => {
         exerciseType: "send-character",
         target: "T",
         response: "T",
+        schedulerReason: "NEW_CHARACTER",
         keying: expect.objectContaining({ encoding: "u32-ms-le-v1" }),
       }),
       expect.objectContaining({ completedCards: 1 }),
     );
+    expect(saveCurriculum).not.toHaveBeenCalled();
   });
 
   it("commits a non-empty miss before advancing to a new target", async () => {
-    vi.spyOn(Math, "random").mockReturnValue(4 / 36);
     let now = 0;
     vi.spyOn(performance, "now").mockImplementation(() => (now += 200));
     const session = persistence();
-    renderPractice(<SendPractice />, session);
+    renderPractice(<SendPractice />, session, {
+      curriculum: sendCurriculum(["E"]),
+    });
+    await waitFor(() =>
+      expect(screen.getByLabelText("Send this character")).toHaveTextContent(
+        "E",
+      ),
+    );
     expect(screen.getByLabelText("Send this character")).toHaveTextContent("E");
 
     fireEvent.keyDown(window, { key: " " });
@@ -200,21 +234,75 @@ describe("SendPractice persistence", () => {
 
     await waitFor(() => expect(session.recordAttempt).toHaveBeenCalledOnce());
     expect(session.recordAttempt).toHaveBeenCalledWith(
-      expect.objectContaining({ target: "E", response: "T" }),
+      expect.objectContaining({
+        target: "E",
+        response: "T",
+        schedulerReason: "NEW_CHARACTER",
+      }),
       expect.objectContaining({ completedCards: 1 }),
     );
   });
 
+  it("uses only unlocked curriculum characters and avoids Math.random pool selection", async () => {
+    const randomSpy = vi.spyOn(Math, "random");
+    const session = persistence();
+    renderPractice(<SendPractice />, session, {
+      curriculum: sendCurriculum(["K", "M"]),
+    });
+
+    const seen = new Set<string>();
+    for (let i = 0; i < 10; i++) {
+      await waitFor(() => {
+        const shown =
+          screen
+            .getByLabelText("Send this character")
+            .textContent?.replace("Send", "")
+            .trim() ?? "";
+        expect(shown).not.toBe("");
+        seen.add(shown);
+        expect(["K", "M"]).toContain(shown);
+      });
+      if (i < 9) {
+        fireEvent.click(screen.getByRole("button", { name: "New target" }));
+      }
+    }
+
+    expect(seen.size).toBeGreaterThan(0);
+    expect(randomSpy).not.toHaveBeenCalled();
+  });
+
+  it("fails safely when no characters are unlocked", async () => {
+    const session = persistence();
+    renderPractice(<SendPractice />, session, {
+      curriculum: sendCurriculum([]),
+    });
+
+    await screen.findByRole("alert");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "No unlocked characters are available for Send Practice.",
+    );
+    expect(screen.getByLabelText("Send this character")).toHaveTextContent("-");
+    expect(
+      screen.getByRole("button", { name: "Straight key (hold to send)" }),
+    ).toBeDisabled();
+  });
+
   it("blocks tab navigation after a failed attempt until retry succeeds", async () => {
-    vi.spyOn(Math, "random").mockReturnValue(19 / 36);
     let now = 0;
     vi.spyOn(performance, "now").mockImplementation(() => (now += 200));
     const session = persistence();
     vi.mocked(session.recordAttempt).mockRejectedValueOnce(
       new Error("write failed"),
     );
-    renderPractice(<PracticeScreen />, session);
+    renderPractice(<PracticeScreen />, session, {
+      curriculum: sendCurriculum(["T"]),
+    });
     fireEvent.click(screen.getByRole("tab", { name: "Send" }));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Send this character")).toHaveTextContent(
+        "T",
+      ),
+    );
 
     fireEvent.keyDown(window, { key: " " });
     fireEvent.keyUp(window, { key: " " });

@@ -57,4 +57,66 @@ describe("scheduler", () => {
     expect(selection.character).toBe("K");
     expect(selection.reason).toBe("WEAK_RX");
   });
+
+  it("flags weak non-newest characters as WEAK_TX for TX scheduling", () => {
+    const state = createInitialState(config);
+    // Choose the first slot by forcing K accuracy weakest via performance map.
+    const selection = selectExercise(
+      state,
+      () => 0,
+      {
+        direction: "tx",
+        performance: {
+          K: 0,
+          M: 1,
+          U: 1,
+          R: 1,
+        },
+      },
+      {
+        base: 1,
+        newest: 3,
+        weakRx: 4,
+        weakTx: 4,
+      },
+    );
+    expect(selection.character).toBe("K");
+    expect(selection.reason).toBe("WEAK_TX");
+  });
+
+  it("keeps all unlocked characters reachable in TX scheduling", () => {
+    const state = createInitialState(config);
+    const allowed = new Set(unlockedCharacters(state));
+    const seen = new Set<string>();
+    const rng = createRng(9001);
+    for (let i = 0; i < 10000; i++) {
+      const selection = selectExercise(state, rng, {
+        direction: "tx",
+      });
+      expect(allowed.has(selection.character)).toBe(true);
+      seen.add(selection.character);
+    }
+    expect(seen).toEqual(allowed);
+  });
+
+  it("is deterministic for TX when given a fixed seed and performance map", () => {
+    const left = createInitialState(config);
+    const right = createInitialState(config);
+    const performance = { K: 0.8, M: 0.4, U: 0.2, R: 0.6 };
+    const rngA = createRng(77);
+    const rngB = createRng(77);
+    const a = Array.from({ length: 200 }, () =>
+      selectExercise(left, rngA, {
+        direction: "tx",
+        performance,
+      }),
+    );
+    const b = Array.from({ length: 200 }, () =>
+      selectExercise(right, rngB, {
+        direction: "tx",
+        performance,
+      }),
+    );
+    expect(a).toEqual(b);
+  });
 });
