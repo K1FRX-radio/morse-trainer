@@ -60,7 +60,7 @@ export function SendPractice() {
   const buttonRef = useRef<HTMLButtonElement>(null);
   const keyRef = useRef<StraightKey | undefined>(undefined);
   const targetRef = useRef<string | undefined>(undefined);
-  const targetLengthRef = useRef<ExerciseLength>(1);
+  const targetLengthRef = useRef<ExerciseLength | undefined>(undefined);
   const schedulerReasonRef = useRef<SchedulerReason | undefined>(undefined);
   const promptToken = useRef(1);
   const committedToken = useRef<number | undefined>(undefined);
@@ -83,6 +83,7 @@ export function SendPractice() {
         setTargetError(
           "No unlocked characters are available for Send Practice.",
         );
+        targetLengthRef.current = undefined;
         schedulerReasonRef.current = undefined;
         return;
       }
@@ -136,8 +137,11 @@ export function SendPractice() {
         ) {
           return;
         }
-        committedToken.current = token;
         const targetLength = targetLengthRef.current;
+        if (targetLength === undefined) {
+          return;
+        }
+        committedToken.current = token;
         void practice
           .recordAttempt({
             exerciseType: exerciseTypeForLength(targetLength),
@@ -201,8 +205,11 @@ export function SendPractice() {
       result.text.trim() !== "" &&
       committedToken.current !== token
     ) {
-      committedToken.current = token;
       const targetLength = targetLengthRef.current;
+      if (targetLength === undefined) {
+        return;
+      }
+      committedToken.current = token;
       try {
         await practice.recordAttempt({
           exerciseType: exerciseTypeForLength(targetLength),
@@ -229,6 +236,10 @@ export function SendPractice() {
   }
 
   async function changeLength(length: ExerciseLength): Promise<void> {
+    setTarget(undefined);
+    setTargetError(undefined);
+    targetLengthRef.current = undefined;
+    schedulerReasonRef.current = undefined;
     setExerciseLength(length);
     clear();
     beginNewPrompt();

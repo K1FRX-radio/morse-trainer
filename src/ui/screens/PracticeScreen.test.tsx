@@ -475,6 +475,53 @@ describe("SendPractice persistence", () => {
     await waitFor(() => expect(sendTargetText()).toBe(settled));
   });
 
+  it("invalidates stale target during pending length-change query and re-enables when settled", async () => {
+    const session = persistence();
+
+    const firstRows = (() => {
+      let resolve!: (value: CharacterProjectionRecord[]) => void;
+      const promise = new Promise<CharacterProjectionRecord[]>((done) => {
+        resolve = done;
+      });
+      return { promise, resolve };
+    })();
+
+    const secondRows = (() => {
+      let resolve!: (value: CharacterProjectionRecord[]) => void;
+      const promise = new Promise<CharacterProjectionRecord[]>((done) => {
+        resolve = done;
+      });
+      return { promise, resolve };
+    })();
+
+    const listCharacterProjections = vi
+      .fn<() => Promise<CharacterProjectionRecord[]>>()
+      .mockImplementationOnce(() => firstRows.promise)
+      .mockImplementationOnce(() => secondRows.promise);
+
+    renderPractice(<SendPractice />, session, {
+      curriculum: sendCurriculum(["T", "M"]),
+      listCharacterProjections,
+    });
+
+    firstRows.resolve([]);
+    await waitFor(() => expect(sendTargetText()).toMatch(/^[TM]$/));
+
+    selectSendLength(3);
+
+    // While replacement is pending, the previous target must be non-actionable.
+    expect(sendTargetText()).toBe("-");
+    expect(
+      screen.getByRole("button", { name: "Straight key (hold to send)" }),
+    ).toBeDisabled();
+
+    secondRows.resolve([]);
+    await waitFor(() => expect(sendTargetText()).toMatch(/^[TM]{3}$/));
+    expect(
+      screen.getByRole("button", { name: "Straight key (hold to send)" }),
+    ).toBeEnabled();
+  });
+
   it("persists scheduler reason for grouped targets", async () => {
     let now = 0;
     vi.spyOn(performance, "now").mockImplementation(() => (now += 200));
