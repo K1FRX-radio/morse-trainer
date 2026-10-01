@@ -93,6 +93,7 @@ export type AttemptExerciseType =
   | "copy-word"
   | "continuous-copy"
   | "send-character"
+  | "send-group"
   | "send-word";
 
 export type ContinuousCopyReadinessReason =

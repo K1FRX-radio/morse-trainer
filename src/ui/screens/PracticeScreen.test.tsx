@@ -13,6 +13,7 @@ import {
   type CurriculumState,
 } from "../../core/curriculum.ts";
 import { DEFAULT_SETTINGS } from "../../core/settings.ts";
+import type { CharacterProjectionRecord } from "../../data/models.ts";
 import type { PracticeSessionPersistence } from "../../data/practice-persistence.ts";
 import { NavigationGuardContext } from "../navigation-guard-context.ts";
 import { SettingsContext } from "../settings-context.ts";
@@ -64,6 +65,7 @@ function NavigationGuardHarness({ children }: { children: ReactNode }) {
 
 type RenderPracticeOptions = {
   curriculum?: CurriculumState;
+  characterProjections?: CharacterProjectionRecord[];
 };
 
 function renderPractice(
@@ -100,7 +102,8 @@ function renderPractice(
               shouldSuggestSpacing: false,
             }),
           listDailyProjections: () => Promise.resolve([]),
-          listCharacterProjections: () => Promise.resolve([]),
+          listCharacterProjections: () =>
+            Promise.resolve(options.characterProjections ?? []),
           listConfusionProjections: () => Promise.resolve([]),
         }}
       >
@@ -117,6 +120,19 @@ function sendCurriculum(order: string[]): CurriculumState {
     order,
     startCount: order.length,
   });
+}
+
+function selectSendLength(length: 1 | 2 | 3) {
+  fireEvent.change(screen.getByLabelText("Length"), {
+    target: { value: String(length) },
+  });
+}
+
+function sendTargetText(): string {
+  const target = screen
+    .getByLabelText("Send this character")
+    .querySelector(".send__target-char")?.textContent;
+  return target ?? "";
 }
 
 beforeEach(() => {
@@ -318,5 +334,153 @@ describe("SendPractice persistence", () => {
     expect(session.retry).toHaveBeenCalledOnce();
     fireEvent.click(copyTab);
     expect(screen.getByRole("button", { name: "Start" })).toBeInTheDocument();
+  });
+
+  it("commits an exact two-character decode once", async () => {
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => (now += 200));
+    const session = persistence();
+    renderPractice(<SendPractice />, session, {
+      curriculum: sendCurriculum(["T"]),
+    });
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Send this character")).toHaveTextContent(
+        "T",
+      ),
+    );
+    selectSendLength(2);
+    await waitFor(() =>
+      expect(screen.getByLabelText("Send this character")).toHaveTextContent(
+        "TT",
+      ),
+    );
+
+    fireEvent.keyDown(window, { key: " " });
+    fireEvent.keyUp(window, { key: " " });
+    fireEvent.keyDown(window, { key: " " });
+    fireEvent.keyUp(window, { key: " " });
+
+    await waitFor(() => expect(session.recordAttempt).toHaveBeenCalledOnce());
+    expect(session.recordAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        exerciseType: "send-group",
+        target: "TT",
+        response: "T T",
+        schedulerReason: "NEW_CHARACTER",
+        keying: expect.objectContaining({ encoding: "u32-ms-le-v1" }),
+      }),
+      expect.objectContaining({ completedCards: 1 }),
+    );
+  });
+
+  it("commits a non-empty group miss once on New target", async () => {
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => (now += 200));
+    const session = persistence();
+    renderPractice(<SendPractice />, session, {
+      curriculum: sendCurriculum(["T"]),
+    });
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Send this character")).toHaveTextContent(
+        "T",
+      ),
+    );
+    selectSendLength(3);
+    await waitFor(() =>
+      expect(screen.getByLabelText("Send this character")).toHaveTextContent(
+        "TTT",
+      ),
+    );
+
+    fireEvent.keyDown(window, { key: " " });
+    fireEvent.keyUp(window, { key: " " });
+    fireEvent.click(screen.getByRole("button", { name: "New target" }));
+
+    await waitFor(() => expect(session.recordAttempt).toHaveBeenCalledOnce());
+    expect(session.recordAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        exerciseType: "send-group",
+        target: "TTT",
+        response: "T",
+        schedulerReason: "NEW_CHARACTER",
+        keying: expect.objectContaining({ encoding: "u32-ms-le-v1" }),
+      }),
+      expect.objectContaining({ completedCards: 1 }),
+    );
+  });
+
+  it("changing exercise length does not save an empty attempt", async () => {
+    const session = persistence();
+    renderPractice(<SendPractice />, session, {
+      curriculum: sendCurriculum(["T", "M"]),
+    });
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Send this character")).toHaveTextContent(
+        /[TM]/,
+      ),
+    );
+    selectSendLength(2);
+    await waitFor(() => expect(sendTargetText()).toMatch(/^[TM]{2}$/));
+    selectSendLength(3);
+    await waitFor(() => expect(sendTargetText()).toMatch(/^[TM]{3}$/));
+    selectSendLength(1);
+    await waitFor(() => expect(sendTargetText()).toMatch(/^[TM]$/));
+
+    expect(session.recordAttempt).not.toHaveBeenCalled();
+  });
+
+  it("persists scheduler reason for grouped targets", async () => {
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => (now += 200));
+    const session = persistence();
+    renderPractice(<SendPractice />, session, {
+      curriculum: sendCurriculum(["K", "M"]),
+      characterProjections: [
+        {
+          id: "character:tx:K",
+          schemaVersion: 1,
+          updatedAt: "2026-10-01T00:00:00.000Z",
+          projectionVersion: 1,
+          character: "K",
+          direction: "tx",
+          recent: [
+            {
+              attemptId: "a",
+              occurredAt: {
+                utc: "2026-10-01T00:00:00.000Z",
+                localDate: "2026-10-01",
+                utcOffsetMinutes: 0,
+              },
+              correct: false,
+              kind: "substitution",
+              answer: "M",
+            },
+          ],
+        },
+      ],
+    });
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Send this character")).toHaveTextContent(
+        /[KM]/,
+      ),
+    );
+    selectSendLength(2);
+    await waitFor(() =>
+      expect(screen.getByLabelText("Send this character")).toHaveTextContent(
+        /[KM]{2}/,
+      ),
+    );
+
+    fireEvent.keyDown(window, { key: " " });
+    fireEvent.keyUp(window, { key: " " });
+    fireEvent.click(screen.getByRole("button", { name: "New target" }));
+
+    await waitFor(() => expect(session.recordAttempt).toHaveBeenCalledOnce());
+    const firstCall = vi.mocked(session.recordAttempt).mock.calls[0]?.[0];
+    expect(firstCall?.schedulerReason).toBeDefined();
   });
 });

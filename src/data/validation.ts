@@ -272,6 +272,7 @@ export const trainingAttemptRecordSchema = persistedRecordSchema
       "copy-word",
       "continuous-copy",
       "send-character",
+      "send-group",
       "send-word",
     ]),
     rawTarget: z.string(),

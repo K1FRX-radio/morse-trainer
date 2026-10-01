@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { selectExercise } from "../../core/scheduler.ts";
+import {
+  buildSendTarget,
+  type SendTargetLength,
+} from "../../core/scheduler.ts";
 import { createRng, type Rng } from "../../core/rng.ts";
 import type { SchedulerReason } from "../../core/types.ts";
 import { thresholdsForWpm } from "../../core/keying.ts";
@@ -12,6 +15,18 @@ import { useSettings } from "../settings-context.ts";
 import { useAudioEngine } from "../hooks/useAudioEngine.ts";
 import { usePracticeSession } from "../hooks/usePracticeSession.ts";
 import { useTrainingData } from "../training-data-context.ts";
+
+type ExerciseLength = SendTargetLength;
+
+function normalizeDecoded(value: string): string {
+  return value.toUpperCase().replace(/\s+/g, "");
+}
+
+function exerciseTypeForLength(
+  length: ExerciseLength,
+): "send-character" | "send-group" {
+  return length === 1 ? "send-character" : "send-group";
+}
 
 function txAccuracy(
   rows: CharacterProjectionRecord[],
@@ -45,44 +60,59 @@ export function SendPractice() {
   const buttonRef = useRef<HTMLButtonElement>(null);
   const keyRef = useRef<StraightKey | undefined>(undefined);
   const targetRef = useRef<string | undefined>(undefined);
+  const targetLengthRef = useRef<ExerciseLength>(1);
   const schedulerReasonRef = useRef<SchedulerReason | undefined>(undefined);
   const promptToken = useRef(1);
   const committedToken = useRef<number | undefined>(undefined);
+  const targetRequestIdRef = useRef(0);
 
   const [decoded, setDecoded] = useState("");
+  const [exerciseLength, setExerciseLength] = useState<ExerciseLength>(1);
   const [target, setTarget] = useState<string | undefined>(undefined);
   const [targetError, setTargetError] = useState<string | undefined>(undefined);
   targetRef.current = target;
 
-  const chooseTarget = useCallback(async (): Promise<void> => {
-    const curriculum = loadCurriculum();
-    if (curriculum.characters.length === 0) {
-      setTarget(undefined);
-      setTargetError("No unlocked characters are available for Send Practice.");
-      schedulerReasonRef.current = undefined;
-      return;
-    }
+  const chooseTarget = useCallback(
+    async (length: ExerciseLength): Promise<void> => {
+      const requestId = targetRequestIdRef.current + 1;
+      targetRequestIdRef.current = requestId;
+      const curriculum = loadCurriculum();
+      if (curriculum.characters.length === 0) {
+        if (requestId !== targetRequestIdRef.current) return;
+        setTarget(undefined);
+        setTargetError(
+          "No unlocked characters are available for Send Practice.",
+        );
+        schedulerReasonRef.current = undefined;
+        return;
+      }
 
-    const txRows = await listCharacterProjections({
-      direction: "tx",
-      limit: curriculum.characters.length,
-    });
-    const selection = selectExercise(curriculum, rng.current, {
-      direction: "tx",
-      performance: txAccuracy(txRows),
-    });
-    schedulerReasonRef.current = selection.reason;
-    setTarget(selection.character);
-    setTargetError(undefined);
-  }, [listCharacterProjections, loadCurriculum]);
+      const txRows = await listCharacterProjections({
+        direction: "tx",
+        limit: curriculum.characters.length,
+      });
+      if (requestId !== targetRequestIdRef.current) return;
+      const selection = buildSendTarget(
+        curriculum,
+        rng.current,
+        length,
+        txAccuracy(txRows),
+      );
+      targetLengthRef.current = length;
+      schedulerReasonRef.current = selection.reason;
+      setTarget(selection.target);
+      setTargetError(undefined);
+    },
+    [listCharacterProjections, loadCurriculum],
+  );
 
   useEffect(() => {
-    void chooseTarget().catch(() => {
+    void chooseTarget(exerciseLength).catch(() => {
       setTarget(undefined);
       setTargetError("Unable to load a target right now.");
       schedulerReasonRef.current = undefined;
     });
-  }, [chooseTarget]);
+  }, [chooseTarget, exerciseLength]);
 
   if (!keyRef.current) {
     keyRef.current = new StraightKey({
@@ -101,15 +131,16 @@ export function SendPractice() {
         const token = promptToken.current;
         if (
           targetRef.current === undefined ||
-          result.text.trim().toUpperCase() !== targetRef.current ||
+          normalizeDecoded(result.text) !== targetRef.current ||
           committedToken.current === token
         ) {
           return;
         }
         committedToken.current = token;
+        const targetLength = targetLengthRef.current;
         void practice
           .recordAttempt({
-            exerciseType: "send-character",
+            exerciseType: exerciseTypeForLength(targetLength),
             target: targetRef.current,
             response: result.text,
             assisted: false,
@@ -153,9 +184,13 @@ export function SendPractice() {
     setDecoded("");
   }
 
+  function beginNewPrompt(): void {
+    promptToken.current += 1;
+  }
+
   async function nextTarget(): Promise<void> {
     if (!target) {
-      await chooseTarget();
+      await chooseTarget(exerciseLength);
       return;
     }
     practice.recordActivity();
@@ -167,9 +202,10 @@ export function SendPractice() {
       committedToken.current !== token
     ) {
       committedToken.current = token;
+      const targetLength = targetLengthRef.current;
       try {
         await practice.recordAttempt({
-          exerciseType: "send-character",
+          exerciseType: exerciseTypeForLength(targetLength),
           target,
           response: result.text,
           assisted: false,
@@ -188,12 +224,18 @@ export function SendPractice() {
       }
     }
     clear();
-    promptToken.current += 1;
-    await chooseTarget();
+    beginNewPrompt();
+    await chooseTarget(exerciseLength);
   }
 
-  const matched =
-    target !== undefined && decoded.trim().toUpperCase() === target;
+  async function changeLength(length: ExerciseLength): Promise<void> {
+    setExerciseLength(length);
+    clear();
+    beginNewPrompt();
+    await chooseTarget(length);
+  }
+
+  const matched = target !== undefined && normalizeDecoded(decoded) === target;
 
   return (
     <div className="practice">
@@ -201,6 +243,21 @@ export function SendPractice() {
         <span className="send__target-label">Send</span>
         <span className="send__target-char">{target ?? "-"}</span>
       </div>
+
+      <label className="field">
+        <span className="field__label">Length</span>
+        <select
+          value={exerciseLength}
+          onChange={(event) => {
+            const length = Number(event.target.value) as ExerciseLength;
+            void changeLength(length);
+          }}
+        >
+          <option value={1}>1 character</option>
+          <option value={2}>2 characters</option>
+          <option value={3}>3 characters</option>
+        </select>
+      </label>
 
       {targetError && (
         <p className="feedback feedback--bad" role="alert">
