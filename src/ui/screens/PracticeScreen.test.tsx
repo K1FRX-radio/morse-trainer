@@ -138,6 +138,10 @@ function sendTargetText(): string {
   return target ?? "";
 }
 
+function decodedText(): string {
+  return document.querySelector(".send__decoded-text")?.textContent ?? "";
+}
+
 beforeEach(() => {
   vi.spyOn(performance, "now").mockImplementation(() => 1000);
 });
@@ -520,6 +524,60 @@ describe("SendPractice persistence", () => {
     expect(
       screen.getByRole("button", { name: "Straight key (hold to send)" }),
     ).toBeEnabled();
+  });
+
+  it("ignores space-key input during pending length-change transition", async () => {
+    const session = persistence();
+
+    const firstRows = (() => {
+      let resolve!: (value: CharacterProjectionRecord[]) => void;
+      const promise = new Promise<CharacterProjectionRecord[]>((done) => {
+        resolve = done;
+      });
+      return { promise, resolve };
+    })();
+
+    const secondRows = (() => {
+      let resolve!: (value: CharacterProjectionRecord[]) => void;
+      const promise = new Promise<CharacterProjectionRecord[]>((done) => {
+        resolve = done;
+      });
+      return { promise, resolve };
+    })();
+
+    const listCharacterProjections = vi
+      .fn<() => Promise<CharacterProjectionRecord[]>>()
+      .mockImplementationOnce(() => firstRows.promise)
+      .mockImplementationOnce(() => secondRows.promise);
+
+    const { startPracticeSessionPersistence } = renderPractice(
+      <SendPractice />,
+      session,
+      {
+        curriculum: sendCurriculum(["T", "M"]),
+        listCharacterProjections,
+      },
+    );
+
+    firstRows.resolve([]);
+    await waitFor(() => expect(sendTargetText()).toMatch(/^[TM]$/));
+
+    selectSendLength(3);
+    expect(sendTargetText()).toBe("-");
+    expect(
+      screen.getByRole("button", { name: "Straight key (hold to send)" }),
+    ).toBeDisabled();
+
+    fireEvent.keyDown(window, { key: " " });
+    fireEvent.keyUp(window, { key: " " });
+
+    expect(startPracticeSessionPersistence).not.toHaveBeenCalled();
+    expect(session.recordAttempt).not.toHaveBeenCalled();
+    expect(decodedText().trim()).toBe("");
+
+    secondRows.resolve([]);
+    await waitFor(() => expect(sendTargetText()).toMatch(/^[TM]{3}$/));
+    expect(decodedText().trim()).toBe("");
   });
 
   it("persists scheduler reason for grouped targets", async () => {

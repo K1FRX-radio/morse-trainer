@@ -119,15 +119,35 @@ export function SendPractice() {
     keyRef.current = new StraightKey({
       thresholds: thresholdsForWpm(settings.charWpm),
       onMarkStart: () => {
+        if (
+          targetRef.current === undefined ||
+          targetLengthRef.current === undefined
+        ) {
+          keyRef.current?.reset();
+          return;
+        }
         void practice.start().catch(() => undefined);
         void unlock();
         engine.startTone(settingsRef.current.toneHz);
       },
       onMarkEnd: () => {
+        if (
+          targetRef.current === undefined ||
+          targetLengthRef.current === undefined
+        ) {
+          engine.stopTone();
+          return;
+        }
         practice.recordActivity();
         engine.stopTone();
       },
       onDecodeChange: (result) => {
+        if (
+          targetRef.current === undefined ||
+          targetLengthRef.current === undefined
+        ) {
+          return;
+        }
         setDecoded(result.text);
         const token = promptToken.current;
         if (
