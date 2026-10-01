@@ -66,6 +66,7 @@ function NavigationGuardHarness({ children }: { children: ReactNode }) {
 type RenderPracticeOptions = {
   curriculum?: CurriculumState;
   characterProjections?: CharacterProjectionRecord[];
+  listCharacterProjections?: ReturnType<typeof vi.fn>;
 };
 
 function renderPractice(
@@ -75,6 +76,9 @@ function renderPractice(
 ) {
   const startPracticeSessionPersistence = vi.fn(() => Promise.resolve(session));
   const saveCurriculum = vi.fn();
+  const listCharacterProjections =
+    options.listCharacterProjections ??
+    vi.fn(() => Promise.resolve(options.characterProjections ?? []));
   const curriculum =
     options.curriculum ?? createInitialState(DEFAULT_CURRICULUM_CONFIG);
   const view = render(
@@ -102,8 +106,7 @@ function renderPractice(
               shouldSuggestSpacing: false,
             }),
           listDailyProjections: () => Promise.resolve([]),
-          listCharacterProjections: () =>
-            Promise.resolve(options.characterProjections ?? []),
+          listCharacterProjections,
           listConfusionProjections: () => Promise.resolve([]),
         }}
       >
@@ -430,6 +433,46 @@ describe("SendPractice persistence", () => {
     await waitFor(() => expect(sendTargetText()).toMatch(/^[TM]$/));
 
     expect(session.recordAttempt).not.toHaveBeenCalled();
+  });
+
+  it("changing length performs one target-selection query and does not re-replace target", async () => {
+    const session = persistence();
+    const deferredRows = vi.fn(() => {
+      let resolve!: (value: CharacterProjectionRecord[]) => void;
+      const promise = new Promise<CharacterProjectionRecord[]>((done) => {
+        resolve = done;
+      });
+      return { promise, resolve };
+    })();
+    const listCharacterProjections = vi.fn(() => deferredRows.promise);
+
+    renderPractice(<SendPractice />, session, {
+      curriculum: sendCurriculum(["T", "M"]),
+      listCharacterProjections,
+    });
+
+    // Resolve initial target load.
+    deferredRows.resolve([]);
+    await waitFor(() => expect(sendTargetText()).toMatch(/^[TM]$/));
+
+    // Prepare next query promise and change length once.
+    const nextRows = (() => {
+      let resolve!: (value: CharacterProjectionRecord[]) => void;
+      const promise = new Promise<CharacterProjectionRecord[]>((done) => {
+        resolve = done;
+      });
+      return { promise, resolve };
+    })();
+    listCharacterProjections.mockImplementationOnce(() => nextRows.promise);
+
+    selectSendLength(2);
+    expect(listCharacterProjections).toHaveBeenCalledTimes(2);
+
+    nextRows.resolve([]);
+    await waitFor(() => expect(sendTargetText()).toMatch(/^[TM]{2}$/));
+    const settled = sendTargetText();
+
+    await waitFor(() => expect(sendTargetText()).toBe(settled));
   });
 
   it("persists scheduler reason for grouped targets", async () => {

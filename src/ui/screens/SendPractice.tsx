@@ -232,7 +232,6 @@ export function SendPractice() {
     setExerciseLength(length);
     clear();
     beginNewPrompt();
-    await chooseTarget(length);
   }
 
   const matched = target !== undefined && normalizeDecoded(decoded) === target;
