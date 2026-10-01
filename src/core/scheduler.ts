@@ -8,11 +8,22 @@ import type { Rng } from "./rng.ts";
 import { weightedIndex } from "./rng.ts";
 import type { ExerciseSelection, SchedulerReason } from "./types.ts";
 
+type SchedulerDirection = "rx" | "tx";
+
+export type SchedulerPerformance = Partial<Record<string, number>>;
+
+export type SchedulerOptions = {
+  direction?: SchedulerDirection;
+  performance?: SchedulerPerformance;
+};
+
 export type SchedulerWeights = {
   /** Bonus applied to the newest unlocked character. */
   newest: number;
   /** Scales the weight added for weak RX accuracy. */
   weakRx: number;
+  /** Scales the weight added for weak TX accuracy. */
+  weakTx: number;
   /** Baseline weight so every unlocked character stays reachable. */
   base: number;
 };
@@ -20,19 +31,54 @@ export type SchedulerWeights = {
 export const DEFAULT_SCHEDULER_WEIGHTS: SchedulerWeights = {
   newest: 3,
   weakRx: 4,
+  weakTx: 4,
   base: 1,
 };
+
+function clampAccuracy(accuracy: number): number {
+  if (!Number.isFinite(accuracy)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(1, accuracy));
+}
+
+function recentByDirection(
+  state: CurriculumState,
+  index: number,
+  direction: SchedulerDirection,
+): number {
+  const progress = state.characters[index];
+  return direction === "rx"
+    ? recentAccuracy(progress.rx)
+    : recentAccuracy(progress.tx);
+}
+
+function accuracyFor(
+  state: CurriculumState,
+  index: number,
+  direction: SchedulerDirection,
+  performance: SchedulerPerformance,
+): number {
+  const character = state.characters[index].character;
+  const fromPerformance = performance[character];
+  if (fromPerformance !== undefined) {
+    return clampAccuracy(fromPerformance);
+  }
+  return clampAccuracy(recentByDirection(state, index, direction));
+}
 
 function reasonFor(
   isNewest: boolean,
   accuracy: number,
+  direction: SchedulerDirection,
   weights: SchedulerWeights,
 ): SchedulerReason {
   if (isNewest) {
     return "NEW_CHARACTER";
   }
-  if (weights.weakRx * (1 - accuracy) >= weights.newest) {
-    return "WEAK_RX";
+  const weakWeight = direction === "tx" ? weights.weakTx : weights.weakRx;
+  if (weakWeight * (1 - accuracy) >= weights.newest) {
+    return direction === "tx" ? "WEAK_TX" : "WEAK_RX";
   }
   return "BALANCED_PRACTICE";
 }
@@ -44,17 +90,21 @@ function reasonFor(
 export function selectExercise(
   state: CurriculumState,
   rng: Rng,
+  options: SchedulerOptions = {},
   weights: SchedulerWeights = DEFAULT_SCHEDULER_WEIGHTS,
 ): ExerciseSelection {
+  const direction = options.direction ?? "rx";
+  const performance = options.performance ?? {};
   const characters = state.characters;
   if (characters.length === 0) {
     throw new Error("selectExercise requires at least one unlocked character");
   }
 
   const newestIndex = characters.length - 1;
-  const weightValues = characters.map((progress, index) => {
-    const accuracy = recentAccuracy(progress.rx);
-    let weight = weights.base + weights.weakRx * (1 - accuracy);
+  const weightValues = characters.map((_progress, index) => {
+    const accuracy = accuracyFor(state, index, direction, performance);
+    const weakWeight = direction === "tx" ? weights.weakTx : weights.weakRx;
+    let weight = weights.base + weakWeight * (1 - accuracy);
     if (index === newestIndex) {
       weight += weights.newest;
     }
@@ -67,7 +117,8 @@ export function selectExercise(
     character: progress.character,
     reason: reasonFor(
       chosen === newestIndex,
-      recentAccuracy(progress.rx),
+      accuracyFor(state, chosen, direction, performance),
+      direction,
       weights,
     ),
   };
