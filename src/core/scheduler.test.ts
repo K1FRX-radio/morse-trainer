@@ -6,7 +6,7 @@ import {
   unlockedCharacters,
 } from "./curriculum.ts";
 import { createRng } from "./rng.ts";
-import { selectExercise } from "./scheduler.ts";
+import { buildSendTarget, selectExercise } from "./scheduler.ts";
 
 const config = {
   ...DEFAULT_CURRICULUM_CONFIG,
@@ -118,5 +118,61 @@ describe("scheduler", () => {
       }),
     );
     expect(a).toEqual(b);
+  });
+
+  it("builds 2- and 3-character send targets using only unlocked characters", () => {
+    const state = createInitialState(config);
+    const allowed = new Set(unlockedCharacters(state));
+    const rng = createRng(61);
+
+    for (let i = 0; i < 200; i++) {
+      const pair = buildSendTarget(state, rng, 2);
+      const triple = buildSendTarget(state, rng, 3);
+      expect(pair.target.length).toBe(2);
+      expect(triple.target.length).toBe(3);
+      for (const character of pair.target) {
+        expect(allowed.has(character)).toBe(true);
+      }
+      for (const character of triple.target) {
+        expect(allowed.has(character)).toBe(true);
+      }
+    }
+  });
+
+  it("always includes the adaptive focus character inside generated groups", () => {
+    const state = createInitialState(config);
+    const group = buildSendTarget(state, () => 0, 3, {
+      K: 0,
+      M: 1,
+      U: 1,
+      R: 1,
+    });
+    expect(group.target.includes(group.focusCharacter)).toBe(true);
+    expect(group.focusCharacter).toBe("K");
+    expect(group.reason).toBe("WEAK_TX");
+  });
+
+  it("buildSendTarget is deterministic with injected RNG", () => {
+    const left = createInitialState(config);
+    const right = createInitialState(config);
+    const rngA = createRng(222);
+    const rngB = createRng(222);
+    const runA = Array.from({ length: 100 }, () =>
+      buildSendTarget(left, rngA, 3, {
+        K: 0.4,
+        M: 0.9,
+        U: 0.2,
+        R: 0.7,
+      }),
+    );
+    const runB = Array.from({ length: 100 }, () =>
+      buildSendTarget(right, rngB, 3, {
+        K: 0.4,
+        M: 0.9,
+        U: 0.2,
+        R: 0.7,
+      }),
+    );
+    expect(runA).toEqual(runB);
   });
 });

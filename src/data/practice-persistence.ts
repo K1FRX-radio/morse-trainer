@@ -43,6 +43,7 @@ export type PracticeAttemptEvidence = {
     | "copy-group"
     | "copy-word"
     | "send-character"
+    | "send-group"
     | "send-word"
   >;
   target: string;

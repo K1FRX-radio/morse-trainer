@@ -17,6 +17,14 @@ export type SchedulerOptions = {
   performance?: SchedulerPerformance;
 };
 
+export type SendTargetLength = 1 | 2 | 3;
+
+export type SendTargetSelection = {
+  target: string;
+  focusCharacter: string;
+  reason: SchedulerReason;
+};
+
 export type SchedulerWeights = {
   /** Bonus applied to the newest unlocked character. */
   newest: number;
@@ -121,5 +129,44 @@ export function selectExercise(
       direction,
       weights,
     ),
+  };
+}
+
+/**
+ * Builds a deterministic Send Practice target around an adaptive TX focus
+ * character while mixing additional unlocked characters.
+ */
+export function buildSendTarget(
+  state: CurriculumState,
+  rng: Rng,
+  length: SendTargetLength,
+  performance: SchedulerPerformance = {},
+): SendTargetSelection {
+  if (!Number.isInteger(length) || length < 1) {
+    throw new Error("buildSendTarget requires a positive integer length");
+  }
+  const focus = selectExercise(state, rng, {
+    direction: "tx",
+    performance,
+  });
+  if (length === 1) {
+    return {
+      target: focus.character,
+      focusCharacter: focus.character,
+      reason: focus.reason,
+    };
+  }
+
+  const unlocked = state.characters.map((progress) => progress.character);
+  const chars = Array.from({ length }, () => {
+    const index = Math.floor(rng() * unlocked.length);
+    return unlocked[index];
+  });
+  const focusIndex = Math.floor(rng() * length);
+  chars[focusIndex] = focus.character;
+  return {
+    target: chars.join(""),
+    focusCharacter: focus.character,
+    reason: focus.reason,
   };
 }
