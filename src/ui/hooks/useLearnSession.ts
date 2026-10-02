@@ -81,6 +81,14 @@ type AdvancementWork = {
   acceptance: AdvancementAcceptance;
 };
 
+type StartIntent = {
+  mode: LearnSessionMode;
+  timing: {
+    charWpm: number;
+    effectiveWpm: number;
+  };
+};
+
 function toMorse(target: string): string {
   return encodeText(target)
     .map((entry) => entry.pattern)
@@ -180,6 +188,7 @@ export function useLearnSession() {
   const failedOperationRef = useRef<PersistenceOperationCategory | undefined>(
     undefined,
   );
+  const pendingStartIntentRef = useRef<StartIntent | undefined>(undefined);
   const retryCountsRef = useRef<Record<PersistenceOperationCategory, number>>({
     attempt: 0,
     finalization: 0,
@@ -569,6 +578,13 @@ export function useLearnSession() {
 
   const startSession = useCallback(
     async (mode: LearnSessionMode, sessionTiming = timing, isRetry = false) => {
+      pendingStartIntentRef.current = {
+        mode,
+        timing: {
+          charWpm: sessionTiming.charWpm,
+          effectiveWpm: sessionTiming.effectiveWpm,
+        },
+      };
       const startToken = nextFlowToken();
       const previousPersistence = persistenceRef.current;
       const previousSession = sessionRef.current;
@@ -1012,9 +1028,18 @@ export function useLearnSession() {
       void finalizePersistence(finalization, true);
       return;
     }
+    if (failedOperationRef.current === "session-start") {
+      const startIntent = pendingStartIntentRef.current;
+      setPersistenceRetrying(true);
+      if (startIntent) {
+        void startSession(startIntent.mode, startIntent.timing, true);
+      } else {
+        void startSession("learn", timing, true);
+      }
+      return;
+    }
     const persistence = persistenceRef.current;
     if (!persistence) {
-      setPersistenceRetrying(false);
       if (phase === "onboarding") void startSession("learn", timing, true);
       return;
     }
