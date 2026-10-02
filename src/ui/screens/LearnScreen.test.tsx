@@ -104,6 +104,19 @@ function testIntroductions(): string[] {
   ) as string[];
 }
 
+function seedUnlockedCharacters(count: number): string[] {
+  const state = createInitialState({
+    ...DEFAULT_CURRICULUM_CONFIG,
+    startCount: Math.max(1, count),
+  });
+  while (state.characters.length < count) {
+    forceUnlockNext(state);
+  }
+  state.characters = state.characters.slice(0, count);
+  localStorage.setItem("k1frx.curriculum.v2", JSON.stringify(state.characters));
+  return state.characters.map((character) => character.character);
+}
+
 function acceptedCurriculum(acceptance: AdvancementAcceptance) {
   const state = testCurriculum();
   const activeCharacters = state.characters.map(({ character }) => character);
@@ -395,6 +408,77 @@ afterEach(() => {
 });
 
 describe("LearnScreen input gating", () => {
+  it("hides Start long copy when fewer than two characters are unlocked", () => {
+    seedUnlockedCharacters(1);
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+
+    expect(
+      screen.queryByRole("button", { name: "Start long copy" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows Start long copy at two unlocked characters and starts continuous copy directly", async () => {
+    const unlocked = seedUnlockedCharacters(2);
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+
+    fireEvent.click(screen.getByRole("button", { name: "Start long copy" }));
+    await flush();
+
+    expect(screen.getByLabelText("Continuous copy")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Your copy")).not.toBeInTheDocument();
+
+    const stream = fake.pending[0]?.text ?? "";
+    expect(stream.length).toBeGreaterThan(0);
+    for (const character of stream.replaceAll(" ", "")) {
+      expect(unlocked).toContain(character);
+    }
+  });
+
+  it("can assess advancement from onboarding long-copy shortcut without auto-unlock", async () => {
+    seedUnlockedCharacters(2);
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+
+    fireEvent.click(screen.getByRole("button", { name: "Start long copy" }));
+    await flush();
+
+    const driver = learnDriver(fake);
+    await driver.completeContinuousCopy();
+
+    expect(
+      screen.getByRole("heading", {
+        name: "Looks like you’re ready for a new character!",
+      }),
+    ).toBeInTheDocument();
+    const saved = JSON.parse(
+      localStorage.getItem("k1frx.curriculum.v2") ?? "[]",
+    ) as Array<{ character: string }>;
+    expect(saved.map(({ character }) => character)).toEqual(["K", "M"]);
+    expect(screen.getByRole("button", { name: "Learn U" })).toBeInTheDocument();
+  });
+
+  it("preserves Restart full lesson after a missed onboarding long-copy run", async () => {
+    seedUnlockedCharacters(2);
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+
+    fireEvent.click(screen.getByRole("button", { name: "Start long copy" }));
+    await flush();
+
+    const driver = learnDriver(fake);
+    await driver.completeContinuousCopy((target) => "U".repeat(target.length));
+
+    const restart = screen.getByRole("button", { name: "Restart full lesson" });
+    expect(restart).toBeInTheDocument();
+    fireEvent.click(restart);
+    await flush();
+
+    expect(driver.phase()).toBe("introduce");
+    expect(screen.queryByLabelText("Continuous copy")).not.toBeInTheDocument();
+  });
+
   it("exposes phase identity without relying on display text", async () => {
     localStorage.setItem("k1frx.introduced.v1", JSON.stringify(["K", "M"]));
     const fake = makeFakeAudio();
