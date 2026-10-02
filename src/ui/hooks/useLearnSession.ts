@@ -527,12 +527,6 @@ export function useLearnSession() {
         setExercise(undefined);
         setTransition(undefined);
         setNotification(event);
-        void delay(event.delayMs).then(() => {
-          if (token !== flowToken.current) return;
-          if (sessionRef.current?.continueNotification()) {
-            advanceRef.current();
-          }
-        });
         return;
       }
       if (event.type === "continuous-copy") {
