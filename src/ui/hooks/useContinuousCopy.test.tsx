@@ -44,8 +44,17 @@ function setup() {
   const playback = deferred();
   const audio = {
     playSchedule: vi.fn(() => playback.promise),
+    cancel: vi.fn(() => Promise.resolve()),
   } as unknown as LearnAudio;
-  const onComplete = vi.fn(() => result);
+  const onComplete = vi
+    .fn<
+      (
+        typed: string,
+        durationCompleted: number,
+        abandoned: boolean,
+      ) => ContinuousCopyResult
+    >()
+    .mockReturnValue(result);
   const hook = renderHook(() =>
     useContinuousCopy({ audio, toneHz: 600, onComplete }),
   );
@@ -93,5 +102,77 @@ describe("useContinuousCopy", () => {
     await act(async () => hook.playback.resolve());
     await act(async () => vi.advanceTimersByTime(CONTINUOUS_COPY_GRACE_MS));
     expect(hook.onComplete).toHaveBeenCalledTimes(1);
+  });
+
+  it("pauses promptly, freezes countdown, and resumes with preserved text", async () => {
+    const firstPlayback = deferred();
+    const secondPlayback = deferred();
+    const audio = {
+      playSchedule: vi
+        .fn()
+        .mockImplementationOnce(() => firstPlayback.promise)
+        .mockImplementationOnce(() => secondPlayback.promise),
+      cancel: vi.fn(() => Promise.resolve()),
+    } as unknown as LearnAudio;
+    const onComplete = vi
+      .fn<
+        (
+          typed: string,
+          durationCompleted: number,
+          abandoned: boolean,
+        ) => ContinuousCopyResult
+      >()
+      .mockReturnValue(result);
+    const hook = renderHook(() =>
+      useContinuousCopy({ audio, toneHz: 600, onComplete }),
+    );
+
+    act(() => hook.result.current.start(playback));
+    act(() => vi.advanceTimersByTime(800));
+    act(() => hook.result.current.setText("KM"));
+
+    act(() => {
+      expect(hook.result.current.pause()).toBe(true);
+    });
+
+    expect(audio.cancel).toHaveBeenCalledOnce();
+    expect(hook.result.current.stage).toBe("paused");
+    expect(hook.result.current.text).toBe("KM");
+    const pausedRemaining = hook.result.current.remainingMs;
+    expect(pausedRemaining).toBeGreaterThan(0);
+
+    act(() => vi.advanceTimersByTime(5000));
+    expect(hook.result.current.remainingMs).toBe(pausedRemaining);
+    expect(hook.result.current.text).toBe("KM");
+
+    act(() => {
+      expect(hook.result.current.resume()).toBe(true);
+    });
+    expect(hook.result.current.stage).toBe("playing");
+    expect(audio.playSchedule).toHaveBeenCalledTimes(2);
+
+    await act(async () => secondPlayback.resolve());
+    await act(async () => vi.advanceTimersByTime(CONTINUOUS_COPY_GRACE_MS));
+
+    expect(onComplete).toHaveBeenCalledOnce();
+    expect(onComplete.mock.calls.at(0)?.[0]).toBe("KM");
+    expect(hook.result.current.stage).toBe("result");
+  });
+
+  it("excludes paused wall time when abandoning", () => {
+    const hook = setup();
+    act(() => hook.result.current.start(playback));
+    act(() => vi.advanceTimersByTime(600));
+    act(() => {
+      expect(hook.result.current.pause()).toBe(true);
+    });
+
+    act(() => vi.advanceTimersByTime(30000));
+    act(() => hook.result.current.abandon());
+
+    const durationMs = hook.onComplete.mock.calls.at(0)?.[1] ?? 0;
+    expect(durationMs).toBeGreaterThan(0);
+    expect(durationMs).toBeLessThan(2000);
+    expect(hook.result.current.stage).toBe("idle");
   });
 });
