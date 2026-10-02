@@ -800,6 +800,41 @@ describe("LearnScreen input gating", () => {
     expect(interrupt).toHaveBeenCalledOnce();
   });
 
+  it("interrupts durable persistence when unmounted during paused continuous copy", async () => {
+    seedUnlockedCharacters(2);
+    const fake = makeFakeAudio();
+    const interrupt = vi.fn<LearnSessionPersistence["interrupt"]>(() =>
+      Promise.resolve(),
+    );
+    const persistence: LearnSessionPersistence = {
+      recordAttempt: () => Promise.resolve(),
+      finish: () => Promise.resolve(),
+      interrupt,
+      acceptAdvancement: () => Promise.resolve(testCurriculum()),
+      retry: () => Promise.resolve(),
+    };
+    const view = renderLearn(
+      fake.audio,
+      {},
+      {
+        startLearnSessionPersistence: () => Promise.resolve(persistence),
+      },
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Start long copy" }));
+    await flush();
+    fireEvent.change(screen.getByLabelText("Continuous copy"), {
+      target: { value: "KM" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Pause" }));
+    await flush();
+
+    view.unmount();
+    await flush();
+
+    expect(interrupt).toHaveBeenCalledOnce();
+  });
+
   it("surfaces and retries an ordinary attempt persistence failure", async () => {
     const fake = makeFakeAudio();
     const quotaError = Object.assign(new Error("quota exceeded"), {
@@ -2365,8 +2400,6 @@ describe("LearnScreen advancement", () => {
       "Continuous copy",
     ) as HTMLTextAreaElement;
     fireEvent.change(input, { target: { value: "KM" } });
-    const remainingBeforePause =
-      screen.getByLabelText("Time remaining").textContent;
 
     fireEvent.click(screen.getByRole("button", { name: "Pause" }));
     await flush();
@@ -2383,7 +2416,6 @@ describe("LearnScreen advancement", () => {
     expect(screen.getByLabelText("Time remaining").textContent).toBe(
       pausedRemaining,
     );
-    expect(pausedRemaining).not.toBe(remainingBeforePause);
 
     fireEvent.click(screen.getByRole("button", { name: "Resume" }));
     await flush();

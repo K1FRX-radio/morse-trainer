@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { buildSchedule } from "../../core/timing.ts";
+import { buildSchedule, type Schedule } from "../../core/timing.ts";
 import type { ContinuousCopyResult } from "../../training/continuous-copy.ts";
 import type { LearnAudio } from "../learn-audio-context.ts";
 import {
@@ -20,9 +20,17 @@ const schedule = buildSchedule("KMKM", {
   charWpm: 20,
   effectiveWpm: 12,
 });
+const multiTokenSchedule = buildSchedule("KM UM", {
+  charWpm: 20,
+  effectiveWpm: 12,
+});
 const playback = {
   schedule,
   durationMs: schedule.totalMs,
+};
+const multiTokenPlayback = {
+  schedule: multiTokenSchedule,
+  durationMs: multiTokenSchedule.totalMs,
 };
 const result: ContinuousCopyResult = {
   randomGroupTokens: 1,
@@ -59,6 +67,18 @@ function setup() {
     useContinuousCopy({ audio, toneHz: 600, onComplete }),
   );
   return { ...hook, audio, playback, onComplete };
+}
+
+function tokenStarts(schedule: Schedule): number[] {
+  const starts = [0];
+  let elapsed = 0;
+  for (const segment of schedule.segments) {
+    elapsed += segment.ms;
+    if (!segment.tone && segment.gap === "word" && elapsed < schedule.totalMs) {
+      starts.push(elapsed);
+    }
+  }
+  return starts;
 }
 
 beforeEach(() => vi.useFakeTimers());
@@ -174,5 +194,136 @@ describe("useContinuousCopy", () => {
     expect(durationMs).toBeGreaterThan(0);
     expect(durationMs).toBeLessThan(2000);
     expect(hook.result.current.stage).toBe("idle");
+  });
+
+  it("resumes from the current token boundary for mid-token pauses", () => {
+    const firstPlayback = deferred();
+    const secondPlayback = deferred();
+    const audio = {
+      playSchedule: vi
+        .fn()
+        .mockImplementationOnce(() => firstPlayback.promise)
+        .mockImplementationOnce(() => secondPlayback.promise),
+      cancel: vi.fn(() => Promise.resolve()),
+    } as unknown as LearnAudio;
+    const onComplete = vi
+      .fn<
+        (
+          typed: string,
+          durationCompleted: number,
+          abandoned: boolean,
+        ) => ContinuousCopyResult
+      >()
+      .mockReturnValue(result);
+    const hook = renderHook(() =>
+      useContinuousCopy({ audio, toneHz: 600, onComplete }),
+    );
+
+    const starts = tokenStarts(multiTokenSchedule);
+    const secondTokenStart = starts[1] ?? 0;
+
+    act(() => hook.result.current.start(multiTokenPlayback));
+    act(() => vi.advanceTimersByTime(secondTokenStart + 100));
+    act(() => {
+      expect(hook.result.current.pause()).toBe(true);
+    });
+    act(() => {
+      expect(hook.result.current.resume()).toBe(true);
+    });
+
+    expect(audio.playSchedule).toHaveBeenCalledTimes(2);
+    const resumedSchedule = vi.mocked(audio.playSchedule).mock.calls[1]?.[0] as
+      Schedule | undefined;
+    expect(resumedSchedule).toBeDefined();
+    if (!resumedSchedule) {
+      return;
+    }
+    expect(resumedSchedule.totalMs).toBe(
+      multiTokenSchedule.totalMs - secondTokenStart,
+    );
+    expect(resumedSchedule.segments[0]?.tone).toBe(true);
+  });
+
+  it("resumes inside the final token from a valid token boundary", () => {
+    const firstPlayback = deferred();
+    const secondPlayback = deferred();
+    const audio = {
+      playSchedule: vi
+        .fn()
+        .mockImplementationOnce(() => firstPlayback.promise)
+        .mockImplementationOnce(() => secondPlayback.promise),
+      cancel: vi.fn(() => Promise.resolve()),
+    } as unknown as LearnAudio;
+    const onComplete = vi
+      .fn<
+        (
+          typed: string,
+          durationCompleted: number,
+          abandoned: boolean,
+        ) => ContinuousCopyResult
+      >()
+      .mockReturnValue(result);
+    const hook = renderHook(() =>
+      useContinuousCopy({ audio, toneHz: 600, onComplete }),
+    );
+
+    const starts = tokenStarts(multiTokenSchedule);
+    const finalTokenStart = starts[starts.length - 1] ?? 0;
+
+    act(() => hook.result.current.start(multiTokenPlayback));
+    act(() => vi.advanceTimersByTime(multiTokenSchedule.totalMs - 100));
+    act(() => {
+      expect(hook.result.current.pause()).toBe(true);
+    });
+    act(() => {
+      expect(hook.result.current.resume()).toBe(true);
+    });
+
+    const resumedSchedule = vi.mocked(audio.playSchedule).mock.calls[1]?.[0] as
+      Schedule | undefined;
+    expect(resumedSchedule).toBeDefined();
+    if (!resumedSchedule) {
+      return;
+    }
+    expect(resumedSchedule.totalMs).toBe(
+      multiTokenSchedule.totalMs - finalTokenStart,
+    );
+    expect(resumedSchedule.segments[0]?.tone).toBe(true);
+  });
+
+  it("does not jump durationCompleted to a future boundary on paused abandon", () => {
+    const firstPlayback = deferred();
+    const audio = {
+      playSchedule: vi.fn(() => firstPlayback.promise),
+      cancel: vi.fn(() => Promise.resolve()),
+    } as unknown as LearnAudio;
+    const onComplete = vi
+      .fn<
+        (
+          typed: string,
+          durationCompleted: number,
+          abandoned: boolean,
+        ) => ContinuousCopyResult
+      >()
+      .mockReturnValue(result);
+    const hook = renderHook(() =>
+      useContinuousCopy({ audio, toneHz: 600, onComplete }),
+    );
+
+    const starts = tokenStarts(multiTokenSchedule);
+    const secondTokenStart = starts[1] ?? 0;
+    const pauseElapsed = secondTokenStart + 120;
+
+    act(() => hook.result.current.start(multiTokenPlayback));
+    act(() => vi.advanceTimersByTime(pauseElapsed));
+    act(() => {
+      expect(hook.result.current.pause()).toBe(true);
+    });
+    act(() => vi.advanceTimersByTime(30000));
+    act(() => hook.result.current.abandon());
+
+    const durationMs = onComplete.mock.calls.at(0)?.[1] ?? 0;
+    expect(durationMs).toBeGreaterThanOrEqual(secondTokenStart);
+    expect(durationMs).toBeLessThan(secondTokenStart + 1000);
   });
 });

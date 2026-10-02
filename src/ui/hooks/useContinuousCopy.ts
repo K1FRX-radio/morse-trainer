@@ -28,22 +28,23 @@ export type ContinuousCopyPlayback = {
 
 type ResumePlan = {
   playback: ContinuousCopyPlayback;
-  coveredDurationMs: number;
+  originalOffsetMs: number;
 };
 
 function sumDuration(segments: Schedule["segments"]): number {
   return segments.reduce((total, segment) => total + segment.ms, 0);
 }
 
-// Resume from a deterministic safe boundary: the start of the next token.
-function nextTokenResumePlan(
+// Safe deterministic resume point: restart from the beginning of the current
+// token (bounded replay), so no unheard target material is ever skipped.
+function currentTokenResumePlan(
   playback: ContinuousCopyPlayback,
   elapsedMs: number,
 ): ResumePlan {
   const clampedElapsed = Math.min(Math.max(0, elapsedMs), playback.durationMs);
   const segments = playback.schedule.segments;
   if (segments.length === 0) {
-    return { playback, coveredDurationMs: clampedElapsed };
+    return { playback, originalOffsetMs: clampedElapsed };
   }
 
   let cumulative = 0;
@@ -55,25 +56,43 @@ function nextTokenResumePlan(
       break;
     }
   }
+
   if (elapsedIndex >= segments.length) {
     return {
       playback: { schedule: { segments: [], totalMs: 0 }, durationMs: 0 },
-      coveredDurationMs: playback.durationMs,
+      originalOffsetMs: playback.durationMs,
     };
   }
 
-  let startIndex = elapsedIndex;
-  for (let index = elapsedIndex; index < segments.length; index += 1) {
-    const segment = segments[index];
-    if (!segment.tone && segment.gap === "word") {
-      startIndex = index + 1;
-      break;
+  let startIndex: number;
+  const elapsedSegment = segments[elapsedIndex];
+  if (!elapsedSegment.tone && elapsedSegment.gap === "word") {
+    startIndex = elapsedIndex + 1;
+  } else {
+    startIndex = 0;
+    for (let index = elapsedIndex - 1; index >= 0; index -= 1) {
+      const segment = segments[index];
+      if (!segment.tone && segment.gap === "word") {
+        startIndex = index + 1;
+        break;
+      }
     }
+  }
+
+  let originalOffsetMs = 0;
+  for (let index = 0; index < startIndex; index += 1) {
+    originalOffsetMs += segments[index].ms;
+  }
+
+  if (startIndex >= segments.length) {
+    return {
+      playback: { schedule: { segments: [], totalMs: 0 }, durationMs: 0 },
+      originalOffsetMs,
+    };
   }
 
   const resumedSegments = segments.slice(startIndex);
   const resumedDurationMs = sumDuration(resumedSegments);
-  const coveredDurationMs = playback.durationMs - resumedDurationMs;
   return {
     playback: {
       schedule: {
@@ -82,8 +101,23 @@ function nextTokenResumePlan(
       },
       durationMs: resumedDurationMs,
     },
-    coveredDurationMs,
+    originalOffsetMs,
   };
+}
+
+function progressWithinOriginalTimeline(
+  runStartMs: number,
+  runOffsetMs: number,
+  floorMs: number,
+  playbackDurationMs: number,
+  totalMs: number,
+): number {
+  const elapsed = Math.min(
+    playbackDurationMs,
+    Math.max(0, performance.now() - runStartMs),
+  );
+  const candidate = runOffsetMs + elapsed;
+  return Math.min(totalMs, Math.max(floorMs, candidate));
 }
 
 export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
@@ -91,8 +125,11 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
   const playbackRef = useRef<ContinuousCopyPlayback | undefined>(undefined);
   const resumeRef = useRef<ResumePlan | undefined>(undefined);
   const textRef = useRef("");
-  const startedAtRef = useRef(0);
-  const elapsedMsRef = useRef(0);
+  const runStartedAtRef = useRef(0);
+  const runOffsetMsRef = useRef(0);
+  const runFloorMsRef = useRef(0);
+  const progressMsRef = useRef(0);
+  const totalMsRef = useRef(0);
   const completedRef = useRef(false);
   const intervalRef = useRef<number | undefined>(undefined);
   const graceRef = useRef<number | undefined>(undefined);
@@ -121,14 +158,21 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
     }
   }, []);
 
-  const elapsedInCurrentPlayback = useCallback((): number => {
+  const updateRemaining = useCallback(() => {
+    const total = totalMsRef.current;
     const playback = playbackRef.current;
-    if (!playback) return elapsedMsRef.current;
-    const elapsedSegment = Math.max(
-      0,
-      performance.now() - startedAtRef.current,
+    if (!playback) {
+      setRemainingMs(Math.max(0, total - progressMsRef.current));
+      return;
+    }
+    const progress = progressWithinOriginalTimeline(
+      runStartedAtRef.current,
+      runOffsetMsRef.current,
+      runFloorMsRef.current,
+      playback.durationMs,
+      total,
     );
-    return Math.min(playback.durationMs, elapsedMsRef.current + elapsedSegment);
+    setRemainingMs(Math.max(0, total - progress));
   }, []);
 
   const completeCurrent = useCallback(
@@ -141,22 +185,35 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
       if (!canComplete || completedRef.current) {
         return undefined;
       }
+
       completedRef.current = true;
       generationRef.current += 1;
       clearTimers();
+
       const durationCompleted = abandoned
-        ? elapsedInCurrentPlayback()
+        ? playback
+          ? progressWithinOriginalTimeline(
+              runStartedAtRef.current,
+              runOffsetMsRef.current,
+              runFloorMsRef.current,
+              playback.durationMs,
+              totalMsRef.current,
+            )
+          : progressMsRef.current
         : playback
-          ? elapsedMsRef.current + playback.durationMs
-          : elapsedMsRef.current;
+          ? totalMsRef.current
+          : progressMsRef.current;
+
       const completed = onCompleteRef.current(
         textRef.current,
         durationCompleted,
         abandoned,
       );
+
       playbackRef.current = undefined;
       resumeRef.current = undefined;
       setRemainingMs(0);
+
       if (abandoned) {
         setStage("idle");
         setTextState("");
@@ -168,7 +225,7 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
       }
       return completed;
     },
-    [clearTimers, elapsedInCurrentPlayback],
+    [clearTimers],
   );
   completeCurrentRef.current = completeCurrent;
 
@@ -177,14 +234,13 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
       clearTimers();
       const generation = ++generationRef.current;
       playbackRef.current = playback;
-      startedAtRef.current = performance.now();
+      runStartedAtRef.current = performance.now();
       setStage("playing");
-      setRemainingMs(playback.durationMs);
+      updateRemaining();
 
       intervalRef.current = window.setInterval(() => {
         if (generation !== generationRef.current) return;
-        const elapsed = Math.max(0, performance.now() - startedAtRef.current);
-        setRemainingMs(Math.max(0, playback.durationMs - elapsed));
+        updateRemaining();
       }, TIMER_INTERVAL_MS);
 
       void audio.playSchedule(playback.schedule, { toneHz }).then(() => {
@@ -193,7 +249,13 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
           window.clearInterval(intervalRef.current);
           intervalRef.current = undefined;
         }
-        elapsedMsRef.current += playback.durationMs;
+        progressMsRef.current = Math.min(
+          totalMsRef.current,
+          Math.max(
+            runFloorMsRef.current,
+            runOffsetMsRef.current + playback.durationMs,
+          ),
+        );
         playbackRef.current = undefined;
         resumeRef.current = undefined;
         setRemainingMs(0);
@@ -204,7 +266,7 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
         );
       });
     },
-    [audio, toneHz, clearTimers],
+    [audio, toneHz, clearTimers, updateRemaining],
   );
 
   const start = useCallback(
@@ -212,11 +274,15 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
       clearTimers();
       completedRef.current = false;
       textRef.current = "";
-      elapsedMsRef.current = 0;
+      progressMsRef.current = 0;
+      runOffsetMsRef.current = 0;
+      runFloorMsRef.current = 0;
       resumeRef.current = undefined;
       setTextState("");
       setResult(undefined);
+      totalMsRef.current = playback.durationMs;
       setTotalMs(playback.durationMs);
+      setRemainingMs(playback.durationMs);
       startPlayback(playback);
     },
     [clearTimers, startPlayback],
@@ -225,17 +291,27 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
   const pause = useCallback(() => {
     const playback = playbackRef.current;
     if (!playback || stage !== "playing") return false;
+
     const elapsed = Math.min(
       playback.durationMs,
-      Math.max(0, performance.now() - startedAtRef.current),
+      Math.max(0, performance.now() - runStartedAtRef.current),
     );
-    const resumePlan = nextTokenResumePlan(playback, elapsed);
-    elapsedMsRef.current += resumePlan.coveredDurationMs;
+    const progress = progressWithinOriginalTimeline(
+      runStartedAtRef.current,
+      runOffsetMsRef.current,
+      runFloorMsRef.current,
+      playback.durationMs,
+      totalMsRef.current,
+    );
+
+    const resumePlan = currentTokenResumePlan(playback, elapsed);
+    progressMsRef.current = progress;
     resumeRef.current = resumePlan;
+
     generationRef.current += 1;
     clearTimers();
     playbackRef.current = undefined;
-    setRemainingMs(resumePlan.playback.durationMs);
+    setRemainingMs(Math.max(0, totalMsRef.current - progressMsRef.current));
     setStage("paused");
     void audio.cancel();
     return true;
@@ -248,6 +324,9 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
       completeCurrent(false);
       return true;
     }
+
+    runOffsetMsRef.current = resumePlan.originalOffsetMs;
+    runFloorMsRef.current = progressMsRef.current;
     startPlayback(resumePlan.playback);
     return true;
   }, [completeCurrent, stage, startPlayback]);
@@ -267,7 +346,10 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
     playbackRef.current = undefined;
     resumeRef.current = undefined;
     completedRef.current = false;
-    elapsedMsRef.current = 0;
+    progressMsRef.current = 0;
+    runOffsetMsRef.current = 0;
+    runFloorMsRef.current = 0;
+    totalMsRef.current = 0;
     textRef.current = "";
     setTextState("");
     setRemainingMs(0);
