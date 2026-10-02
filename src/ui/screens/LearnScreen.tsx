@@ -63,6 +63,7 @@ export function LearnScreen() {
     isolatedCopy || supportsTypeBehind ? typingReady : inputReady;
   const introControlsReady = introStage === "ready" && !isPlaying;
   const persistenceReady = learn.persistenceStatus === "ready";
+  const canStartLongCopy = learn.progress.unlocked >= 2;
   const persistenceNotice =
     learn.persistenceStatus === "error" ? (
       <div className="feedback feedback--neutral" role="alert">
@@ -200,6 +201,11 @@ export function LearnScreen() {
         <button type="button" onClick={() => void begin()}>
           Start learning
         </button>
+        {canStartLongCopy && (
+          <button type="button" onClick={() => void practiceLongCopy()}>
+            Start long copy
+          </button>
+        )}
       </section>
     );
   }
