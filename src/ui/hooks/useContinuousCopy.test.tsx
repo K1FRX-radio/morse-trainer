@@ -326,4 +326,77 @@ describe("useContinuousCopy", () => {
     expect(durationMs).toBeGreaterThanOrEqual(secondTokenStart);
     expect(durationMs).toBeLessThan(secondTokenStart + 1000);
   });
+
+  it("keeps absolute progress mapping across repeated pause and resume", async () => {
+    const firstPlayback = deferred();
+    const secondPlayback = deferred();
+    const thirdPlayback = deferred();
+    const audio = {
+      playSchedule: vi
+        .fn()
+        .mockImplementationOnce(() => firstPlayback.promise)
+        .mockImplementationOnce(() => secondPlayback.promise)
+        .mockImplementationOnce(() => thirdPlayback.promise),
+      cancel: vi.fn(() => Promise.resolve()),
+    } as unknown as LearnAudio;
+    const onComplete = vi
+      .fn<
+        (
+          typed: string,
+          durationCompleted: number,
+          abandoned: boolean,
+        ) => ContinuousCopyResult
+      >()
+      .mockReturnValue(result);
+    const hook = renderHook(() =>
+      useContinuousCopy({ audio, toneHz: 600, onComplete }),
+    );
+
+    const starts = tokenStarts(multiTokenSchedule);
+    const secondTokenStart = starts[1] ?? 0;
+
+    act(() => hook.result.current.start(multiTokenPlayback));
+    act(() => vi.advanceTimersByTime(secondTokenStart + 120));
+    act(() => {
+      expect(hook.result.current.pause()).toBe(true);
+    });
+    act(() => {
+      expect(hook.result.current.resume()).toBe(true);
+    });
+
+    act(() => vi.advanceTimersByTime(200));
+    act(() => {
+      expect(hook.result.current.pause()).toBe(true);
+    });
+    const remainingBeforeSecondResume = hook.result.current.remainingMs;
+
+    act(() => {
+      expect(hook.result.current.resume()).toBe(true);
+    });
+
+    const secondResumeSchedule = vi.mocked(audio.playSchedule).mock
+      .calls[2]?.[0] as Schedule | undefined;
+    expect(secondResumeSchedule).toBeDefined();
+    if (!secondResumeSchedule) {
+      return;
+    }
+    expect(secondResumeSchedule.totalMs).toBe(
+      multiTokenSchedule.totalMs - secondTokenStart,
+    );
+
+    act(() => vi.advanceTimersByTime(500));
+    expect(hook.result.current.remainingMs).toBeLessThan(
+      remainingBeforeSecondResume,
+    );
+
+    await act(async () => thirdPlayback.resolve());
+    await act(async () => vi.advanceTimersByTime(CONTINUOUS_COPY_GRACE_MS));
+
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    expect(onComplete).toHaveBeenCalledWith(
+      "",
+      multiTokenSchedule.totalMs,
+      false,
+    );
+  });
 });

@@ -28,7 +28,7 @@ export type ContinuousCopyPlayback = {
 
 type ResumePlan = {
   playback: ContinuousCopyPlayback;
-  originalOffsetMs: number;
+  offsetWithinPlaybackMs: number;
 };
 
 function sumDuration(segments: Schedule["segments"]): number {
@@ -44,7 +44,7 @@ function currentTokenResumePlan(
   const clampedElapsed = Math.min(Math.max(0, elapsedMs), playback.durationMs);
   const segments = playback.schedule.segments;
   if (segments.length === 0) {
-    return { playback, originalOffsetMs: clampedElapsed };
+    return { playback, offsetWithinPlaybackMs: clampedElapsed };
   }
 
   let cumulative = 0;
@@ -60,7 +60,7 @@ function currentTokenResumePlan(
   if (elapsedIndex >= segments.length) {
     return {
       playback: { schedule: { segments: [], totalMs: 0 }, durationMs: 0 },
-      originalOffsetMs: playback.durationMs,
+      offsetWithinPlaybackMs: playback.durationMs,
     };
   }
 
@@ -79,15 +79,15 @@ function currentTokenResumePlan(
     }
   }
 
-  let originalOffsetMs = 0;
+  let offsetWithinPlaybackMs = 0;
   for (let index = 0; index < startIndex; index += 1) {
-    originalOffsetMs += segments[index].ms;
+    offsetWithinPlaybackMs += segments[index].ms;
   }
 
   if (startIndex >= segments.length) {
     return {
       playback: { schedule: { segments: [], totalMs: 0 }, durationMs: 0 },
-      originalOffsetMs,
+      offsetWithinPlaybackMs,
     };
   }
 
@@ -101,7 +101,7 @@ function currentTokenResumePlan(
       },
       durationMs: resumedDurationMs,
     },
-    originalOffsetMs,
+    offsetWithinPlaybackMs,
   };
 }
 
@@ -325,7 +325,13 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
       return true;
     }
 
-    runOffsetMsRef.current = resumePlan.originalOffsetMs;
+    // Keep absolute timeline mapping across repeated pause/resume cycles by
+    // composing the new resume boundary (relative to current playback) onto the
+    // current absolute offset.
+    runOffsetMsRef.current = Math.min(
+      totalMsRef.current,
+      runOffsetMsRef.current + resumePlan.offsetWithinPlaybackMs,
+    );
     runFloorMsRef.current = progressMsRef.current;
     startPlayback(resumePlan.playback);
     return true;
