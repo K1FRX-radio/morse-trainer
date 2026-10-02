@@ -7,6 +7,7 @@ import { recentAccuracy } from "./curriculum.ts";
 import type { Rng } from "./rng.ts";
 import { weightedIndex } from "./rng.ts";
 import type { ExerciseSelection, SchedulerReason } from "./types.ts";
+import { eligibleWords } from "../content/words.ts";
 
 type SchedulerDirection = "rx" | "tx";
 
@@ -23,6 +24,18 @@ export type SendTargetSelection = {
   target: string;
   focusCharacter: string;
   reason: SchedulerReason;
+};
+
+export type SendWordTargetSelection = {
+  target: string | undefined;
+  focusCharacter: string;
+  reason: SchedulerReason;
+};
+
+export type SendWordTargetOptions = {
+  minimumLength: number;
+  maximumLength: number;
+  performance?: SchedulerPerformance;
 };
 
 export type SchedulerWeights = {
@@ -166,6 +179,55 @@ export function buildSendTarget(
   chars[focusIndex] = focus.character;
   return {
     target: chars.join(""),
+    focusCharacter: focus.character,
+    reason: focus.reason,
+  };
+}
+
+/**
+ * Builds a deterministic Send Practice word target composed only of unlocked
+ * characters. The adaptive TX focus character is preferred whenever eligible
+ * candidates include it.
+ */
+export function buildSendWordTarget(
+  state: CurriculumState,
+  rng: Rng,
+  options: SendWordTargetOptions,
+): SendWordTargetSelection {
+  const performance = options.performance ?? {};
+  const focus = selectExercise(state, rng, {
+    direction: "tx",
+    performance,
+  });
+  const unlocked = state.characters.map((progress) => progress.character);
+  const candidates = eligibleWords(unlocked).filter(
+    (word) =>
+      word.text.length >= options.minimumLength &&
+      word.text.length <= options.maximumLength,
+  );
+  if (candidates.length === 0) {
+    return {
+      target: undefined,
+      focusCharacter: focus.character,
+      reason: focus.reason,
+    };
+  }
+
+  const weights = candidates.map((word) => {
+    const characters = new Set(word.text.split(""));
+    let weakBonus = 0;
+    for (const character of characters) {
+      const accuracy = performance[character];
+      if (accuracy === undefined) {
+        continue;
+      }
+      weakBonus += 1 - clampAccuracy(accuracy);
+    }
+    return 1 + (word.text.includes(focus.character) ? 4 : 0) + weakBonus;
+  });
+
+  return {
+    target: candidates[weightedIndex(weights, rng)]?.text,
     focusCharacter: focus.character,
     reason: focus.reason,
   };

@@ -6,7 +6,11 @@ import {
   unlockedCharacters,
 } from "./curriculum.ts";
 import { createRng } from "./rng.ts";
-import { buildSendTarget, selectExercise } from "./scheduler.ts";
+import {
+  buildSendTarget,
+  buildSendWordTarget,
+  selectExercise,
+} from "./scheduler.ts";
 
 const config = {
   ...DEFAULT_CURRICULUM_CONFIG,
@@ -174,5 +178,86 @@ describe("scheduler", () => {
       }),
     );
     expect(runA).toEqual(runB);
+  });
+
+  it("buildSendWordTarget uses unlocked characters only", () => {
+    const state = createInitialState({
+      ...config,
+      order: ["A", "N", "E", "T", "M"],
+      startCount: 5,
+    });
+    const allowed = new Set(unlockedCharacters(state));
+    const rng = createRng(101);
+
+    for (let i = 0; i < 200; i++) {
+      const selection = buildSendWordTarget(state, rng, {
+        minimumLength: 2,
+        maximumLength: 4,
+      });
+      expect(selection.target).toBeDefined();
+      for (const character of selection.target ?? "") {
+        expect(allowed.has(character)).toBe(true);
+      }
+    }
+  });
+
+  it("buildSendWordTarget prefers words containing the adaptive focus", () => {
+    const state = createInitialState({
+      ...config,
+      order: ["A", "M", "N"],
+      startCount: 3,
+    });
+    const selection = buildSendWordTarget(state, () => 0.2, {
+      minimumLength: 2,
+      maximumLength: 4,
+      performance: {
+        A: 1,
+        M: 0,
+        N: 1,
+      },
+    });
+
+    expect(selection.focusCharacter).toBe("M");
+    expect(selection.reason).toBe("WEAK_TX");
+    expect(selection.target).toBeDefined();
+    expect(selection.target).toContain("M");
+  });
+
+  it("buildSendWordTarget is deterministic with seeded RNG", () => {
+    const left = createInitialState(config);
+    const right = createInitialState(config);
+    const rngA = createRng(555);
+    const rngB = createRng(555);
+    const runA = Array.from({ length: 100 }, () =>
+      buildSendWordTarget(left, rngA, {
+        minimumLength: 2,
+        maximumLength: 4,
+        performance: { K: 0.2, M: 0.9, U: 0.4, R: 0.8 },
+      }),
+    );
+    const runB = Array.from({ length: 100 }, () =>
+      buildSendWordTarget(right, rngB, {
+        minimumLength: 2,
+        maximumLength: 4,
+        performance: { K: 0.2, M: 0.9, U: 0.4, R: 0.8 },
+      }),
+    );
+    expect(runA).toEqual(runB);
+  });
+
+  it("buildSendWordTarget returns undefined target when no words are eligible", () => {
+    const state = createInitialState({
+      ...config,
+      order: ["K"],
+      startCount: 1,
+    });
+
+    const selection = buildSendWordTarget(state, createRng(7), {
+      minimumLength: 2,
+      maximumLength: 4,
+    });
+
+    expect(selection.target).toBeUndefined();
+    expect(selection.focusCharacter).toBe("K");
   });
 });
