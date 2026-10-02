@@ -1632,22 +1632,36 @@ describe("LearnScreen audio sequencing", () => {
     fireEvent.keyDown(window, { key: "x", code: "KeyX" });
     await flush();
     expect(fake.pending[0]?.text).toHaveLength(3);
+    fireEvent.keyDown(window, { key: "x", code: "KeyX" });
+    await flush();
+    expect(fake.playCount()).toBe(1);
   });
 
-  it("automatically continues the group notice after its named delay", async () => {
+  it("does not auto-continue the group notice after its named delay", async () => {
     const fake = makeFakeAudio();
     renderLearn(fake.audio);
     await toThreeCharacterNotice(fake);
 
-    await tick(1799);
+    await tick(1800);
     expect(
       screen.getByRole("heading", {
         name: "Now copying 3-character groups",
       }),
     ).toBeInTheDocument();
     expect(fake.playCount()).toBe(0);
-    await tick(1);
+  });
+
+  it("advances from the group notice only when the user clicks Go", async () => {
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+    await toThreeCharacterNotice(fake);
+
+    await tick(5000);
+    expect(fake.playCount()).toBe(0);
+    fireEvent.click(screen.getByRole("button", { name: "Go" }));
+    await flush();
     expect(fake.pending[0]?.text).toHaveLength(3);
+    expect(fake.playCount()).toBe(1);
   });
 
   it("starts one continuous schedule and keeps copy input active during playback", async () => {
