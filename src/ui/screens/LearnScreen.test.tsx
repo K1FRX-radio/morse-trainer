@@ -709,9 +709,12 @@ describe("LearnScreen input gating", () => {
 
   it("surfaces and retries an ordinary attempt persistence failure", async () => {
     const fake = makeFakeAudio();
+    const quotaError = Object.assign(new Error("quota exceeded"), {
+      name: "QuotaExceededError",
+    });
     const retry = vi.fn(() => Promise.resolve());
     const persistence: LearnSessionPersistence = {
-      recordAttempt: () => Promise.reject(new Error("quota exceeded")),
+      recordAttempt: () => Promise.reject(quotaError),
       finish: () => Promise.resolve(),
       interrupt: () => Promise.resolve(),
       acceptAdvancement: () => Promise.resolve(testCurriculum()),
@@ -734,11 +737,204 @@ describe("LearnScreen input gating", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Your session could not be saved",
     );
+    expect(screen.getByText("Save details")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Save details"));
+    expect(
+      screen.getByText(
+        "Save failed (attempt): QuotaExceededError - quota exceeded | retries: 0",
+      ),
+    ).toBeInTheDocument();
+
     fireEvent.click(screen.getByRole("button", { name: "Retry saving" }));
     await flush();
 
     expect(retry).toHaveBeenCalledOnce();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("shows retry progress while retrying an ordinary persistence failure", async () => {
+    const fake = makeFakeAudio();
+    let resolveRetry: (() => void) | undefined;
+    const retry = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveRetry = resolve;
+        }),
+    );
+    const persistence: LearnSessionPersistence = {
+      recordAttempt: () => Promise.reject(new Error("quota exceeded")),
+      finish: () => Promise.resolve(),
+      interrupt: () => Promise.resolve(),
+      acceptAdvancement: () => Promise.resolve(testCurriculum()),
+      retry,
+    };
+    renderLearn(
+      fake.audio,
+      {},
+      {
+        startLearnSessionPersistence: () => Promise.resolve(persistence),
+      },
+    );
+    await toFirstCopy(fake);
+
+    fireEvent.change(screen.getByLabelText("Your copy"), {
+      target: { value: "K" },
+    });
+    await flush();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry saving" }));
+    await flush();
+
+    expect(screen.getByText("Retrying save...")).toBeInTheDocument();
+    expect(retry).toHaveBeenCalledOnce();
+
+    await act(async () => resolveRetry?.());
+    await flush();
+
+    expect(screen.queryByText("Retrying save...")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("shows updated diagnostics when a retry fails again", async () => {
+    const fake = makeFakeAudio();
+    let rejectRetry: ((error: Error) => void) | undefined;
+    const initialError = Object.assign(new Error("quota exceeded"), {
+      name: "QuotaExceededError",
+    });
+    const retryError = Object.assign(new Error("transaction was aborted"), {
+      name: "AbortError",
+    });
+    const retry = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectRetry = reject;
+        }),
+    );
+    const persistence: LearnSessionPersistence = {
+      recordAttempt: () => Promise.reject(initialError),
+      finish: () => Promise.resolve(),
+      interrupt: () => Promise.resolve(),
+      acceptAdvancement: () => Promise.resolve(testCurriculum()),
+      retry,
+    };
+    renderLearn(
+      fake.audio,
+      {},
+      {
+        startLearnSessionPersistence: () => Promise.resolve(persistence),
+      },
+    );
+    await toFirstCopy(fake);
+
+    fireEvent.change(screen.getByLabelText("Your copy"), {
+      target: { value: "K" },
+    });
+    await flush();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry saving" }));
+    await flush();
+    expect(screen.getByText("Retrying save...")).toBeInTheDocument();
+
+    await act(async () => rejectRetry?.(retryError));
+    await flush();
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Your session could not be saved",
+    );
+    fireEvent.click(screen.getByText("Save details"));
+    expect(
+      screen.getByText(
+        "Save failed (attempt): AbortError - transaction was aborted | retries: 1",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows Retrying save while onboarding session-start retry is pending", async () => {
+    const fake = makeFakeAudio();
+    let resolveRetryStart:
+      ((persistence: LearnSessionPersistence) => void) | undefined;
+    const firstError = Object.assign(new Error("quota exceeded"), {
+      name: "QuotaExceededError",
+    });
+    const startLearnSessionPersistence = vi
+      .fn<
+        (options: LearnPersistenceStart) => Promise<LearnSessionPersistence>
+      >()
+      .mockRejectedValueOnce(firstError)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveRetryStart = resolve;
+          }),
+      );
+    renderLearn(
+      fake.audio,
+      {},
+      {
+        startLearnSessionPersistence,
+      },
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
+    await flush();
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Your session could not be saved",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry saving" }));
+    await flush();
+
+    expect(screen.getByText("Retrying save...")).toBeInTheDocument();
+
+    await act(async () =>
+      resolveRetryStart?.({
+        recordAttempt: () => Promise.resolve(),
+        finish: () => Promise.resolve(),
+        interrupt: () => Promise.resolve(),
+        acceptAdvancement: () => Promise.resolve(testCurriculum()),
+        retry: () => Promise.resolve(),
+      }),
+    );
+    await flush();
+
+    expect(screen.queryByText("Retrying save...")).not.toBeInTheDocument();
+  });
+
+  it("increments retry count for repeated session-start failures", async () => {
+    const fake = makeFakeAudio();
+    const firstError = Object.assign(new Error("quota exceeded"), {
+      name: "QuotaExceededError",
+    });
+    const secondError = Object.assign(new Error("transaction was aborted"), {
+      name: "AbortError",
+    });
+    const startLearnSessionPersistence = vi
+      .fn<
+        (options: LearnPersistenceStart) => Promise<LearnSessionPersistence>
+      >()
+      .mockRejectedValueOnce(firstError)
+      .mockRejectedValueOnce(secondError);
+    renderLearn(
+      fake.audio,
+      {},
+      {
+        startLearnSessionPersistence,
+      },
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
+    await flush();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry saving" }));
+    await flush();
+
+    fireEvent.click(screen.getByText("Save details"));
+    expect(
+      screen.getByText(
+        "Save failed (session-start): AbortError - transaction was aborted | retries: 1",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("accepts mobile-style change events", async () => {
@@ -1881,6 +2077,247 @@ describe("LearnScreen advancement", () => {
     expect(getRetryClassification).toHaveBeenCalledOnce();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Learn U" })).toBeEnabled();
+  });
+
+  it("retries session-start failure from summary using the same start mode", async () => {
+    const fake = makeFakeAudio();
+    const sessionStartError = Object.assign(new Error("quota exceeded"), {
+      name: "QuotaExceededError",
+    });
+    const startLearnSessionPersistence = vi
+      .fn<
+        (options: LearnPersistenceStart) => Promise<LearnSessionPersistence>
+      >()
+      .mockResolvedValueOnce({
+        recordAttempt: () => Promise.resolve(),
+        finish: () => Promise.resolve(),
+        interrupt: () => Promise.resolve(),
+        acceptAdvancement: () => Promise.resolve(testCurriculum()),
+        retry: () => Promise.resolve(),
+      })
+      .mockRejectedValueOnce(sessionStartError)
+      .mockResolvedValue({
+        recordAttempt: () => Promise.resolve(),
+        finish: () => Promise.resolve(),
+        interrupt: () => Promise.resolve(),
+        acceptAdvancement: () => Promise.resolve(testCurriculum()),
+        retry: () => Promise.resolve(),
+      });
+    renderLearn(
+      fake.audio,
+      {},
+      {
+        startLearnSessionPersistence,
+      },
+    );
+    await completeContinuousCopy(fake);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Restart full lesson" }),
+    );
+    await flush();
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Your session could not be saved",
+    );
+    fireEvent.click(screen.getByText("Save details"));
+    expect(
+      screen.getByText(
+        "Save failed (session-start): QuotaExceededError - quota exceeded | retries: 0",
+      ),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry saving" }));
+    await flush();
+
+    expect(startLearnSessionPersistence).toHaveBeenCalledTimes(3);
+    expect(startLearnSessionPersistence.mock.calls[1]?.[0].mode).toBe("learn");
+    expect(startLearnSessionPersistence.mock.calls[2]?.[0].mode).toBe("learn");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("retries failed Practice long copy start as review mode", async () => {
+    const fake = makeFakeAudio();
+    const sessionStartError = Object.assign(new Error("quota exceeded"), {
+      name: "QuotaExceededError",
+    });
+    const startLearnSessionPersistence = vi
+      .fn<
+        (options: LearnPersistenceStart) => Promise<LearnSessionPersistence>
+      >()
+      .mockResolvedValueOnce({
+        recordAttempt: () => Promise.resolve(),
+        finish: () => Promise.resolve(),
+        interrupt: () => Promise.resolve(),
+        acceptAdvancement: () => Promise.resolve(testCurriculum()),
+        retry: () => Promise.resolve(),
+      })
+      .mockRejectedValueOnce(sessionStartError)
+      .mockResolvedValue({
+        recordAttempt: () => Promise.resolve(),
+        finish: () => Promise.resolve(),
+        interrupt: () => Promise.resolve(),
+        acceptAdvancement: () => Promise.resolve(testCurriculum()),
+        retry: () => Promise.resolve(),
+      });
+    renderLearn(
+      fake.audio,
+      {},
+      {
+        startLearnSessionPersistence,
+      },
+    );
+    await completeContinuousCopy(fake);
+
+    fireEvent.click(screen.getByRole("button", { name: "Practice long copy" }));
+    await flush();
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Your session could not be saved",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry saving" }));
+    await flush();
+
+    expect(startLearnSessionPersistence).toHaveBeenCalledTimes(3);
+    expect(startLearnSessionPersistence.mock.calls[1]?.[0].mode).toBe("review");
+    expect(startLearnSessionPersistence.mock.calls[2]?.[0].mode).toBe("review");
+  });
+
+  it("retries a pre-start interrupt failure and resumes requested review start", async () => {
+    const fake = makeFakeAudio();
+    const interruptError = Object.assign(new Error("transaction was aborted"), {
+      name: "AbortError",
+    });
+    const interrupt = vi
+      .fn<LearnSessionPersistence["interrupt"]>()
+      .mockRejectedValueOnce(interruptError)
+      .mockResolvedValue(undefined);
+    const initialPersistence: LearnSessionPersistence = {
+      recordAttempt: () => Promise.resolve(),
+      finish: () => Promise.resolve(),
+      interrupt,
+      acceptAdvancement: () => Promise.resolve(testCurriculum()),
+      retry: () => Promise.resolve(),
+    };
+    const reviewPersistence: LearnSessionPersistence = {
+      recordAttempt: () => Promise.resolve(),
+      finish: () => Promise.resolve(),
+      interrupt: () => Promise.resolve(),
+      acceptAdvancement: () => Promise.resolve(testCurriculum()),
+      retry: () => Promise.resolve(),
+    };
+    const startLearnSessionPersistence = vi
+      .fn<
+        (options: LearnPersistenceStart) => Promise<LearnSessionPersistence>
+      >()
+      .mockResolvedValueOnce(initialPersistence)
+      .mockResolvedValueOnce(reviewPersistence);
+
+    renderLearn(
+      fake.audio,
+      {},
+      {
+        startLearnSessionPersistence,
+      },
+    );
+    await completeContinuousCopy(fake);
+
+    fireEvent.click(screen.getByRole("button", { name: "Practice long copy" }));
+    await flush();
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Your session could not be saved",
+    );
+    fireEvent.click(screen.getByText("Save details"));
+    expect(
+      screen.getByText(
+        "Save failed (session-start): AbortError - transaction was aborted | retries: 0",
+      ),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry saving" }));
+    await flush();
+
+    expect(interrupt).toHaveBeenCalledTimes(2);
+    expect(startLearnSessionPersistence).toHaveBeenCalledTimes(2);
+    expect(startLearnSessionPersistence.mock.calls[1]?.[0].mode).toBe("review");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Continuous copy")).toHaveFocus();
+    expect(fake.pending[0]?.schedule).toBeDefined();
+  });
+
+  it("keeps session-start retry state through interrupt success until creation failure", async () => {
+    const fake = makeFakeAudio();
+    const interruptError = Object.assign(new Error("transaction was aborted"), {
+      name: "AbortError",
+    });
+    let rejectRetryCreation: ((error: Error) => void) | undefined;
+    const interrupt = vi
+      .fn<LearnSessionPersistence["interrupt"]>()
+      .mockRejectedValueOnce(interruptError)
+      .mockResolvedValue(undefined);
+    const initialPersistence: LearnSessionPersistence = {
+      recordAttempt: () => Promise.resolve(),
+      finish: () => Promise.resolve(),
+      interrupt,
+      acceptAdvancement: () => Promise.resolve(testCurriculum()),
+      retry: () => Promise.resolve(),
+    };
+    const startLearnSessionPersistence = vi
+      .fn<
+        (options: LearnPersistenceStart) => Promise<LearnSessionPersistence>
+      >()
+      .mockResolvedValueOnce(initialPersistence)
+      .mockImplementationOnce(
+        () =>
+          new Promise<LearnSessionPersistence>((_resolve, reject) => {
+            rejectRetryCreation = reject;
+          }),
+      );
+
+    renderLearn(
+      fake.audio,
+      {},
+      {
+        startLearnSessionPersistence,
+      },
+    );
+    await completeContinuousCopy(fake);
+
+    fireEvent.click(screen.getByRole("button", { name: "Practice long copy" }));
+    await flush();
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Your session could not be saved",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry saving" }));
+    await flush();
+
+    expect(screen.getByText("Retrying save...")).toBeInTheDocument();
+    expect(interrupt).toHaveBeenCalledTimes(2);
+    expect(startLearnSessionPersistence).toHaveBeenCalledTimes(2);
+    expect(startLearnSessionPersistence.mock.calls[1]?.[0].mode).toBe("review");
+
+    await act(async () =>
+      rejectRetryCreation?.(
+        Object.assign(new Error("quota exceeded"), {
+          name: "QuotaExceededError",
+        }),
+      ),
+    );
+    await flush();
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Your session could not be saved",
+    );
+    fireEvent.click(screen.getByText("Save details"));
+    expect(
+      screen.getByText(
+        "Save failed (session-start): QuotaExceededError - quota exceeded | retries: 1",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("starts another lesson without unlocking from the secondary action", async () => {
