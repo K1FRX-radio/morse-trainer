@@ -145,10 +145,20 @@ export function SendPractice() {
         return;
       }
 
-      const txRows = await listCharacterProjections({
-        direction: "tx",
-        limit: curriculum.characters.length,
-      });
+      let txRows: CharacterProjectionRecord[];
+      try {
+        txRows = await listCharacterProjections({
+          direction: "tx",
+          limit: curriculum.characters.length,
+        });
+      } catch {
+        if (requestId !== targetRequestIdRef.current) return;
+        setTarget(undefined);
+        setTargetError("Unable to load a target right now.");
+        schedulerReasonRef.current = undefined;
+        targetModeRef.current = undefined;
+        return;
+      }
       if (requestId !== targetRequestIdRef.current) return;
       const selection = selectTarget(mode, txRows, rng.current, curriculum);
       if (!selection.target) {
@@ -169,12 +179,7 @@ export function SendPractice() {
   );
 
   useEffect(() => {
-    void chooseTarget(exerciseMode).catch(() => {
-      setTarget(undefined);
-      setTargetError("Unable to load a target right now.");
-      schedulerReasonRef.current = undefined;
-      targetModeRef.current = undefined;
-    });
+    void chooseTarget(exerciseMode);
   }, [chooseTarget, exerciseMode]);
 
   if (!keyRef.current) {
@@ -318,6 +323,7 @@ export function SendPractice() {
   }
 
   async function changeMode(mode: SendExerciseMode): Promise<void> {
+    targetRequestIdRef.current += 1;
     setTarget(undefined);
     setTargetError(undefined);
     targetModeRef.current = undefined;

@@ -142,6 +142,16 @@ function decodedText(): string {
   return document.querySelector(".send__decoded-text")?.textContent ?? "";
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error?: unknown) => void;
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
+
 beforeEach(() => {
   vi.spyOn(performance, "now").mockImplementation(() => 1000);
 });
@@ -611,24 +621,11 @@ describe("SendPractice persistence", () => {
     await waitFor(() => expect(sendTargetText()).toBe(settled));
   });
 
-  it("invalidates stale target during pending mode-change query and re-enables when settled", async () => {
+  it("ignores stale target resolution when mode changes before replacement settles", async () => {
     const session = persistence();
 
-    const firstRows = (() => {
-      let resolve!: (value: CharacterProjectionRecord[]) => void;
-      const promise = new Promise<CharacterProjectionRecord[]>((done) => {
-        resolve = done;
-      });
-      return { promise, resolve };
-    })();
-
-    const secondRows = (() => {
-      let resolve!: (value: CharacterProjectionRecord[]) => void;
-      const promise = new Promise<CharacterProjectionRecord[]>((done) => {
-        resolve = done;
-      });
-      return { promise, resolve };
-    })();
+    const firstRows = deferred<CharacterProjectionRecord[]>();
+    const secondRows = deferred<CharacterProjectionRecord[]>();
 
     const listCharacterProjections = vi
       .fn<() => Promise<CharacterProjectionRecord[]>>()
@@ -640,12 +637,15 @@ describe("SendPractice persistence", () => {
       listCharacterProjections,
     });
 
-    firstRows.resolve([]);
-    await waitFor(() => expect(sendTargetText()).toMatch(/^[TM]$/));
-
     selectSendMode("group-3");
 
-    // While replacement is pending, the previous target must be non-actionable.
+    expect(sendTargetText()).toBe("-");
+    expect(
+      screen.getByRole("button", { name: "Straight key (hold to send)" }),
+    ).toBeDisabled();
+
+    firstRows.resolve([]);
+    await Promise.resolve();
     expect(sendTargetText()).toBe("-");
     expect(
       screen.getByRole("button", { name: "Straight key (hold to send)" }),
@@ -658,24 +658,41 @@ describe("SendPractice persistence", () => {
     ).toBeEnabled();
   });
 
-  it("ignores space-key input during pending mode-change transition", async () => {
+  it("ignores stale target load failure after a newer mode target settles", async () => {
     const session = persistence();
 
-    const firstRows = (() => {
-      let resolve!: (value: CharacterProjectionRecord[]) => void;
-      const promise = new Promise<CharacterProjectionRecord[]>((done) => {
-        resolve = done;
-      });
-      return { promise, resolve };
-    })();
+    const firstRows = deferred<CharacterProjectionRecord[]>();
+    const secondRows = deferred<CharacterProjectionRecord[]>();
 
-    const secondRows = (() => {
-      let resolve!: (value: CharacterProjectionRecord[]) => void;
-      const promise = new Promise<CharacterProjectionRecord[]>((done) => {
-        resolve = done;
-      });
-      return { promise, resolve };
-    })();
+    const listCharacterProjections = vi
+      .fn<() => Promise<CharacterProjectionRecord[]>>()
+      .mockImplementationOnce(() => firstRows.promise)
+      .mockImplementationOnce(() => secondRows.promise);
+
+    renderPractice(<SendPractice />, session, {
+      curriculum: sendCurriculum(["T", "U"]),
+      listCharacterProjections,
+    });
+
+    selectSendMode("word");
+    await waitFor(() =>
+      expect(listCharacterProjections).toHaveBeenCalledTimes(2),
+    );
+
+    secondRows.resolve([]);
+    await waitFor(() => expect(sendTargetText()).toBe("TU"));
+
+    firstRows.reject(new Error("stale query failed"));
+    await Promise.resolve();
+    expect(sendTargetText()).toBe("TU");
+    expect(screen.queryByText("Unable to load a target right now.")).toBeNull();
+  });
+
+  it("ignores keyboard and pointer input during pending mode-change transition", async () => {
+    const session = persistence();
+
+    const firstRows = deferred<CharacterProjectionRecord[]>();
+    const secondRows = deferred<CharacterProjectionRecord[]>();
 
     const listCharacterProjections = vi
       .fn<() => Promise<CharacterProjectionRecord[]>>()
@@ -702,6 +719,23 @@ describe("SendPractice persistence", () => {
 
     fireEvent.keyDown(window, { key: " " });
     fireEvent.keyUp(window, { key: " " });
+    const keyButton = screen.getByRole("button", {
+      name: "Straight key (hold to send)",
+    });
+    Object.defineProperty(keyButton, "setPointerCapture", {
+      value: vi.fn(),
+      configurable: true,
+    });
+    Object.defineProperty(keyButton, "hasPointerCapture", {
+      value: vi.fn(() => false),
+      configurable: true,
+    });
+    Object.defineProperty(keyButton, "releasePointerCapture", {
+      value: vi.fn(),
+      configurable: true,
+    });
+    fireEvent.pointerDown(keyButton, { pointerId: 1 });
+    fireEvent.pointerUp(keyButton, { pointerId: 1 });
 
     expect(startPracticeSessionPersistence).not.toHaveBeenCalled();
     expect(session.recordAttempt).not.toHaveBeenCalled();
