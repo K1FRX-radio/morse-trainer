@@ -709,9 +709,12 @@ describe("LearnScreen input gating", () => {
 
   it("surfaces and retries an ordinary attempt persistence failure", async () => {
     const fake = makeFakeAudio();
+    const quotaError = Object.assign(new Error("quota exceeded"), {
+      name: "QuotaExceededError",
+    });
     const retry = vi.fn(() => Promise.resolve());
     const persistence: LearnSessionPersistence = {
-      recordAttempt: () => Promise.reject(new Error("quota exceeded")),
+      recordAttempt: () => Promise.reject(quotaError),
       finish: () => Promise.resolve(),
       interrupt: () => Promise.resolve(),
       acceptAdvancement: () => Promise.resolve(testCurriculum()),
@@ -734,6 +737,14 @@ describe("LearnScreen input gating", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Your session could not be saved",
     );
+    expect(screen.getByText("Save details")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Save details"));
+    expect(
+      screen.getByText(
+        "Save failed (attempt): QuotaExceededError - quota exceeded | retries: 0",
+      ),
+    ).toBeInTheDocument();
+
     fireEvent.click(screen.getByRole("button", { name: "Retry saving" }));
     await flush();
 
@@ -782,6 +793,60 @@ describe("LearnScreen input gating", () => {
 
     expect(screen.queryByText("Retrying save...")).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("shows updated diagnostics when a retry fails again", async () => {
+    const fake = makeFakeAudio();
+    let rejectRetry: ((error: Error) => void) | undefined;
+    const initialError = Object.assign(new Error("quota exceeded"), {
+      name: "QuotaExceededError",
+    });
+    const retryError = Object.assign(new Error("transaction was aborted"), {
+      name: "AbortError",
+    });
+    const retry = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectRetry = reject;
+        }),
+    );
+    const persistence: LearnSessionPersistence = {
+      recordAttempt: () => Promise.reject(initialError),
+      finish: () => Promise.resolve(),
+      interrupt: () => Promise.resolve(),
+      acceptAdvancement: () => Promise.resolve(testCurriculum()),
+      retry,
+    };
+    renderLearn(
+      fake.audio,
+      {},
+      {
+        startLearnSessionPersistence: () => Promise.resolve(persistence),
+      },
+    );
+    await toFirstCopy(fake);
+
+    fireEvent.change(screen.getByLabelText("Your copy"), {
+      target: { value: "K" },
+    });
+    await flush();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry saving" }));
+    await flush();
+    expect(screen.getByText("Retrying save...")).toBeInTheDocument();
+
+    await act(async () => rejectRetry?.(retryError));
+    await flush();
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Your session could not be saved",
+    );
+    fireEvent.click(screen.getByText("Save details"));
+    expect(
+      screen.getByText(
+        "Save failed (attempt): AbortError - transaction was aborted | retries: 1",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("accepts mobile-style change events", async () => {

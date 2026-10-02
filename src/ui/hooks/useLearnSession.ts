@@ -36,6 +36,11 @@ import {
 import { useLearnAudio } from "../learn-audio-context.ts";
 import { useSettings } from "../settings-context.ts";
 import { useTrainingData } from "../training-data-context.ts";
+import {
+  toPersistenceDiagnostic,
+  type PersistenceDiagnostic,
+  type PersistenceOperationCategory,
+} from "./persistence-diagnostic.ts";
 import { useContinuousCopy } from "./useContinuousCopy.ts";
 
 // Brief holds (ms). Introductions are paced only by completed audio and input.
@@ -167,8 +172,20 @@ export function useLearnSession() {
   const [persistenceError, setPersistenceError] = useState<string | undefined>(
     undefined,
   );
+  const [persistenceDiagnostic, setPersistenceDiagnostic] = useState<
+    PersistenceDiagnostic | undefined
+  >(undefined);
   const [persistenceRetrying, setPersistenceRetrying] = useState(false);
   const [, forceTick] = useState(0);
+  const failedOperationRef = useRef<PersistenceOperationCategory | undefined>(
+    undefined,
+  );
+  const retryCountsRef = useRef<Record<PersistenceOperationCategory, number>>({
+    attempt: 0,
+    finalization: 0,
+    advancement: 0,
+    "session-start": 0,
+  });
 
   const persistenceSnapshot = useCallback(
     (session: LearnSession): LearnPersistenceSnapshot => ({
@@ -184,46 +201,79 @@ export function useLearnSession() {
     [loadIntroductions],
   );
 
-  const setPersistenceFailed = useCallback(() => {
-    setPersistenceStatus("error");
+  const setPersistenceFailed = useCallback(
+    (operation: PersistenceOperationCategory, cause: unknown) => {
+      failedOperationRef.current = operation;
+      const retryCount = retryCountsRef.current[operation];
+      setPersistenceDiagnostic(
+        toPersistenceDiagnostic(operation, retryCount, cause),
+      );
+      setPersistenceStatus("error");
+      setPersistenceRetrying(false);
+      setPersistenceError(
+        "Your session could not be saved. Check storage access and try again.",
+      );
+    },
+    [],
+  );
+
+  const beginPersistenceOperation = useCallback(
+    (operation: PersistenceOperationCategory, isRetry: boolean) => {
+      if (isRetry) retryCountsRef.current[operation] += 1;
+      else retryCountsRef.current[operation] = 0;
+      setPersistenceStatus("pending");
+      setPersistenceError(undefined);
+      setPersistenceDiagnostic(undefined);
+    },
+    [],
+  );
+
+  const completePersistenceOperation = useCallback(() => {
+    failedOperationRef.current = undefined;
+    setPersistenceStatus("ready");
     setPersistenceRetrying(false);
-    setPersistenceError(
-      "Your session could not be saved. Check storage access and try again.",
-    );
+    setPersistenceError(undefined);
+    setPersistenceDiagnostic(undefined);
   }, []);
 
   const trackPersistence = useCallback(
-    (persistence: LearnSessionPersistence, operation: Promise<void>) => {
+    (
+      persistence: LearnSessionPersistence,
+      operation: Promise<void>,
+      category: PersistenceOperationCategory,
+      isRetry = false,
+    ) => {
       const token = ++persistenceOperation.current;
-      setPersistenceStatus("pending");
-      setPersistenceError(undefined);
+      beginPersistenceOperation(category, isRetry);
       void operation
         .then(() => {
           if (
             persistenceRef.current === persistence &&
             persistenceOperation.current === token
           ) {
-            setPersistenceStatus("ready");
-            setPersistenceRetrying(false);
+            completePersistenceOperation();
           }
         })
-        .catch(() => {
+        .catch((cause) => {
           if (
             persistenceRef.current === persistence &&
             persistenceOperation.current === token
           ) {
-            setPersistenceFailed();
+            setPersistenceFailed(category, cause);
           }
         });
     },
-    [setPersistenceFailed],
+    [
+      beginPersistenceOperation,
+      completePersistenceOperation,
+      setPersistenceFailed,
+    ],
   );
 
   const finalizePersistence = useCallback(
-    async (work: FinalizationWork) => {
+    async (work: FinalizationWork, isRetry = false) => {
       const token = ++persistenceOperation.current;
-      setPersistenceStatus("pending");
-      setPersistenceError(undefined);
+      beginPersistenceOperation("finalization", isRetry);
       try {
         await work.persistence.finish(work.snapshot);
         const assessment = work.session.summary().advancementAssessment;
@@ -242,19 +292,20 @@ export function useLearnSession() {
           persistenceOperation.current === token
         ) {
           setRetryClassification(classification);
-          setPersistenceStatus("ready");
-          setPersistenceRetrying(false);
+          completePersistenceOperation();
         }
-      } catch {
+      } catch (cause) {
         if (
           persistenceRef.current === work.persistence &&
           persistenceOperation.current === token
         ) {
-          setPersistenceFailed();
+          setPersistenceFailed("finalization", cause);
         }
       }
     },
     [
+      beginPersistenceOperation,
+      completePersistenceOperation,
       getRetryClassification,
       setPersistenceFailed,
       settings.charWpm,
@@ -296,6 +347,7 @@ export function useLearnSession() {
             },
             persistenceSnapshot(session),
           ),
+          "attempt",
         );
       }
       saveCurriculum(stateRef.current);
@@ -516,20 +568,20 @@ export function useLearnSession() {
   advanceRef.current = advance;
 
   const startSession = useCallback(
-    async (mode: LearnSessionMode, sessionTiming = timing) => {
+    async (mode: LearnSessionMode, sessionTiming = timing, isRetry = false) => {
       const startToken = nextFlowToken();
       const previousPersistence = persistenceRef.current;
       const previousSession = sessionRef.current;
       if (previousPersistence && previousSession) {
         previousSession.end();
-        setPersistenceStatus("pending");
-        setPersistenceError(undefined);
+        beginPersistenceOperation("session-start", isRetry);
         try {
           await previousPersistence.interrupt(
             persistenceSnapshot(previousSession),
           );
-        } catch {
-          setPersistenceFailed();
+          completePersistenceOperation();
+        } catch (cause) {
+          setPersistenceFailed("session-start", cause);
           return;
         }
         if (startToken !== flowToken.current) return;
@@ -557,6 +609,7 @@ export function useLearnSession() {
       });
       let persistence: LearnSessionPersistence;
       try {
+        beginPersistenceOperation("session-start", isRetry);
         persistence = await startLearnSessionPersistence({
           mode,
           activeCharacters: session.unlockedNow,
@@ -567,8 +620,8 @@ export function useLearnSession() {
             noiseLevel: settings.noiseLevel,
           },
         });
-      } catch {
-        setPersistenceFailed();
+      } catch (cause) {
+        setPersistenceFailed("session-start", cause);
         return;
       }
       if (startToken !== flowToken.current) {
@@ -579,8 +632,7 @@ export function useLearnSession() {
       session.start();
       sessionRef.current = session;
       persistenceRef.current = persistence;
-      setPersistenceStatus("ready");
-      setPersistenceError(undefined);
+      completePersistenceOperation();
       introDoneToken.current = null;
       setSummary(undefined);
       setRetryClassification(undefined);
@@ -594,7 +646,9 @@ export function useLearnSession() {
       showEvent,
       endSession,
       clearHeldKeys,
+      completePersistenceOperation,
       continuousCopy,
+      beginPersistenceOperation,
       nextFlowToken,
       settings.continuousCopyDurationMs,
       settings.noiseLevel,
@@ -677,6 +731,7 @@ export function useLearnSession() {
               },
               persistenceSnapshot(session),
             ),
+            "attempt",
           );
         }
       }
@@ -875,10 +930,9 @@ export function useLearnSession() {
   }, [continuousCopy]);
 
   const persistAdvancement = useCallback(
-    async (work: AdvancementWork) => {
+    async (work: AdvancementWork, isRetry = false) => {
       const token = ++persistenceOperation.current;
-      setPersistenceStatus("pending");
-      setPersistenceError(undefined);
+      beginPersistenceOperation("advancement", isRetry);
       try {
         await work.persistence.acceptAdvancement(work.acceptance);
         const canonicalState = await reconcileCurriculum();
@@ -890,8 +944,7 @@ export function useLearnSession() {
         }
         stateRef.current = canonicalState;
         advancementRef.current = undefined;
-        setPersistenceStatus("ready");
-        setPersistenceRetrying(false);
+        completePersistenceOperation();
         if (work.acceptance.type === "character-unlocked") {
           void startSession("learn");
           return;
@@ -907,16 +960,22 @@ export function useLearnSession() {
               }
             : current,
         );
-      } catch {
+      } catch (cause) {
         if (
           persistenceRef.current === work.persistence &&
           persistenceOperation.current === token
         ) {
-          setPersistenceFailed();
+          setPersistenceFailed("advancement", cause);
         }
       }
     },
-    [reconcileCurriculum, setPersistenceFailed, startSession],
+    [
+      beginPersistenceOperation,
+      completePersistenceOperation,
+      reconcileCurriculum,
+      setPersistenceFailed,
+      startSession,
+    ],
   );
 
   const acceptAdvancement = useCallback(() => {
@@ -944,28 +1003,30 @@ export function useLearnSession() {
     const advancement = advancementRef.current;
     if (advancement) {
       setPersistenceRetrying(true);
-      void persistAdvancement(advancement);
+      void persistAdvancement(advancement, true);
       return;
     }
     const finalization = finalizationRef.current;
     if (finalization) {
       setPersistenceRetrying(true);
-      void finalizePersistence(finalization);
+      void finalizePersistence(finalization, true);
       return;
     }
     const persistence = persistenceRef.current;
     if (!persistence) {
       setPersistenceRetrying(false);
-      if (phase === "onboarding") void startSession("learn");
+      if (phase === "onboarding") void startSession("learn", timing, true);
       return;
     }
+    const category = failedOperationRef.current ?? "attempt";
     setPersistenceRetrying(true);
-    trackPersistence(persistence, persistence.retry());
+    trackPersistence(persistence, persistence.retry(), category, true);
   }, [
     finalizePersistence,
     persistAdvancement,
     phase,
     startSession,
+    timing,
     trackPersistence,
   ]);
 
@@ -1062,6 +1123,7 @@ export function useLearnSession() {
     retryRecommendation,
     persistenceStatus,
     persistenceError,
+    persistenceDiagnostic,
     persistenceRetrying,
     auto,
     inputReady,

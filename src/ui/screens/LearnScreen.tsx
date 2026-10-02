@@ -67,6 +67,12 @@ export function LearnScreen() {
     learn.persistenceStatus === "error" ? (
       <div className="feedback feedback--neutral" role="alert">
         <p>{learn.persistenceError}</p>
+        {learn.persistenceDiagnostic && (
+          <details>
+            <summary>Save details</summary>
+            <p>{learn.persistenceDiagnostic.summary}</p>
+          </details>
+        )}
         <button type="button" onClick={retryPersistence}>
           Retry saving
         </button>

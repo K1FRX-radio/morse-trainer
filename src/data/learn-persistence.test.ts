@@ -558,4 +558,213 @@ describe("DurableLearnSession", () => {
       await database.delete();
     }
   });
+
+  it("keeps a failed attempt retryable and drains it exactly once on success", async () => {
+    const { database, repository } = await setup();
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    const ids = ["owner-6", "session-6", "attempt-6"];
+    const commit = vi.spyOn(repository, "commitLearnAttempt");
+    commit.mockRejectedValueOnce(new Error("storage unavailable"));
+
+    try {
+      const session = await DurableLearnSession.create(
+        repository,
+        {
+          mode: "learn",
+          activeCharacters: ["K", "M"],
+          settings: {
+            charWpm: 20,
+            effectiveWpm: 12,
+            toneHz: 600,
+            noiseLevel: 0,
+          },
+        },
+        {
+          now: clock("2026-09-25T22:00:00.000Z", "2026-09-25T22:00:10.000Z"),
+          createId: () => ids.shift()!,
+          scheduleLeaseRenewal: () => () => undefined,
+        },
+      );
+
+      const failed = session.recordAttempt(
+        {
+          exerciseType: "copy-character",
+          target: "K",
+          response: "K",
+          assisted: false,
+          replayed: false,
+          abandoned: false,
+        },
+        {
+          activeMs: 10000,
+          activeDateBuckets: activeDateBuckets(10000),
+          completedCards: 1,
+          curriculum: state,
+          introductions: ["K", "M"],
+        },
+      );
+
+      await expect(failed).rejects.toThrow("storage unavailable");
+      await expect(session.retry()).resolves.toBeUndefined();
+
+      expect(commit).toHaveBeenCalledTimes(2);
+      expect(commit.mock.calls[0]?.[0].attempt.id).toBe("attempt-6");
+      expect(commit.mock.calls[1]?.[0].attempt.id).toBe("attempt-6");
+      expect(await database.attempts.count()).toBe(1);
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
+  it("keeps a deterministically failing attempt queued across repeated retries", async () => {
+    const { database, repository } = await setup();
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    const ids = ["owner-7", "session-7", "attempt-7"];
+    const commit = vi.spyOn(repository, "commitLearnAttempt");
+    commit.mockRejectedValueOnce(new Error("storage unavailable"));
+    commit.mockRejectedValueOnce(new Error("storage unavailable"));
+    commit.mockRejectedValueOnce(new Error("storage unavailable"));
+
+    try {
+      const session = await DurableLearnSession.create(
+        repository,
+        {
+          mode: "learn",
+          activeCharacters: ["K", "M"],
+          settings: {
+            charWpm: 20,
+            effectiveWpm: 12,
+            toneHz: 600,
+            noiseLevel: 0,
+          },
+        },
+        {
+          now: clock("2026-09-25T23:00:00.000Z", "2026-09-25T23:00:10.000Z"),
+          createId: () => ids.shift()!,
+          scheduleLeaseRenewal: () => () => undefined,
+        },
+      );
+
+      const failed = session.recordAttempt(
+        {
+          exerciseType: "copy-character",
+          target: "K",
+          response: "K",
+          assisted: false,
+          replayed: false,
+          abandoned: false,
+        },
+        {
+          activeMs: 10000,
+          activeDateBuckets: activeDateBuckets(10000),
+          completedCards: 1,
+          curriculum: state,
+          introductions: ["K", "M"],
+        },
+      );
+
+      await expect(failed).rejects.toThrow("storage unavailable");
+      await expect(session.retry()).rejects.toThrow("storage unavailable");
+      await expect(session.retry()).rejects.toThrow("storage unavailable");
+
+      expect(commit).toHaveBeenCalledTimes(3);
+
+      commit.mockRestore();
+      await expect(session.retry()).resolves.toBeUndefined();
+      expect(await database.attempts.count()).toBe(1);
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
+  it("preserves queued operations behind a failed head in order", async () => {
+    const { database, repository } = await setup();
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    const ids = ["owner-8", "session-8", "attempt-8a", "attempt-8b"];
+    let rejectHead: ((error: Error) => void) | undefined;
+    const commit = vi.spyOn(repository, "commitLearnAttempt");
+    commit.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectHead = reject;
+        }),
+    );
+
+    try {
+      const session = await DurableLearnSession.create(
+        repository,
+        {
+          mode: "learn",
+          activeCharacters: ["K", "M"],
+          settings: {
+            charWpm: 20,
+            effectiveWpm: 12,
+            toneHz: 600,
+            noiseLevel: 0,
+          },
+        },
+        {
+          now: clock(
+            "2026-09-26T00:00:00.000Z",
+            "2026-09-26T00:00:10.000Z",
+            "2026-09-26T00:00:20.000Z",
+          ),
+          createId: () => ids.shift()!,
+          scheduleLeaseRenewal: () => () => undefined,
+        },
+      );
+
+      const first = session.recordAttempt(
+        {
+          exerciseType: "copy-character",
+          target: "K",
+          response: "K",
+          assisted: false,
+          replayed: false,
+          abandoned: false,
+        },
+        {
+          activeMs: 10000,
+          activeDateBuckets: activeDateBuckets(10000),
+          completedCards: 1,
+          curriculum: state,
+          introductions: ["K", "M"],
+        },
+      );
+      const second = session.recordAttempt(
+        {
+          exerciseType: "copy-character",
+          target: "M",
+          response: "M",
+          assisted: false,
+          replayed: false,
+          abandoned: false,
+        },
+        {
+          activeMs: 20000,
+          activeDateBuckets: activeDateBuckets(20000),
+          completedCards: 2,
+          curriculum: state,
+          introductions: ["K", "M"],
+        },
+      );
+
+      rejectHead?.(new Error("storage unavailable"));
+      await expect(first).rejects.toThrow("storage unavailable");
+      await expect(second).rejects.toThrow("storage unavailable");
+
+      await expect(session.retry()).resolves.toBeUndefined();
+
+      expect(commit).toHaveBeenCalledTimes(3);
+      expect(commit.mock.calls[0]?.[0].attempt.id).toBe("attempt-8a");
+      expect(commit.mock.calls[1]?.[0].attempt.id).toBe("attempt-8a");
+      expect(commit.mock.calls[2]?.[0].attempt.id).toBe("attempt-8b");
+      expect(await database.attempts.count()).toBe(2);
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
 });
