@@ -2184,6 +2184,69 @@ describe("LearnScreen advancement", () => {
     expect(startLearnSessionPersistence.mock.calls[2]?.[0].mode).toBe("review");
   });
 
+  it("retries a pre-start interrupt failure and resumes requested review start", async () => {
+    const fake = makeFakeAudio();
+    const interruptError = Object.assign(new Error("transaction was aborted"), {
+      name: "AbortError",
+    });
+    const interrupt = vi
+      .fn<LearnSessionPersistence["interrupt"]>()
+      .mockRejectedValueOnce(interruptError)
+      .mockResolvedValue(undefined);
+    const initialPersistence: LearnSessionPersistence = {
+      recordAttempt: () => Promise.resolve(),
+      finish: () => Promise.resolve(),
+      interrupt,
+      acceptAdvancement: () => Promise.resolve(testCurriculum()),
+      retry: () => Promise.resolve(),
+    };
+    const reviewPersistence: LearnSessionPersistence = {
+      recordAttempt: () => Promise.resolve(),
+      finish: () => Promise.resolve(),
+      interrupt: () => Promise.resolve(),
+      acceptAdvancement: () => Promise.resolve(testCurriculum()),
+      retry: () => Promise.resolve(),
+    };
+    const startLearnSessionPersistence = vi
+      .fn<
+        (options: LearnPersistenceStart) => Promise<LearnSessionPersistence>
+      >()
+      .mockResolvedValueOnce(initialPersistence)
+      .mockResolvedValueOnce(reviewPersistence);
+
+    renderLearn(
+      fake.audio,
+      {},
+      {
+        startLearnSessionPersistence,
+      },
+    );
+    await completeContinuousCopy(fake);
+
+    fireEvent.click(screen.getByRole("button", { name: "Practice long copy" }));
+    await flush();
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Your session could not be saved",
+    );
+    fireEvent.click(screen.getByText("Save details"));
+    expect(
+      screen.getByText(
+        "Save failed (session-start): AbortError - transaction was aborted | retries: 0",
+      ),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry saving" }));
+    await flush();
+
+    expect(interrupt).toHaveBeenCalledTimes(2);
+    expect(startLearnSessionPersistence).toHaveBeenCalledTimes(2);
+    expect(startLearnSessionPersistence.mock.calls[1]?.[0].mode).toBe("review");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Continuous copy")).toHaveFocus();
+    expect(fake.pending[0]?.schedule).toBeDefined();
+  });
+
   it("starts another lesson without unlocking from the secondary action", async () => {
     const fake = makeFakeAudio();
     renderLearn(fake.audio);

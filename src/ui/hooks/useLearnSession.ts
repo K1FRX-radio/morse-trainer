@@ -578,6 +578,12 @@ export function useLearnSession() {
 
   const startSession = useCallback(
     async (mode: LearnSessionMode, sessionTiming = timing, isRetry = false) => {
+      let sessionStartRetryCounted = false;
+      const beginSessionStartOperation = () => {
+        const countAsRetry = isRetry && !sessionStartRetryCounted;
+        beginPersistenceOperation("session-start", countAsRetry);
+        if (countAsRetry) sessionStartRetryCounted = true;
+      };
       pendingStartIntentRef.current = {
         mode,
         timing: {
@@ -590,7 +596,7 @@ export function useLearnSession() {
       const previousSession = sessionRef.current;
       if (previousPersistence && previousSession) {
         previousSession.end();
-        beginPersistenceOperation("session-start", isRetry);
+        beginSessionStartOperation();
         try {
           await previousPersistence.interrupt(
             persistenceSnapshot(previousSession),
@@ -625,7 +631,7 @@ export function useLearnSession() {
       });
       let persistence: LearnSessionPersistence;
       try {
-        beginPersistenceOperation("session-start", isRetry);
+        beginSessionStartOperation();
         persistence = await startLearnSessionPersistence({
           mode,
           activeCharacters: session.unlockedNow,
@@ -1016,6 +1022,16 @@ export function useLearnSession() {
   }, [persistAdvancement, persistenceStatus, summary]);
 
   const retryPersistence = useCallback(() => {
+    if (failedOperationRef.current === "session-start") {
+      const startIntent = pendingStartIntentRef.current;
+      setPersistenceRetrying(true);
+      if (startIntent) {
+        void startSession(startIntent.mode, startIntent.timing, true);
+      } else {
+        void startSession("learn", timing, true);
+      }
+      return;
+    }
     const advancement = advancementRef.current;
     if (advancement) {
       setPersistenceRetrying(true);
@@ -1026,16 +1042,6 @@ export function useLearnSession() {
     if (finalization) {
       setPersistenceRetrying(true);
       void finalizePersistence(finalization, true);
-      return;
-    }
-    if (failedOperationRef.current === "session-start") {
-      const startIntent = pendingStartIntentRef.current;
-      setPersistenceRetrying(true);
-      if (startIntent) {
-        void startSession(startIntent.mode, startIntent.timing, true);
-      } else {
-        void startSession("learn", timing, true);
-      }
       return;
     }
     const persistence = persistenceRef.current;
