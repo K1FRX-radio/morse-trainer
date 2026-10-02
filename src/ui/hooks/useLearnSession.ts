@@ -578,12 +578,7 @@ export function useLearnSession() {
 
   const startSession = useCallback(
     async (mode: LearnSessionMode, sessionTiming = timing, isRetry = false) => {
-      let sessionStartRetryCounted = false;
-      const beginSessionStartOperation = () => {
-        const countAsRetry = isRetry && !sessionStartRetryCounted;
-        beginPersistenceOperation("session-start", countAsRetry);
-        if (countAsRetry) sessionStartRetryCounted = true;
-      };
+      beginPersistenceOperation("session-start", isRetry);
       pendingStartIntentRef.current = {
         mode,
         timing: {
@@ -596,12 +591,10 @@ export function useLearnSession() {
       const previousSession = sessionRef.current;
       if (previousPersistence && previousSession) {
         previousSession.end();
-        beginSessionStartOperation();
         try {
           await previousPersistence.interrupt(
             persistenceSnapshot(previousSession),
           );
-          completePersistenceOperation();
         } catch (cause) {
           setPersistenceFailed("session-start", cause);
           return;
@@ -631,7 +624,6 @@ export function useLearnSession() {
       });
       let persistence: LearnSessionPersistence;
       try {
-        beginSessionStartOperation();
         persistence = await startLearnSessionPersistence({
           mode,
           activeCharacters: session.unlockedNow,
