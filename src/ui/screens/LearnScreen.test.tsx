@@ -741,6 +741,49 @@ describe("LearnScreen input gating", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
+  it("shows retry progress while retrying an ordinary persistence failure", async () => {
+    const fake = makeFakeAudio();
+    let resolveRetry: (() => void) | undefined;
+    const retry = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveRetry = resolve;
+        }),
+    );
+    const persistence: LearnSessionPersistence = {
+      recordAttempt: () => Promise.reject(new Error("quota exceeded")),
+      finish: () => Promise.resolve(),
+      interrupt: () => Promise.resolve(),
+      acceptAdvancement: () => Promise.resolve(testCurriculum()),
+      retry,
+    };
+    renderLearn(
+      fake.audio,
+      {},
+      {
+        startLearnSessionPersistence: () => Promise.resolve(persistence),
+      },
+    );
+    await toFirstCopy(fake);
+
+    fireEvent.change(screen.getByLabelText("Your copy"), {
+      target: { value: "K" },
+    });
+    await flush();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry saving" }));
+    await flush();
+
+    expect(screen.getByText("Retrying save...")).toBeInTheDocument();
+    expect(retry).toHaveBeenCalledOnce();
+
+    await act(async () => resolveRetry?.());
+    await flush();
+
+    expect(screen.queryByText("Retrying save...")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("accepts mobile-style change events", async () => {
     const fake = makeFakeAudio();
     renderLearn(fake.audio);

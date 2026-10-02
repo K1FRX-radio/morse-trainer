@@ -167,6 +167,7 @@ export function useLearnSession() {
   const [persistenceError, setPersistenceError] = useState<string | undefined>(
     undefined,
   );
+  const [persistenceRetrying, setPersistenceRetrying] = useState(false);
   const [, forceTick] = useState(0);
 
   const persistenceSnapshot = useCallback(
@@ -185,6 +186,7 @@ export function useLearnSession() {
 
   const setPersistenceFailed = useCallback(() => {
     setPersistenceStatus("error");
+    setPersistenceRetrying(false);
     setPersistenceError(
       "Your session could not be saved. Check storage access and try again.",
     );
@@ -202,6 +204,7 @@ export function useLearnSession() {
             persistenceOperation.current === token
           ) {
             setPersistenceStatus("ready");
+            setPersistenceRetrying(false);
           }
         })
         .catch(() => {
@@ -240,6 +243,7 @@ export function useLearnSession() {
         ) {
           setRetryClassification(classification);
           setPersistenceStatus("ready");
+          setPersistenceRetrying(false);
         }
       } catch {
         if (
@@ -887,6 +891,7 @@ export function useLearnSession() {
         stateRef.current = canonicalState;
         advancementRef.current = undefined;
         setPersistenceStatus("ready");
+        setPersistenceRetrying(false);
         if (work.acceptance.type === "character-unlocked") {
           void startSession("learn");
           return;
@@ -938,19 +943,23 @@ export function useLearnSession() {
   const retryPersistence = useCallback(() => {
     const advancement = advancementRef.current;
     if (advancement) {
+      setPersistenceRetrying(true);
       void persistAdvancement(advancement);
       return;
     }
     const finalization = finalizationRef.current;
     if (finalization) {
+      setPersistenceRetrying(true);
       void finalizePersistence(finalization);
       return;
     }
     const persistence = persistenceRef.current;
     if (!persistence) {
+      setPersistenceRetrying(false);
       if (phase === "onboarding") void startSession("learn");
       return;
     }
+    setPersistenceRetrying(true);
     trackPersistence(persistence, persistence.retry());
   }, [
     finalizePersistence,
@@ -1053,6 +1062,7 @@ export function useLearnSession() {
     retryRecommendation,
     persistenceStatus,
     persistenceError,
+    persistenceRetrying,
     auto,
     inputReady,
     typingReady,
