@@ -3,8 +3,10 @@ import { createRng } from "../core/rng.ts";
 import {
   CW_WORDS,
   GROUP_SIZE,
+  eligibleCopyWords,
   generateCallsign,
   generateCopyPrompt,
+  generateScopedCopyPrompt,
 } from "./practice-content.ts";
 
 describe("generateCopyPrompt", () => {
@@ -40,5 +42,88 @@ describe("generateCopyPrompt", () => {
   it("generates callsign-style prompts with a digit", () => {
     const call = generateCallsign(createRng(9));
     expect(call).toMatch(/^[A-Z]{1,2}[0-9][A-Z]{1,3}$/);
+  });
+
+  it("defaults letters scope to unlocked characters only", () => {
+    const prompt = generateScopedCopyPrompt(
+      "letters",
+      createRng(12),
+      "unlocked",
+      ["K", "M"],
+    );
+    expect(prompt).toBeDefined();
+    expect(prompt).toHaveLength(GROUP_SIZE);
+    expect(prompt).toMatch(/^[KM]+$/);
+  });
+
+  it("keeps digits locked in unlocked letters-numbers scope", () => {
+    const prompt = generateScopedCopyPrompt(
+      "letters-numbers",
+      createRng(13),
+      "unlocked",
+      ["K", "M"],
+    );
+    expect(prompt).toBeDefined();
+    expect(prompt).toMatch(/^[KM]+$/);
+  });
+
+  it("filters words to unlocked characters only", () => {
+    const unlocked = ["Q", "R", "M", "N"];
+    const words = eligibleCopyWords(unlocked);
+    expect(words.length).toBeGreaterThan(0);
+    for (const word of words) {
+      expect(word).toMatch(/^[QRMN]+$/);
+    }
+    const prompt = generateScopedCopyPrompt(
+      "words",
+      createRng(14),
+      "unlocked",
+      unlocked,
+    );
+    expect(prompt).toBeDefined();
+    expect(prompt).toMatch(/^[QRMN]+$/);
+  });
+
+  it("returns undefined for unlocked words with no eligible corpus entries", () => {
+    const prompt = generateScopedCopyPrompt(
+      "words",
+      createRng(15),
+      "unlocked",
+      ["K", "M"],
+    );
+    expect(prompt).toBeUndefined();
+  });
+
+  it("returns undefined for unlocked callsigns without unlocked digits", () => {
+    const prompt = generateScopedCopyPrompt(
+      "callsigns",
+      createRng(16),
+      "unlocked",
+      ["K", "M", "U"],
+    );
+    expect(prompt).toBeUndefined();
+  });
+
+  it("preserves broad pool behavior in all-characters scope", () => {
+    const prompt = generateScopedCopyPrompt(
+      "letters",
+      createRng(17),
+      "all-characters",
+      ["K", "M"],
+    );
+    expect(prompt).toBeDefined();
+    expect(prompt).toMatch(/^[A-Z]+$/);
+    expect(prompt).not.toMatch(/^[KM]+$/);
+  });
+
+  it("generates unlocked callsigns when letters and digits are available", () => {
+    const prompt = generateScopedCopyPrompt(
+      "callsigns",
+      createRng(18),
+      "unlocked",
+      ["K", "M", "2"],
+    );
+    expect(prompt).toBeDefined();
+    expect(prompt).toMatch(/^[KM]{1,2}2[KM]{1,3}$/);
   });
 });
