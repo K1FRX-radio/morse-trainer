@@ -2444,21 +2444,40 @@ describe("LearnScreen advancement", () => {
 
   it("does not show Retry for non-retryable malformed finalization failures", async () => {
     const fake = makeFakeAudio();
+    const interrupt = vi
+      .fn<LearnSessionPersistence["interrupt"]>()
+      .mockResolvedValue(undefined);
+    const retry = vi
+      .fn<LearnSessionPersistence["retry"]>()
+      .mockRejectedValue(preflightError());
     const finish = vi.fn<LearnSessionPersistence["finish"]>(() =>
       Promise.reject(preflightError()),
     );
-    const persistence: LearnSessionPersistence = {
+    const firstPersistence: LearnSessionPersistence = {
       recordAttempt: () => Promise.resolve(),
       finish,
+      interrupt,
+      acceptAdvancement: () => Promise.resolve(testCurriculum()),
+      retry,
+    };
+    const secondPersistence: LearnSessionPersistence = {
+      recordAttempt: () => Promise.resolve(),
+      finish: () => Promise.resolve(),
       interrupt: () => Promise.resolve(),
       acceptAdvancement: () => Promise.resolve(testCurriculum()),
-      retry: () => Promise.reject(preflightError()),
+      retry: () => Promise.resolve(),
     };
+    const startLearnSessionPersistence = vi
+      .fn<
+        (options: LearnPersistenceStart) => Promise<LearnSessionPersistence>
+      >()
+      .mockResolvedValueOnce(firstPersistence)
+      .mockResolvedValueOnce(secondPersistence);
     renderLearn(
       fake.audio,
       {},
       {
-        startLearnSessionPersistence: () => Promise.resolve(persistence),
+        startLearnSessionPersistence,
       },
     );
 
@@ -2467,12 +2486,27 @@ describe("LearnScreen advancement", () => {
 
     const alert = screen.getByRole("alert");
     expect(alert).toHaveTextContent("internal save error");
-    expect(alert).toHaveTextContent("End this lesson and start a new one");
+    expect(alert).toHaveTextContent("Start a new lesson below");
     expect(alert).not.toHaveTextContent("Check storage access and try again");
     expect(
       screen.queryByRole("button", { name: "Retry saving" }),
     ).not.toBeInTheDocument();
-    expect(finish).toHaveBeenCalled();
+
+    const recover = screen.getByRole("button", { name: "Start a new lesson" });
+    expect(recover).toBeEnabled();
+
+    fireEvent.click(recover);
+    await flush();
+
+    expect(startLearnSessionPersistence).toHaveBeenCalledTimes(2);
+    expect(startLearnSessionPersistence.mock.calls[1]?.[0].mode).toBe("learn");
+    expect(interrupt).toHaveBeenCalledOnce();
+    expect(finish).toHaveBeenCalledTimes(1);
+    expect(retry).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("heading", { name: "Session complete" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "End session" })).toBeEnabled();
   });
 
   it("retries session-start failure from summary using the same start mode", async () => {

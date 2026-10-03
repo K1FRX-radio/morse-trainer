@@ -22,6 +22,15 @@ const RETRYABLE_MESSAGE =
 const NON_RETRYABLE_MESSAGE =
   "This lesson could not be saved because of an internal save error. End this lesson and start a new one.";
 
+function nonRetryableMessageFor(
+  operation: PersistenceOperationCategory,
+): string {
+  if (operation === "finalization") {
+    return "This lesson could not be finalized because of an internal save error. Start a new lesson below to recover safely.";
+  }
+  return NON_RETRYABLE_MESSAGE;
+}
+
 function stringField(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const normalized = value.trim();
@@ -71,7 +80,9 @@ export function toPersistenceDiagnostic(
     operation,
     retryCount,
     retryable,
-    userMessage: retryable ? RETRYABLE_MESSAGE : NON_RETRYABLE_MESSAGE,
+    userMessage: retryable
+      ? RETRYABLE_MESSAGE
+      : nonRetryableMessageFor(operation),
     ...(name ? { name } : {}),
     ...(message ? { message } : {}),
     summary: `Save failed (${operation}): ${errorName}${errorMessage} | retries: ${retryCount}`,

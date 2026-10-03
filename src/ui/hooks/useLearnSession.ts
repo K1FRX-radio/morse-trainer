@@ -1082,6 +1082,20 @@ export function useLearnSession() {
     trackPersistence,
   ]);
 
+  const recoverFromFinalizationFailure = useCallback(() => {
+    if (phase !== "summary") return;
+    if (persistenceStatus !== "error") return;
+    const diagnostic = persistenceDiagnostic;
+    if (
+      !diagnostic ||
+      diagnostic.retryable ||
+      diagnostic.operation !== "finalization"
+    ) {
+      return;
+    }
+    void startSession("learn", timing);
+  }, [phase, persistenceStatus, persistenceDiagnostic, startSession, timing]);
+
   const physicalKeyDown = useCallback(
     (
       key: string,
@@ -1210,6 +1224,7 @@ export function useLearnSession() {
       previewCharacter,
       acceptSpacingSuggestion,
       retryPersistence,
+      recoverFromFinalizationFailure,
       acceptIsolated,
       updateGroupWord,
       submitGroupWord,

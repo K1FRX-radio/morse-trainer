@@ -33,7 +33,7 @@ describe("toPersistenceDiagnostic", () => {
       operation: "finalization",
       retryable: false,
       userMessage:
-        "This lesson could not be saved because of an internal save error. End this lesson and start a new one.",
+        "This lesson could not be finalized because of an internal save error. Start a new lesson below to recover safely.",
       name: "LearnPersistencePreflightError",
     });
   });
