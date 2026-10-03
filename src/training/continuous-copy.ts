@@ -36,7 +36,7 @@ export type ContinuousCopyConfig = {
 };
 
 export const DEFAULT_CONTINUOUS_COPY_CONFIG: ContinuousCopyConfig = {
-  newestWeight: 2,
+  newestWeight: 0.25,
   reviewWeight: 3,
   weakWeight: 2,
   maxIdenticalRun: 2,
@@ -167,7 +167,11 @@ function characterWeight(
 function buildRandomGroup(
   active: readonly string[],
   length: number,
+  initialCoverage: ReadonlyMap<string, number>,
   remainingCoverage: Map<string, number>,
+  coverageDeadlineCharacters: number,
+  generatedCharacters: number,
+  forceCoverage: boolean,
   previousToken: string | undefined,
   newest: string,
   review: ReadonlySet<string>,
@@ -177,12 +181,40 @@ function buildRandomGroup(
 ): string {
   const characters: string[] = [];
   while (characters.length < length) {
+    const outstandingCoverage = [...remainingCoverage.values()].reduce(
+      (total, remaining) => total + Math.max(0, remaining),
+      0,
+    );
+    const produced = generatedCharacters + characters.length;
+    const nextProduced = produced + 1;
+    const hasBehindCharacter =
+      coverageDeadlineCharacters > 0 &&
+      [...initialCoverage.entries()].some(([character, required]) => {
+        if (required <= 0) {
+          return false;
+        }
+        const remaining = Math.max(0, remainingCoverage.get(character) ?? 0);
+        const completed = required - remaining;
+        const targetByNow = Math.floor(
+          (nextProduced * required) / coverageDeadlineCharacters,
+        );
+        return completed < targetByNow;
+      });
+    const requireCoverage =
+      forceCoverage ||
+      (active.length <= 2
+        ? outstandingCoverage > 0
+        : coverageDeadlineCharacters > 0 &&
+          outstandingCoverage > 0 &&
+          hasBehindCharacter);
+
     const character = selectGroupCharacter({
       active,
       prefix: characters,
       tokenLength: length,
       previousToken,
       remainingCoverage,
+      requireCoverage,
       maxIdenticalRun: config.maxIdenticalRun,
       weight: (candidate) =>
         characterWeight(candidate, newest, review, weak, config),
@@ -196,6 +228,18 @@ function buildRandomGroup(
   }
 
   return characters.join("");
+}
+
+function decrementCoverageForText(
+  remainingCoverage: Map<string, number>,
+  text: string,
+): void {
+  for (const character of text) {
+    const remaining = remainingCoverage.get(character) ?? 0;
+    if (remaining > 0) {
+      remainingCoverage.set(character, remaining - 1);
+    }
+  }
 }
 
 function chooseWord(
@@ -235,9 +279,9 @@ export function buildContinuousCopyPlan(
     buildSchedule(`${sample} ${sample}`, options.timing).totalMs -
     2 * sampleDuration;
   const candidateOrder = shuffled(active, options.rng);
-  // Reserve full active-set coverage and the newest-character minimum before
-  // ordinary weighted sampling or word mixing can begin.
-  const remainingCoverage = new Map(
+  // Reserve full active-set coverage and newest minimum evidence, then pace
+  // consumption of that reserve over the stream rather than front-loading it.
+  const initialCoverage = new Map(
     candidateOrder.map((character) => [
       character,
       character === options.newest
@@ -245,25 +289,47 @@ export function buildContinuousCopyPlan(
         : 1,
     ]),
   );
+  const remainingCoverage = new Map(initialCoverage);
+  const remainingWordGateCoverage = new Map(
+    candidateOrder.map((character) => [character, 1]),
+  );
   const tokens: ContinuousCopyToken[] = [];
   const groupLengths: number[] = [];
   const minimumEvidence =
     options.durationMs >= recommendedContinuousCopyDurationMs(active.length)
       ? minimumAdvancementObservations(active.length)
       : 0;
+  const requiredCoverageCharacters = Math.max(
+    minimumEvidence,
+    [...remainingCoverage.values()].reduce(
+      (total, remaining) => total + Math.max(0, remaining),
+      0,
+    ),
+  );
+  const estimatedCharactersForDuration = Math.max(
+    requiredCoverageCharacters,
+    Math.floor(options.durationMs / sampleDuration),
+  );
+  const coverageDeadlineCharacters = Math.max(
+    requiredCoverageCharacters,
+    Math.floor(estimatedCharactersForDuration * 0.5),
+  );
   let consecutiveWords = 0;
   let generatedCharacters = 0;
   let scheduledDurationMs = 0;
+
+  const hasOutstandingCoverage = () =>
+    [...remainingCoverage.values()].some((remaining) => remaining > 0);
 
   while (
     scheduledDurationMs < options.durationMs ||
     generatedCharacters < minimumEvidence
   ) {
-    const coverageComplete = [...remainingCoverage.values()].every(
-      (remaining) => remaining === 0,
-    );
+    const wordGateCoverageComplete = [
+      ...remainingWordGateCoverage.values(),
+    ].every((remaining) => remaining === 0);
     const useWord =
-      coverageComplete &&
+      wordGateCoverageComplete &&
       options.wordEligibility?.eligible === true &&
       options.wordEligibility.candidates.length > 0 &&
       consecutiveWords < config.maxConsecutiveWordTokens &&
@@ -281,8 +347,28 @@ export function buildContinuousCopyPlan(
           options.rng,
         ),
       };
+      decrementCoverageForText(remainingCoverage, token.text);
+      decrementCoverageForText(remainingWordGateCoverage, token.text);
       consecutiveWords += 1;
     } else {
+      const outstandingCoverage = hasOutstandingCoverage()
+        ? [...remainingCoverage.values()].reduce(
+            (total, remaining) => total + Math.max(0, remaining),
+            0,
+          )
+        : 0;
+      const remainingDurationMs = Math.max(
+        0,
+        options.durationMs - scheduledDurationMs,
+      );
+      const estimatedRemainingCharacters = Math.max(
+        1,
+        Math.floor(remainingDurationMs / sampleDuration),
+      );
+      const forceCoverage =
+        minimumEvidence > 0 &&
+        outstandingCoverage > 0 &&
+        outstandingCoverage >= estimatedRemainingCharacters;
       const length = chooseGroupLength(
         active.length,
         groupLengths,
@@ -294,7 +380,11 @@ export function buildContinuousCopyPlan(
         text: buildRandomGroup(
           candidateOrder,
           length,
+          initialCoverage,
           remainingCoverage,
+          coverageDeadlineCharacters,
+          generatedCharacters,
+          forceCoverage,
           tokens.at(-1)?.text,
           options.newest,
           review,
@@ -303,6 +393,7 @@ export function buildContinuousCopyPlan(
           options.rng,
         ),
       };
+      decrementCoverageForText(remainingWordGateCoverage, token.text);
       groupLengths.push(length);
       consecutiveWords = 0;
     }
@@ -311,6 +402,38 @@ export function buildContinuousCopyPlan(
     if (tokens.length > 0) scheduledDurationMs += boundaryGapMs;
     tokens.push(token);
     generatedCharacters += text.length;
+    scheduledDurationMs += tokenDurationMs;
+  }
+
+  while (minimumEvidence > 0 && hasOutstandingCoverage()) {
+    const repairToken = {
+      kind: "random-group" as const,
+      text: buildRandomGroup(
+        candidateOrder,
+        1,
+        initialCoverage,
+        remainingCoverage,
+        coverageDeadlineCharacters,
+        generatedCharacters,
+        true,
+        tokens.at(-1)?.text,
+        options.newest,
+        review,
+        weak,
+        config,
+        options.rng,
+      ),
+    };
+    decrementCoverageForText(remainingWordGateCoverage, repairToken.text);
+    consecutiveWords = 0;
+
+    const tokenDurationMs = buildSchedule(
+      repairToken.text,
+      options.timing,
+    ).totalMs;
+    if (tokens.length > 0) scheduledDurationMs += boundaryGapMs;
+    tokens.push(repairToken);
+    generatedCharacters += repairToken.text.length;
     scheduledDurationMs += tokenDurationMs;
   }
 
