@@ -67,6 +67,7 @@ type RenderPracticeOptions = {
   curriculum?: CurriculumState;
   characterProjections?: CharacterProjectionRecord[];
   listCharacterProjections?: ReturnType<typeof vi.fn>;
+  loadCurriculum?: () => CurriculumState;
 };
 
 function renderPractice(
@@ -81,6 +82,8 @@ function renderPractice(
     vi.fn(() => Promise.resolve(options.characterProjections ?? []));
   const curriculum =
     options.curriculum ?? createInitialState(DEFAULT_CURRICULUM_CONFIG);
+  const loadCurriculum =
+    options.loadCurriculum ?? (() => structuredClone(curriculum));
   const view = render(
     <SettingsContext.Provider
       value={{
@@ -92,7 +95,7 @@ function renderPractice(
     >
       <TrainingDataContext.Provider
         value={{
-          loadCurriculum: () => structuredClone(curriculum),
+          loadCurriculum,
           saveCurriculum,
           reconcileCurriculum: () => Promise.resolve(curriculum),
           loadIntroductions: () => [],
@@ -378,6 +381,40 @@ describe("SendPractice persistence", () => {
       expect.objectContaining({ completedCards: 1 }),
     );
     expect(saveCurriculum).not.toHaveBeenCalled();
+  });
+
+  it("does not mutate learn progression state during Send Practice", async () => {
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => (now += 200));
+    const session = persistence();
+    const curriculum = sendCurriculum(["T", "E"]);
+    const initialProgression = structuredClone(curriculum);
+    const { saveCurriculum } = renderPractice(<SendPractice />, session, {
+      curriculum,
+      loadCurriculum: () => curriculum,
+    });
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Send this character")).toHaveTextContent(
+        /[TE]/,
+      ),
+    );
+
+    fireEvent.keyDown(window, { key: " " });
+    fireEvent.keyUp(window, { key: " " });
+    fireEvent.click(screen.getByRole("button", { name: "New target" }));
+    await waitFor(() => expect(session.recordAttempt).toHaveBeenCalledOnce());
+    await waitFor(() =>
+      expect(screen.getByLabelText("Send this character")).toHaveTextContent(
+        /[TE]/,
+      ),
+    );
+
+    selectSendMode("group-2");
+    await waitFor(() => expect(sendTargetText()).toMatch(/^[TE]{2}$/));
+
+    expect(saveCurriculum).not.toHaveBeenCalled();
+    expect(curriculum).toEqual(initialProgression);
   });
 
   it("commits a non-empty miss before advancing to a new target", async () => {
