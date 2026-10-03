@@ -43,6 +43,7 @@ import {
   DEFAULT_IDLE_THRESHOLD_MS,
   type ActiveDateBucket,
   type ActiveTimeContext,
+  type ActiveTimeSnapshot,
 } from "./session-time.ts";
 import type { FocusedWordEligibility } from "./word-selection.ts";
 
@@ -589,12 +590,16 @@ export class LearnSession {
     return this.summary();
   }
 
+  get activeTimeSnapshot(): ActiveTimeSnapshot {
+    return this.activeTime.snapshot();
+  }
+
   get elapsedActiveMs(): number {
-    return this.activeTime.snapshot().activeMs;
+    return this.activeTimeSnapshot.activeMs;
   }
 
   get activeDateBuckets(): ActiveDateBucket[] {
-    return this.activeTime.snapshot().activeDateBuckets;
+    return this.activeTimeSnapshot.activeDateBuckets;
   }
 
   get totalCards(): number {

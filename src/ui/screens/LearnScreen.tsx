@@ -50,6 +50,7 @@ export function LearnScreen() {
     practiceLongCopy,
     acceptSpacingSuggestion,
     retryPersistence,
+    recoverFromFinalizationFailure,
     endSession,
     physicalKeyDown,
     physicalKeyUp,
@@ -86,6 +87,12 @@ export function LearnScreen() {
       ),
     [learn.dashboard.characters, selectedCharacter],
   );
+  const canRetryPersistence = learn.persistenceDiagnostic?.retryable ?? true;
+  const showFinalizationRecovery =
+    learn.phase === "summary" &&
+    learn.persistenceStatus === "error" &&
+    learn.persistenceDiagnostic?.retryable === false &&
+    learn.persistenceDiagnostic.operation === "finalization";
   const persistenceNotice =
     learn.persistenceStatus === "error" ? (
       <div className="feedback feedback--neutral" role="alert">
@@ -96,9 +103,19 @@ export function LearnScreen() {
             <p>{learn.persistenceDiagnostic.summary}</p>
           </details>
         )}
-        <button type="button" onClick={retryPersistence}>
-          Retry saving
-        </button>
+        {canRetryPersistence && (
+          <button type="button" onClick={retryPersistence}>
+            Retry saving
+          </button>
+        )}
+        {showFinalizationRecovery && (
+          <button
+            type="button"
+            onClick={() => void recoverFromFinalizationFailure()}
+          >
+            Start a new lesson
+          </button>
+        )}
       </div>
     ) : learn.persistenceStatus === "pending" &&
       (learn.phase === "summary" || learn.persistenceRetrying) ? (

@@ -2,6 +2,9 @@ import { IDBKeyRange, indexedDB } from "fake-indexeddb";
 import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_CURRICULUM_CONFIG } from "../content/curriculum-data.ts";
 import { createInitialState } from "../core/curriculum.ts";
+import { createRng } from "../core/rng.ts";
+import { LearnSession } from "../training/learn-session.ts";
+import type { ActiveTimeContext } from "../training/session-time.ts";
 import { TrainerDatabase } from "./indexeddb.ts";
 import { DurableLearnSession } from "./learn-persistence.ts";
 import { DexieTrainingRepository } from "./repository.ts";
@@ -762,6 +765,230 @@ describe("DurableLearnSession", () => {
       expect(commit.mock.calls[1]?.[0].attempt.id).toBe("attempt-8a");
       expect(commit.mock.calls[2]?.[0].attempt.id).toBe("attempt-8b");
       expect(await database.attempts.count()).toBe(2);
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
+  it("rejects malformed active-time snapshots before enqueue and does not wedge later attempts", async () => {
+    const { database, repository } = await setup();
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    const ids = ["owner-9", "session-9", "attempt-9"];
+
+    try {
+      const session = await DurableLearnSession.create(
+        repository,
+        {
+          mode: "learn",
+          activeCharacters: ["K", "M"],
+          settings: {
+            charWpm: 20,
+            effectiveWpm: 12,
+            toneHz: 600,
+            noiseLevel: 0,
+          },
+        },
+        {
+          now: clock("2026-09-26T01:00:00.000Z", "2026-09-26T01:00:10.000Z"),
+          createId: () => ids.shift()!,
+          scheduleLeaseRenewal: () => () => undefined,
+        },
+      );
+
+      await expect(
+        session.recordAttempt(
+          {
+            exerciseType: "copy-character",
+            target: "K",
+            response: "K",
+            assisted: false,
+            replayed: false,
+            abandoned: false,
+          },
+          {
+            activeMs: 10000,
+            activeDateBuckets: activeDateBuckets(9000),
+            completedCards: 1,
+            curriculum: state,
+            introductions: ["K", "M"],
+          },
+        ),
+      ).rejects.toThrow("activeDateBuckets sum");
+
+      await expect(session.retry()).rejects.toThrow("activeDateBuckets sum");
+      expect(await database.attempts.count()).toBe(0);
+
+      await session.recordAttempt(
+        {
+          exerciseType: "copy-character",
+          target: "K",
+          response: "K",
+          assisted: false,
+          replayed: false,
+          abandoned: false,
+        },
+        {
+          activeMs: 11000,
+          activeDateBuckets: activeDateBuckets(11000),
+          completedCards: 2,
+          curriculum: state,
+          introductions: ["K", "M"],
+        },
+      );
+
+      expect(await database.attempts.count()).toBe(1);
+      expect(await database.attempts.get("attempt-9")).toMatchObject({
+        normalizedTarget: "K",
+        normalizedResponse: "K",
+      });
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
+  it("keeps malformed finalization preflight non-retryable and leaves session active", async () => {
+    const { database, repository } = await setup();
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    const ids = ["owner-11", "session-11"];
+    const cancelRenewal = vi.fn();
+
+    try {
+      const session = await DurableLearnSession.create(
+        repository,
+        {
+          mode: "learn",
+          activeCharacters: ["K", "M"],
+          settings: {
+            charWpm: 20,
+            effectiveWpm: 12,
+            toneHz: 600,
+            noiseLevel: 0,
+          },
+        },
+        {
+          now: clock("2026-09-26T03:00:00.000Z", "2026-09-26T03:00:10.000Z"),
+          createId: () => ids.shift()!,
+          scheduleLeaseRenewal: () => cancelRenewal,
+        },
+      );
+
+      await expect(
+        session.finish({
+          activeMs: 10000,
+          activeDateBuckets: activeDateBuckets(9000),
+          completedCards: 0,
+          curriculum: state,
+          introductions: ["K", "M"],
+        }),
+      ).rejects.toThrow("activeDateBuckets sum");
+
+      await expect(session.retry()).rejects.toThrow("activeDateBuckets sum");
+
+      expect(cancelRenewal).not.toHaveBeenCalled();
+      const persistedSession = await database.sessions.get("session-11");
+      expect(persistedSession).toMatchObject({
+        status: "active",
+        attemptCount: 0,
+        finalizedAttemptCount: 0,
+        revision: 0,
+      });
+      expect(await database.attempts.count()).toBe(0);
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
+  it("persists ordinary Learn attempts with consistent active-time totals", async () => {
+    const { database, repository } = await setup();
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    const ids = ["owner-10", "session-10", "attempt-10"];
+    const startUtc = Date.parse("2026-11-01T05:59:59.400Z");
+    let monotonic = 0;
+    const now = () => monotonic;
+    const wallNow = () => new Date(startUtc + monotonic);
+    const captureAt = (date: Date): ActiveTimeContext => {
+      const instant = date.getTime();
+      const offsetMinutes =
+        instant >= Date.parse("2026-11-01T06:00:00.000Z") ? -300 : -240;
+      const local = new Date(instant + offsetMinutes * 60000);
+      return {
+        utc: date.toISOString(),
+        localDate: local.toISOString().slice(0, 10),
+        utcOffsetMinutes: offsetMinutes,
+        timeZone: "America/New_York",
+      };
+    };
+
+    try {
+      const durable = await DurableLearnSession.create(
+        repository,
+        {
+          mode: "learn",
+          activeCharacters: ["K", "M"],
+          settings: {
+            charWpm: 20,
+            effectiveWpm: 12,
+            toneHz: 600,
+            noiseLevel: 0,
+          },
+        },
+        {
+          now: clock(
+            "2026-09-26T02:00:00.000Z",
+            "2026-09-26T02:00:10.000Z",
+            "2026-09-26T02:00:20.000Z",
+          ),
+          createId: () => ids.shift()!,
+          scheduleLeaseRenewal: () => () => undefined,
+        },
+      );
+
+      const learn = new LearnSession({
+        state,
+        rng: createRng(42),
+        now,
+        wallNow,
+        captureAt,
+      });
+      learn.start();
+
+      monotonic += 2.25;
+      const event = learn.next();
+      if (event?.type !== "introduce") {
+        throw new Error("expected first Learn event to be introduce");
+      }
+      learn.submit("");
+      monotonic += 8.5;
+
+      await durable.recordAttempt(
+        {
+          exerciseType: "copy-character",
+          target: "K",
+          response: "K",
+          assisted: false,
+          replayed: false,
+          abandoned: false,
+        },
+        {
+          ...learn.activeTimeSnapshot,
+          completedCards: learn.completedCards,
+          curriculum: state,
+          introductions: learn.completedIntroductions,
+        },
+      );
+
+      const persisted = await database.sessions.get("session-10");
+      const bucketTotal = persisted?.activeDateBuckets.reduce(
+        (total, bucket) => total + bucket.activeMs,
+        0,
+      );
+      expect(bucketTotal).toBeDefined();
+      expect(
+        Math.abs((bucketTotal ?? 0) - (persisted?.activeMs ?? 0)),
+      ).toBeLessThanOrEqual(0.001);
     } finally {
       repository.close();
       await database.delete();

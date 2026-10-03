@@ -202,16 +202,19 @@ export function useLearnSession() {
   });
 
   const persistenceSnapshot = useCallback(
-    (session: LearnSession): LearnPersistenceSnapshot => ({
-      activeMs: session.elapsedActiveMs,
-      activeDateBuckets: session.activeDateBuckets,
-      completedCards: session.completedCards,
-      curriculum: stateRef.current,
-      introductions: [
-        ...loadIntroductions(),
-        ...session.completedIntroductions,
-      ],
-    }),
+    (session: LearnSession): LearnPersistenceSnapshot => {
+      const activeTime = session.activeTimeSnapshot;
+      return {
+        activeMs: activeTime.activeMs,
+        activeDateBuckets: activeTime.activeDateBuckets,
+        completedCards: session.completedCards,
+        curriculum: stateRef.current,
+        introductions: [
+          ...loadIntroductions(),
+          ...session.completedIntroductions,
+        ],
+      };
+    },
     [loadIntroductions],
   );
 
@@ -219,14 +222,11 @@ export function useLearnSession() {
     (operation: PersistenceOperationCategory, cause: unknown) => {
       failedOperationRef.current = operation;
       const retryCount = retryCountsRef.current[operation];
-      setPersistenceDiagnostic(
-        toPersistenceDiagnostic(operation, retryCount, cause),
-      );
+      const diagnostic = toPersistenceDiagnostic(operation, retryCount, cause);
+      setPersistenceDiagnostic(diagnostic);
       setPersistenceStatus("error");
       setPersistenceRetrying(false);
-      setPersistenceError(
-        "Your session could not be saved. Check storage access and try again.",
-      );
+      setPersistenceError(diagnostic.userMessage);
     },
     [],
   );
@@ -1082,6 +1082,20 @@ export function useLearnSession() {
     trackPersistence,
   ]);
 
+  const recoverFromFinalizationFailure = useCallback(() => {
+    if (phase !== "summary") return;
+    if (persistenceStatus !== "error") return;
+    const diagnostic = persistenceDiagnostic;
+    if (
+      !diagnostic ||
+      diagnostic.retryable ||
+      diagnostic.operation !== "finalization"
+    ) {
+      return;
+    }
+    void startSession("learn", timing);
+  }, [phase, persistenceStatus, persistenceDiagnostic, startSession, timing]);
+
   const physicalKeyDown = useCallback(
     (
       key: string,
@@ -1210,6 +1224,7 @@ export function useLearnSession() {
       previewCharacter,
       acceptSpacingSuggestion,
       retryPersistence,
+      recoverFromFinalizationFailure,
       acceptIsolated,
       updateGroupWord,
       submitGroupWord,
