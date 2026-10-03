@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS, normalizeSettings } from "../../core/settings.ts";
 import { SettingsProvider } from "../settings-provider.tsx";
+import { TrainingDataContext } from "../training-data-context.ts";
 import { SettingsScreen } from "./SettingsScreen.tsx";
 
 function renderSettings(
@@ -9,12 +10,32 @@ function renderSettings(
   persistSettings = vi.fn(),
 ) {
   return render(
-    <SettingsProvider
-      initialSettings={initialSettings}
-      persistSettings={persistSettings}
+    <TrainingDataContext.Provider
+      value={{
+        loadCurriculum: vi.fn(),
+        saveCurriculum: vi.fn(),
+        reconcileCurriculum: vi.fn(),
+        loadIntroductions: vi.fn(),
+        saveIntroductions: vi.fn(),
+        startLearnSessionPersistence: vi.fn(),
+        startPracticeSessionPersistence: vi.fn(),
+        getRetryClassification: vi.fn(),
+        listDailyProjections: vi.fn(),
+        listCharacterProjections: vi.fn(),
+        listConfusionProjections: vi.fn(),
+        exportPortableBackup: vi.fn(),
+        previewPortableBackup: vi.fn(),
+        replacePortableBackup: vi.fn(),
+        resetPortableData: vi.fn(),
+      }}
     >
-      <SettingsScreen />
-    </SettingsProvider>,
+      <SettingsProvider
+        initialSettings={initialSettings}
+        persistSettings={persistSettings}
+      >
+        <SettingsScreen />
+      </SettingsProvider>
+    </TrainingDataContext.Provider>,
   );
 }
 

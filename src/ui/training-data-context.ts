@@ -16,6 +16,10 @@ import type {
   DailyProjectionRecord,
 } from "../data/models.ts";
 import type {
+  PortableBackupDocument,
+  PortableBackupPreview,
+} from "../data/backup.ts";
+import type {
   LearnPersistenceStart,
   LearnSessionPersistence,
 } from "../data/learn-persistence.ts";
@@ -49,6 +53,12 @@ export type TrainingDataContextValue = {
   listConfusionProjections: (
     query: ConfusionProjectionQuery,
   ) => Promise<ConfusionProjectionRecord[]>;
+  exportPortableBackup?: (
+    appVersion: string,
+  ) => Promise<PortableBackupDocument>;
+  previewPortableBackup?: (rawJson: string) => Promise<PortableBackupPreview>;
+  replacePortableBackup?: (rawJson: string) => Promise<void>;
+  resetPortableData?: () => Promise<void>;
 };
 
 export const TrainingDataContext = createContext<
