@@ -268,6 +268,23 @@ describe("ActiveTimeTracker", () => {
     expectBucketInvariant(tracker.snapshot());
   });
 
+  it("keeps sub-1ms boundary intervals in the correct bucket", () => {
+    const tracker = new ActiveTimeTracker({ captureAt: captureUtc });
+    tracker.start(point(0, "2026-09-25T00:00:00.000Z", captureUtc));
+    tracker.recordActivity(point(0.4, "2026-09-25T00:00:00.000Z", captureUtc));
+
+    const snapshot = tracker.snapshot();
+    expect(snapshot.activeMs).toBeCloseTo(0.4, 3);
+    expect(snapshot.activeDateBuckets).toHaveLength(1);
+    expect(snapshot.activeDateBuckets[0]).toMatchObject({
+      localDate: "2026-09-25",
+      utcOffsetMinutes: 0,
+      timeZone: "UTC",
+    });
+    expect(snapshot.activeDateBuckets[0]!.activeMs).toBeCloseTo(0.4, 3);
+    expectBucketInvariant(snapshot);
+  });
+
   it("uses elapsed activity and finalized attempts for interrupted validity", () => {
     const valid = new ActiveTimeTracker({ captureAt: captureUtc });
     valid.start(point(0, "2026-09-24T10:00:00.000Z", captureUtc));

@@ -816,6 +816,9 @@ describe("DurableLearnSession", () => {
         ),
       ).rejects.toThrow("activeDateBuckets sum");
 
+      await expect(session.retry()).rejects.toThrow("activeDateBuckets sum");
+      expect(await database.attempts.count()).toBe(0);
+
       await session.recordAttempt(
         {
           exerciseType: "copy-character",
@@ -839,6 +842,59 @@ describe("DurableLearnSession", () => {
         normalizedTarget: "K",
         normalizedResponse: "K",
       });
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
+  it("keeps malformed finalization preflight non-retryable and leaves session active", async () => {
+    const { database, repository } = await setup();
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    const ids = ["owner-11", "session-11"];
+    const cancelRenewal = vi.fn();
+
+    try {
+      const session = await DurableLearnSession.create(
+        repository,
+        {
+          mode: "learn",
+          activeCharacters: ["K", "M"],
+          settings: {
+            charWpm: 20,
+            effectiveWpm: 12,
+            toneHz: 600,
+            noiseLevel: 0,
+          },
+        },
+        {
+          now: clock("2026-09-26T03:00:00.000Z", "2026-09-26T03:00:10.000Z"),
+          createId: () => ids.shift()!,
+          scheduleLeaseRenewal: () => cancelRenewal,
+        },
+      );
+
+      await expect(
+        session.finish({
+          activeMs: 10000,
+          activeDateBuckets: activeDateBuckets(9000),
+          completedCards: 0,
+          curriculum: state,
+          introductions: ["K", "M"],
+        }),
+      ).rejects.toThrow("activeDateBuckets sum");
+
+      await expect(session.retry()).rejects.toThrow("activeDateBuckets sum");
+
+      expect(cancelRenewal).not.toHaveBeenCalled();
+      const persistedSession = await database.sessions.get("session-11");
+      expect(persistedSession).toMatchObject({
+        status: "active",
+        attemptCount: 0,
+        finalizedAttemptCount: 0,
+        revision: 0,
+      });
+      expect(await database.attempts.count()).toBe(0);
     } finally {
       repository.close();
       await database.delete();

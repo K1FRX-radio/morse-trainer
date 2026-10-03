@@ -145,6 +145,7 @@ export class DurableLearnSession implements LearnSessionPersistence {
   private qualifyingAttemptCount = 0;
   private continuousCopyAttemptId: string | undefined;
   private readonly cancelLeaseRenewal: () => void;
+  private preflightFailure: Error | undefined;
 
   private constructor(
     private readonly repository: TrainingDataRepository,
@@ -225,8 +226,11 @@ export class DurableLearnSession implements LearnSessionPersistence {
     try {
       assertConsistentActiveSnapshot(snapshot);
       frozenSnapshot = structuredClone(snapshot);
+      this.preflightFailure = undefined;
     } catch (cause) {
-      return Promise.reject(cause);
+      this.preflightFailure =
+        cause instanceof Error ? cause : new Error(String(cause));
+      return Promise.reject(this.preflightFailure);
     }
 
     const occurredAt = captureDateTime(this.now());
@@ -348,11 +352,19 @@ export class DurableLearnSession implements LearnSessionPersistence {
       await this.retryPending();
       return;
     }
+    let frozenSnapshot: LearnPersistenceSnapshot;
+    try {
+      assertConsistentActiveSnapshot(snapshot);
+      frozenSnapshot = structuredClone(snapshot);
+      this.preflightFailure = undefined;
+    } catch (cause) {
+      this.preflightFailure =
+        cause instanceof Error ? cause : new Error(String(cause));
+      throw this.preflightFailure;
+    }
     this.closingStatus = status;
     this.cancelRenewal();
     const endedAt = captureDateTime(this.now());
-    assertConsistentActiveSnapshot(snapshot);
-    const frozenSnapshot = structuredClone(snapshot);
     await this.enqueue(async () => {
       const current = { ...this.record };
       delete current.ownerTabId;
@@ -453,6 +465,10 @@ export class DurableLearnSession implements LearnSessionPersistence {
       } catch {
         // The failed operation remains at the head of the queue for retry.
       }
+    }
+    if (this.queue.length === 0) {
+      if (this.preflightFailure) throw this.preflightFailure;
+      return;
     }
     await this.drain();
   }
