@@ -20,73 +20,6 @@ import { focusedWordEligibility } from "./lesson-plan.ts";
 const timing = { charWpm: 20, effectiveWpm: 12 };
 const kmActive = ["K", "M"];
 
-function expectValidKmSelection(
-  generated: ReturnType<typeof buildContinuousCopyPlan>,
-): void {
-  const remainingCoverage = new Map([
-    ["K", 1],
-    ["M", DEFAULT_ADVANCEMENT_CONFIG.minNewestObservations],
-  ]);
-  let previousToken: string | undefined;
-
-  for (const token of generated.tokens) {
-    expect(token.kind).toBe("random-group");
-    expect(
-      [...token.text].every((character) => kmActive.includes(character)),
-    ).toBe(true);
-    expect(token.text).not.toMatch(/(.)\1\1/);
-
-    const prefix: string[] = [];
-    for (const selected of token.text) {
-      const satisfiesRunLimit = (candidate: string) => {
-        const run = prefix.slice(
-          -DEFAULT_CONTINUOUS_COPY_CONFIG.maxIdenticalRun,
-        );
-        return !(
-          run.length === DEFAULT_CONTINUOUS_COPY_CONFIG.maxIdenticalRun &&
-          run.every((character) => character === candidate)
-        );
-      };
-      const avoidsRepeatedToken = (candidate: string) =>
-        !(
-          previousToken?.length === token.text.length &&
-          prefix.length === token.text.length - 1 &&
-          prefix.every(
-            (character, index) => character === previousToken?.[index],
-          ) &&
-          candidate === previousToken[prefix.length]
-        );
-      const runSafe = kmActive.filter(satisfiesRunLimit);
-      const coverage = runSafe.filter(
-        (candidate) => (remainingCoverage.get(candidate) ?? 0) > 0,
-      );
-      const tiers = [
-        coverage.filter(avoidsRepeatedToken),
-        coverage,
-        runSafe.filter(avoidsRepeatedToken),
-        runSafe,
-      ];
-      const selectedTier = tiers.find((candidates) => candidates.length > 0);
-
-      expect(selectedTier).toBeDefined();
-      expect(selectedTier).toContain(selected);
-      if (
-        prefix.length === token.text.length - 1 &&
-        token.text === previousToken
-      ) {
-        expect(tiers[0]).toHaveLength(0);
-        if (coverage.length === 0) expect(tiers[2]).toHaveLength(0);
-      }
-
-      prefix.push(selected);
-      const remaining = remainingCoverage.get(selected) ?? 0;
-      if (remaining > 0) remainingCoverage.set(selected, remaining - 1);
-    }
-
-    previousToken = token.text;
-  }
-}
-
 function plan(seed = 1, durationMs = 60000) {
   return buildContinuousCopyPlan({
     active: ["K", "M", "U", "R"],
@@ -226,7 +159,7 @@ describe("buildContinuousCopyPlan", () => {
     }
   });
 
-  it("preserves selector priorities across seeded K/M streams", () => {
+  it("keeps deterministic K/M protections across seeded streams", () => {
     const timings = [
       { charWpm: 20, effectiveWpm: 12 },
       { charWpm: 8, effectiveWpm: 5 },
@@ -262,11 +195,78 @@ describe("buildContinuousCopyPlan", () => {
           });
 
           expect(generated).toEqual(repeated);
-          expectValidKmSelection(generated);
+          expect(
+            generated.tokens.every((token) => token.kind === "random-group"),
+          ).toBe(true);
+          expect(
+            generated.tokens.every((token) =>
+              [...token.text].every((character) =>
+                kmActive.includes(character),
+              ),
+            ),
+          ).toBe(true);
+          expect(
+            generated.tokens.every((token) => !/(.)\1\1/.test(token.text)),
+          ).toBe(true);
         }
       }
     }
   }, 20000);
+
+  it("keeps K/M streams near balanced with only mild newest bias", () => {
+    const durationMs = recommendedContinuousCopyDurationMs(2);
+    const totals = new Map<string, number>();
+    for (let seed = 1; seed <= 300; seed++) {
+      const generated = buildContinuousCopyPlan({
+        active: ["K", "M"],
+        newest: "M",
+        durationMs,
+        timing,
+        rng: createRng(seed),
+      });
+      const counts = new Map<string, number>();
+      for (const character of generated.gradingTarget) {
+        counts.set(character, (counts.get(character) ?? 0) + 1);
+        totals.set(character, (totals.get(character) ?? 0) + 1);
+      }
+      expect(counts.get("K") ?? 0).toBeGreaterThanOrEqual(1);
+      expect(counts.get("M") ?? 0).toBeGreaterThanOrEqual(
+        DEFAULT_ADVANCEMENT_CONFIG.minNewestObservations,
+      );
+    }
+
+    const total = (totals.get("K") ?? 0) + (totals.get("M") ?? 0);
+    const newestShare = (totals.get("M") ?? 0) / total;
+    expect(newestShare).toBeGreaterThan(0.5);
+    expect(newestShare).toBeLessThan(0.62);
+  });
+
+  it("does not newest-dominate K/M prefixes", () => {
+    const durationMs = recommendedContinuousCopyDurationMs(2);
+    let prefixNewest = 0;
+    let prefixTotal = 0;
+    for (let seed = 1; seed <= 300; seed++) {
+      const generated = buildContinuousCopyPlan({
+        active: ["K", "M"],
+        newest: "M",
+        durationMs,
+        timing,
+        rng: createRng(seed),
+      });
+      const prefixLength = Math.max(
+        1,
+        Math.floor(generated.gradingTarget.length * 0.25),
+      );
+      const prefix = generated.gradingTarget.slice(0, prefixLength);
+      prefixTotal += prefix.length;
+      prefixNewest += [...prefix].filter(
+        (character) => character === "M",
+      ).length;
+    }
+
+    const prefixShare = prefixNewest / prefixTotal;
+    expect(prefixShare).toBeLessThan(0.7);
+  });
 
   it("prevents excessive identical runs", () => {
     for (let seed = 1; seed <= 100; seed++) {

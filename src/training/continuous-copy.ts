@@ -202,11 +202,9 @@ function buildRandomGroup(
       });
     const requireCoverage =
       forceCoverage ||
-      (active.length <= 2
-        ? outstandingCoverage > 0
-        : coverageDeadlineCharacters > 0 &&
-          outstandingCoverage > 0 &&
-          hasBehindCharacter);
+      (coverageDeadlineCharacters > 0 &&
+        outstandingCoverage > 0 &&
+        hasBehindCharacter);
 
     const character = selectGroupCharacter({
       active,
