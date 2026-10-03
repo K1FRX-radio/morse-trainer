@@ -43,8 +43,7 @@ a lease renewed before the recovery transaction commits is untouched;
 multiple expired sessions are recovered atomically;
 two recovery callers do not double-finalize;
 wall-clock rollback remains safe;
-projection and operation-ledger writes roll back on failure.
-2. Prevent Practice from modifying curriculum
+projection and operation-ledger writes roll back on failure. 2. Prevent Practice from modifying curriculum
 
 Practice must remain analytics-only.
 
@@ -74,8 +73,7 @@ Add tests proving that both Practice sources:
 
 can persist their session and attempt analytics;
 cannot mutate curriculum or introductions;
-roll back the entire transaction if prohibited progression data is supplied.
-3. Add targeted retry choices when advancement readiness fails
+roll back the entire transaction if prohibited progression data is supplied. 3. Add targeted retry choices when advancement readiness fails
 
 When a learner finishes continuous copy without meeting the new-character readiness threshold, do not provide only the existing generic “Practice again” path.
 
@@ -225,8 +223,7 @@ The final active curriculum set must pass the same abandonment, review, total-ev
 - if another character exists, return a character-readiness result;
 - if no character remains, return a curriculum-completion-eligible result.
 
-Explicit learner acceptance of a completion-eligible result marks the remaining active set mastered and records curriculum completion without unlocking a character. A failed or abandoned final stream returns its ordinary failure reason, never a premature `COMPLETE` result.
-8. Tests
+Explicit learner acceptance of a completion-eligible result marks the remaining active set mastered and records curriculum completion without unlocking a character. A failed or abandoned final stream returns its ordinary failure reason, never a premature `COMPLETE` result. 8. Tests
 
 Add focused tests for:
 

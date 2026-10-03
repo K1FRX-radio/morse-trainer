@@ -25,23 +25,24 @@ Current problem:
 
 Required behavior:
 
-* Check unresolved `needsReview` state before statistical readiness checks.
-* If any active character remains flagged, return:
+- Check unresolved `needsReview` state before statistical readiness checks.
+- If any active character remains flagged, return:
 
-  * `ready: false`
-  * `reason: "NEEDS_REVIEW"`
-  * `weakCharacter` set to the first unresolved character in curriculum order.
-* Apply this to both older characters and the newest character.
-* Keep manual **Try a checkpoint** available if that is the current product decision, but the readiness message must remain truthful.
-* Completing the explicit remediation rule should clear the flag and allow readiness to be recalculated normally.
+  - `ready: false`
+  - `reason: "NEEDS_REVIEW"`
+  - `weakCharacter` set to the first unresolved character in curriculum order.
+
+- Apply this to both older characters and the newest character.
+- Keep manual **Try a checkpoint** available if that is the current product decision, but the readiness message must remain truthful.
+- Completing the explicit remediation rule should clear the flag and allow readiness to be recalculated normally.
 
 Add tests proving:
 
-* A checkpoint-missed older character vetoes readiness even when its rolling accuracy is high.
-* A checkpoint-missed newest character vetoes readiness.
-* An unresolved review flag survives a partial lesson.
-* Readiness becomes available only after remediation completion.
-* Manual checkpoint entry remains possible if intentionally supported.
+- A checkpoint-missed older character vetoes readiness even when its rolling accuracy is high.
+- A checkpoint-missed newest character vetoes readiness.
+- An unresolved review flag survives a partial lesson.
+- Readiness becomes available only after remediation completion.
+- Manual checkpoint entry remains possible if intentionally supported.
 
 ## A2. Require a fresh remediation streak
 
@@ -51,21 +52,21 @@ Current problem:
 
 Required behavior:
 
-* `recordReviewOutcome()` must only accumulate a streak while `needsReview === true`.
-* If a character is not under review, its review streak should remain zero.
-* Whenever `recordAttempt()` changes `needsReview` from false to true because of accuracy decay, reset `reviewStreak` to zero.
-* Checkpoint misses must continue resetting the streak to zero.
-* Assisted and replayed responses must never increment the streak.
-* Group, word, and continuous-copy character results must not count toward the clean isolated remediation streak.
-* The streak should represent consecutive clean, unassisted, unreplayed, isolated responses only.
+- `recordReviewOutcome()` must only accumulate a streak while `needsReview === true`.
+- If a character is not under review, its review streak should remain zero.
+- Whenever `recordAttempt()` changes `needsReview` from false to true because of accuracy decay, reset `reviewStreak` to zero.
+- Checkpoint misses must continue resetting the streak to zero.
+- Assisted and replayed responses must never increment the streak.
+- Group, word, and continuous-copy character results must not count toward the clean isolated remediation streak.
+- The streak should represent consecutive clean, unassisted, unreplayed, isolated responses only.
 
 Add regression tests for:
 
-* Ordinary acquisition successes do not pre-accumulate a review streak.
-* A character receives several correct acquisition responses, later decays, and still requires the full fresh remediation streak.
-* A remediation miss resets the streak.
-* Assisted, replayed, group, word, and continuous-copy results cannot clear review.
-* Persistence across sessions remains correct.
+- Ordinary acquisition successes do not pre-accumulate a review streak.
+- A character receives several correct acquisition responses, later decays, and still requires the full fresh remediation streak.
+- A remediation miss resets the streak.
+- Assisted, replayed, group, word, and continuous-copy results cannot clear review.
+- Persistence across sessions remains correct.
 
 ## A3. Prevent a physically held key from answering a later prompt
 
@@ -75,32 +76,33 @@ The one-shot prompt token rejects repeated events during one prompt, but it does
 
 Required behavior:
 
-* Track supported printable physical keys using `keydown` and `keyup`.
-* Ignore `keydown` events where `event.repeat === true`.
-* A physical key must be released before that same key can answer a later prompt.
-* Maintain a held-key set or equivalent latch outside transient React render state.
-* Clear held-key state on:
+- Track supported printable physical keys using `keydown` and `keyup`.
+- Ignore `keydown` events where `event.repeat === true`.
+- A physical key must be released before that same key can answer a later prompt.
+- Maintain a held-key set or equivalent latch outside transient React render state.
+- Clear held-key state on:
 
-  * keyup;
-  * blur where appropriate;
-  * lesson cancellation;
-  * navigation/unmount;
-  * checkpoint completion;
-  * new session initialization.
-* Continue supporting mobile keyboards and IME input through the current `onChange`/composition fallback.
-* Do not make mobile input depend on desktop `keydown`.
-* Route both desktop and mobile paths through the same one-shot acceptance gate.
-* Modifier combinations must not submit.
-* Pasting into an isolated prompt may accept at most the first supported character.
+  - keyup;
+  - blur where appropriate;
+  - lesson cancellation;
+  - navigation/unmount;
+  - checkpoint completion;
+  - new session initialization.
+
+- Continue supporting mobile keyboards and IME input through the current `onChange`/composition fallback.
+- Do not make mobile input depend on desktop `keydown`.
+- Route both desktop and mobile paths through the same one-shot acceptance gate.
+- Modifier combinations must not submit.
+- Pasting into an isolated prompt may accept at most the first supported character.
 
 Add UI tests proving:
 
-* Repeated keydown events are ignored.
-* Holding K across completion of the next prompt does not answer it.
-* Keyup followed by a fresh K keydown can answer the next prompt.
-* Mobile-style change events still work.
-* Composition input is accepted only after composition ends.
-* Checkpoint prompts have the same protection.
+- Repeated keydown events are ignored.
+- Holding K across completion of the next prompt does not answer it.
+- Keyup followed by a fresh K keydown can answer the next prompt.
+- Mobile-style change events still work.
+- Composition input is accepted only after composition ends.
+- Checkpoint prompts have the same protection.
 
 The existing test that fires several change events during one token is not sufficient. Add a cross-prompt held-key test.
 
@@ -112,26 +114,27 @@ Replay starts audio but does not lock the answer field. A learner can answer whi
 
 Required behavior:
 
-* Lock input before Replay starts.
-* Re-enable input only after Replay completes and the card token is still current.
-* Replay must not create a new scored attempt.
-* Replay must continue marking the eventual answer assisted/replayed.
-* Disable Replay while any playback is active.
-* Prevent multiple simultaneous Replay calls.
-* Add a playback-generation token or equivalent ownership model:
+- Lock input before Replay starts.
+- Re-enable input only after Replay completes and the card token is still current.
+- Replay must not create a new scored attempt.
+- Replay must continue marking the eventual answer assisted/replayed.
+- Disable Replay while any playback is active.
+- Prevent multiple simultaneous Replay calls.
+- Add a playback-generation token or equivalent ownership model:
 
-  * Only the currently owned playback may clear `isPlaying`.
-  * Completion of an older canceled playback must not change the state of newer playback.
-* A replayed prompt must not be cut short because input remained active.
-* Flow changes must invalidate both playback ownership and input unlocking.
+  - Only the currently owned playback may clear `isPlaying`.
+  - Completion of an older canceled playback must not change the state of newer playback.
+
+- A replayed prompt must not be cut short because input remained active.
+- Flow changes must invalidate both playback ownership and input unlocking.
 
 Add tests proving:
 
-* Input is disabled throughout Replay.
-* It re-enables after Replay completes.
-* A stale playback completion cannot set `isPlaying=false` for newer audio.
-* Rapid Replay clicks create one playback.
-* Ending the lesson during Replay does not unlock stale input.
+- Input is disabled throughout Replay.
+- It re-enables after Replay completes.
+- A stale playback completion cannot set `isPlaying=false` for newer audio.
+- Rapid Replay clicks create one playback.
+- Ending the lesson during Replay does not unlock stale input.
 
 ## A5. Make cancellation and suspension lifecycle-safe
 
@@ -141,37 +144,39 @@ Current problem:
 
 Required behavior:
 
-* Make playback cancellation completion explicit.
-* Prefer a `cancel(): Promise<void>` contract, or an equivalent mechanism that confirms the active voice has stopped and its promise has resolved.
-* Suspend the AudioContext only after cancellation completes.
-* React unmount cleanup cannot await directly, so provide a lifecycle-safe helper that cancels immediately and schedules suspension only after voice disposal without allowing stale UI changes.
-* Do not rely on untracked 60 ms timers.
-* If a delayed suspension is retained:
+- Make playback cancellation completion explicit.
+- Prefer a `cancel(): Promise<void>` contract, or an equivalent mechanism that confirms the active voice has stopped and its promise has resolved.
+- Suspend the AudioContext only after cancellation completes.
+- React unmount cleanup cannot await directly, so provide a lifecycle-safe helper that cancels immediately and schedules suspension only after voice disposal without allowing stale UI changes.
+- Do not rely on untracked 60 ms timers.
+- If a delayed suspension is retained:
 
-  * store its timer;
-  * cancel it when a new audio flow begins;
-  * validate a lifecycle generation before suspending.
-* Starting a new lesson or checkpoint must not be interrupted by a suspension scheduled by an earlier flow.
-* Preserve the five-millisecond anti-click ramp.
-* Ensure nodes are disconnected and playback promises settle on:
+  - store its timer;
+  - cancel it when a new audio flow begins;
+  - validate a lifecycle generation before suspending.
 
-  * End session;
-  * checkpoint result;
-  * route navigation;
-  * component unmount;
-  * starting a replacement prompt;
-  * starting Practice after leaving Learn.
-* Verify the Firefox media-element output path actually releases or pauses its sink when suspended and resumes it correctly.
+- Starting a new lesson or checkpoint must not be interrupted by a suspension scheduled by an earlier flow.
+- Preserve the five-millisecond anti-click ramp.
+- Ensure nodes are disconnected and playback promises settle on:
+
+  - End session;
+  - checkpoint result;
+  - route navigation;
+  - component unmount;
+  - starting a replacement prompt;
+  - starting Practice after leaving Learn.
+
+- Verify the Firefox media-element output path actually releases or pauses its sink when suspended and resumes it correctly.
 
 Add audio lifecycle tests for:
 
-* Cancel followed by suspend resolves the playback promise.
-* Unmount during playback leaves no unresolved voice.
-* Starting new audio cancels pending suspension.
-* Stale suspension cannot stop a new lesson.
-* Media-element sink pauses and resumes appropriately.
-* Volume changes still affect the master gain live.
-* Zero percent volume remains mute.
+- Cancel followed by suspend resolves the playback promise.
+- Unmount during playback leaves no unresolved voice.
+- Starting new audio cancels pending suspension.
+- Stale suspension cannot stop a new lesson.
+- Media-element sink pauses and resumes appropriately.
+- Volume changes still affect the master gain live.
+- Zero percent volume remains mute.
 
 Once Part A is complete, run all existing checks before beginning Part B.
 
@@ -181,12 +186,12 @@ Once Part A is complete, run all existing checks before beginning Part B.
 
 The current lesson feels like a brief demonstration:
 
-* A character is introduced.
-* It receives only a few isolated prompts.
-* Another character appears.
-* The app silently changes to two-character groups.
-* It silently changes to three-character groups.
-* The lesson ends after only a few group attempts.
+- A character is introduced.
+- It receives only a few isolated prompts.
+- Another character appears.
+- The app silently changes to two-character groups.
+- It silently changes to three-character groups.
+- The lesson ends after only a few group attempts.
 
 Replace this with a deliberate progression that develops actual recognition and sustained copying:
 
@@ -217,29 +222,30 @@ acquireMaxAttempts: 14
 
 Required behavior:
 
-* Each newly introduced character receives at least eight unassisted isolated attempts.
-* After the minimum, continue until it has at least six correct responses among its most recent eight clean acquisition attempts.
-* Assisted and replayed responses do not count toward the minimum, window, or criterion.
-* Cap acquisition at the configured maximum so the lesson cannot become endless.
-* If the learner reaches the cap without meeting the criterion:
+- Each newly introduced character receives at least eight unassisted isolated attempts.
+- After the minimum, continue until it has at least six correct responses among its most recent eight clean acquisition attempts.
+- Assisted and replayed responses do not count toward the minimum, window, or criterion.
+- Cap acquisition at the configured maximum so the lesson cannot become endless.
+- If the learner reaches the cap without meeting the criterion:
 
-  * keep the character active;
-  * mark it for continued review;
-  * proceed without presenting the situation as failure.
-* A miss should schedule the existing assisted reinforcement card.
-* Do not reset all progress because of one miss.
-* Acquisition state must be deterministic and unit-testable.
+  - keep the character active;
+  - mark it for continued review;
+  - proceed without presenting the situation as failure.
+
+- A miss should schedule the existing assisted reinforcement card.
+- Do not reset all progress because of one miss.
+- Acquisition state must be deterministic and unit-testable.
 
 ## C2. Treat the initial K/M pair symmetrically
 
 For the first lesson:
 
-* Introduce K.
-* Give K its complete adaptive acquisition block.
-* Introduce M.
-* Give M its complete adaptive acquisition block.
-* Do not treat M as the only “newest” character deserving practice.
-* Both initial characters must receive equal minimum coverage.
+- Introduce K.
+- Give K its complete adaptive acquisition block.
+- Introduce M.
+- Give M its complete adaptive acquisition block.
+- Do not treat M as the only “newest” character deserving practice.
+- Both initial characters must receive equal minimum coverage.
 
 ## C3. Expand mixed single-character copy
 
@@ -256,17 +262,18 @@ contrastMinAccuracy: 0.80
 
 Required behavior:
 
-* For K/M, balance the two characters.
-* For larger active sets:
+- For K/M, balance the two characters.
+- For larger active sets:
 
-  * prioritize the newest character;
-  * prioritize unresolved review and weak characters;
-  * retain representation of older characters;
-  * avoid accidentally omitting a character that requires review.
-* Avoid long predictable runs of the same target.
-* Assisted/replayed results remain excluded.
-* Extend the phase adaptively when recent performance is weak, up to the configured cap.
-* Show the current mode persistently as **Single-character copy**.
+  - prioritize the newest character;
+  - prioritize unresolved review and weak characters;
+  - retain representation of older characters;
+  - avoid accidentally omitting a character that requires review.
+
+- Avoid long predictable runs of the same target.
+- Assisted/replayed results remain excluded.
+- Extend the phase adaptively when recent performance is weak, up to the configured cap.
+- Show the current mode persistently as **Single-character copy**.
 
 # Part D: Explicit mode transitions
 
@@ -285,12 +292,12 @@ summary
 
 A transition must:
 
-* Carry a stable transition identifier.
-* Include a title, explanatory text, destination phase, and action label.
-* Record no attempt.
-* Affect no mastery data.
-* Not be counted as a scored card.
-* Be deterministic and testable.
+- Carry a stable transition identifier.
+- Include a title, explanatory text, destination phase, and action label.
+- Record no attempt.
+- Affect no mastery data.
+- Not be counted as a scored card.
+- Be deterministic and testable.
 
 ## D2. Required major transition
 
@@ -309,9 +316,9 @@ This is an intentional click. It marks a real change in task and gives the learn
 
 Use blocking Go interstitials for major task changes:
 
-* Single-character recognition → multi-character copy
-* Short groups → continuous copy
-* Random-character copy → word copy, when available
+- Single-character recognition → multi-character copy
+- Short groups → continuous copy
+- Random-character copy → word copy, when available
 
 Do not require a button for every group-length change.
 
@@ -325,14 +332,14 @@ Then continue automatically after a short, named delay, or allow any key/Go to c
 
 The Learn screen must always show a meaningful phase label, for example:
 
-* `Learning K`
-* `Learning M`
-* `Single-character copy`
-* `2-character groups`
-* `3-character groups`
-* `Continuous copy · 0:42 remaining`
-* `Word copy`
-* `Checkpoint`
+- `Learning K`
+- `Learning M`
+- `Single-character copy`
+- `2-character groups`
+- `3-character groups`
+- `Continuous copy · 0:42 remaining`
+- `Word copy`
+- `Checkpoint`
 
 Do not make the learner infer the mode from input length.
 
@@ -349,17 +356,17 @@ threeCharacterGroupCount: 8
 
 Required behavior:
 
-* Run at least eight two-character groups.
-* Then announce the transition to three-character groups.
-* Run at least eight three-character groups.
-* Every adaptive group must contain its focus character.
-* Weight new, weak, and review characters.
-* Continue using sequence-aligned grading.
-* Auto-submit when the expected group length is reached.
-* Enter may submit early.
-* Keep neutral feedback.
-* Assisted/replayed behavior remains excluded from mastery.
-* The group phase must not unlock curriculum characters.
+- Run at least eight two-character groups.
+- Then announce the transition to three-character groups.
+- Run at least eight three-character groups.
+- Every adaptive group must contain its focus character.
+- Weight new, weak, and review characters.
+- Continue using sequence-aligned grading.
+- Auto-submit when the expected group length is reached.
+- Enter may submit early.
+- Keep neutral feedback.
+- Assisted/replayed behavior remains excluded from mastery.
+- The group phase must not unlock curriculum characters.
 
 For later lessons, group lengths and counts may grow through configuration, but early lessons should remain approachable.
 
@@ -395,8 +402,8 @@ The flow:
 
 This mode intentionally differs from isolated copy:
 
-* Isolated/group input remains locked until prompt audio completes.
-* Continuous-copy input must be active during playback.
+- Isolated/group input remains locked until prompt audio completes.
+- Continuous-copy input must be active during playback.
 
 Keep those two input policies explicit in the code.
 
@@ -404,10 +411,10 @@ Keep those two input policies explicit in the code.
 
 Add selectable durations:
 
-* 1 minute
-* 3 minutes
-* 5 minutes
-* 10 minutes
+- 1 minute
+- 3 minutes
+- 5 minutes
+- 10 minutes
 
 Default and recommendation:
 
@@ -421,12 +428,12 @@ Default and recommendation:
 
 Requirements:
 
-* Use one minute as the initial default.
-* Persist the learner’s explicit duration choice.
-* Show the recommended duration without forcing it.
-* Allow duration selection in Settings.
-* Keep old stored settings compatible by applying defaults when the field is absent.
-* The duration applies to continuous copy, not the entire lesson.
+- Use one minute as the initial default.
+- Persist the learner’s explicit duration choice.
+- Show the recommended duration without forcing it.
+- Allow duration selection in Settings.
+- Keep old stored settings compatible by applying defaults when the field is absent.
+- The duration applies to continuous copy, not the entire lesson.
 
 ## F3. Build streams by scheduled audio duration
 
@@ -434,35 +441,35 @@ Do not estimate duration only from raw character count.
 
 Use the actual Morse timing/schedule model:
 
-* Generate candidate characters.
-* Build or extend the schedule until its actual scheduled duration meets the selected target.
-* Preserve the final target and schedule used for playback.
-* Avoid cutting a character midway at the duration boundary.
-* The displayed timer should be based on the scheduled duration and monotonic/audio time, not the number of characters.
+- Generate candidate characters.
+- Build or extend the schedule until its actual scheduled duration meets the selected target.
+- Preserve the final target and schedule used for playback.
+- Avoid cutting a character midway at the duration boundary.
+- The displayed timer should be based on the scheduled duration and monotonic/audio time, not the number of characters.
 
 For the bounded maximum of ten minutes, a pre-generated schedule is acceptable if performance is verified. Do not chain ordinary `playText()` calls in a way that introduces audible gaps.
 
 If implementing rolling scheduling instead:
 
-* Maintain a safe scheduling horizon.
-* Do not cancel the previous chunk when scheduling the next.
-* Prove there are no audible inter-chunk gaps.
-* Preserve exact target ordering for grading.
+- Maintain a safe scheduling horizon.
+- Do not cancel the previous chunk when scheduling the next.
+- Prove there are no audible inter-chunk gaps.
+- Preserve exact target ordering for grading.
 
 ## F4. Stream content
 
 For random-character streams:
 
-* Use only active characters.
-* Guarantee reasonable active-set representation when duration permits.
-* Give the newest character additional coverage.
-* Give unresolved review and weak characters additional weight.
-* Avoid predictable alternating sequences.
-* Avoid excessive repeated-character runs unless deliberately configured.
-* Keep generation seedable and deterministic for tests.
-* Never display the target while copying.
-* Do not reveal total character count.
-* Ignore whitespace in random-character answers.
+- Use only active characters.
+- Guarantee reasonable active-set representation when duration permits.
+- Give the newest character additional coverage.
+- Give unresolved review and weak characters additional weight.
+- Avoid predictable alternating sequences.
+- Avoid excessive repeated-character runs unless deliberately configured.
+- Keep generation seedable and deterministic for tests.
+- Never display the target while copying.
+- Do not reveal total character count.
+- Ignore whitespace in random-character answers.
 
 At the K/M stage, the stream should be varied K/M copy lasting the selected duration, not three characters repeated a few times.
 
@@ -470,45 +477,45 @@ At the K/M stage, the stream should be varied K/M copy lasting the selected dura
 
 During playback show:
 
-* `Continuous copy`
-* Remaining time or a progress bar
-* A multiline, monospaced input area
-* The learner’s typed copy
-* A subtle **Listening…** state
-* An End session control
+- `Continuous copy`
+- Remaining time or a progress bar
+- A multiline, monospaced input area
+- The learner’s typed copy
+- A subtle **Listening…** state
+- An End session control
 
 Do not show:
 
-* The target
-* Correct/incorrect feedback during playback
-* Morse notation
-* Expected character count
-* Per-character checkmarks
-* Replay
+- The target
+- Correct/incorrect feedback during playback
+- Morse notation
+- Expected character count
+- Per-character checkmarks
+- Replay
 
 Input requirements:
 
-* Keep focus in the text area.
-* Allow normal keyboard editing during the stream.
-* Do not auto-submit based on length.
-* Do not erase the learner’s input during playback.
-* Support mobile keyboard input.
-* Do not let global shortcuts steal ordinary copy characters.
+- Keep focus in the text area.
+- Allow normal keyboard editing during the stream.
+- Do not auto-submit based on length.
+- Do not erase the learner’s input during playback.
+- Support mobile keyboard input.
+- Do not let global shortcuts steal ordinary copy characters.
 
 At stream completion:
 
-* Stop audio cleanly.
-* Keep input enabled for a short named grace period, such as two seconds or a timing-derived equivalent.
-* Show a visible **Finishing…** state.
-* Then grade automatically.
-* Optionally allow the learner to press Finish during the grace period.
+- Stop audio cleanly.
+- Keep input enabled for a short named grace period, such as two seconds or a timing-derived equivalent.
+- Show a visible **Finishing…** state.
+- Then grade automatically.
+- Optionally allow the learner to press Finish during the grace period.
 
 If the learner manually ends the lesson before the stream completes:
 
-* Do not mark all unplayed target characters wrong.
-* Either discard that stream from mastery or grade only the portion confirmed to have been transmitted.
-* Prefer discarding an intentionally aborted stream for the first implementation.
-* Record that the stream was abandoned separately from accuracy.
+- Do not mark all unplayed target characters wrong.
+- Either discard that stream from mastery or grade only the portion confirmed to have been transmitted.
+- Prefer discarding an intentionally aborted stream for the first implementation.
+- Record that the stream was abandoned separately from accuracy.
 
 ## F6. Continuous-copy grading
 
@@ -531,20 +538,20 @@ abandoned
 
 Requirements:
 
-* A missed character must not shift every result after it.
-* Extra typed characters must not receive target-character credit.
-* Repeated-character alignment must remain deterministic.
-* Per-character RX observations may feed practice mastery.
-* Continuous-copy results may affect scheduling, review, and readiness.
-* Continuous copy must not directly unlock a character.
-* Only the checkpoint unlocks curriculum progress.
-* Do not use continuous-copy results to clear the isolated remediation streak.
+- A missed character must not shift every result after it.
+- Extra typed characters must not receive target-character credit.
+- Repeated-character alignment must remain deterministic.
+- Per-character RX observations may feed practice mastery.
+- Continuous-copy results may affect scheduling, review, and readiness.
+- Continuous copy must not directly unlock a character.
+- Only the checkpoint unlocks curriculum progress.
+- Do not use continuous-copy results to clear the isolated remediation streak.
 
 Performance:
 
-* Verify alignment remains responsive for ten-minute streams.
-* If full dynamic-programming memory becomes excessive, use a bounded-memory or banded alignment implementation while preserving deterministic behavior.
-* Add performance tests with realistic maximum-length streams.
+- Verify alignment remains responsive for ten-minute streams.
+- If full dynamic-programming memory becomes excessive, use a bounded-memory or banded alignment implementation while preserving deterministic behavior.
+- Add performance tests with realistic maximum-length streams.
 
 # Part G: Add eligible word copy
 
@@ -563,15 +570,16 @@ wordCopyCount: 8
 
 Required behavior:
 
-* Enable word copy only when the active set can form a useful minimum-sized word pool.
-* Use only words composed entirely of active characters.
-* Favor words containing:
+- Enable word copy only when the active set can form a useful minimum-sized word pool.
+- Use only words composed entirely of active characters.
+- Favor words containing:
 
-  * the newest character;
-  * unresolved review characters;
-  * current weak characters.
-* Avoid repeatedly selecting the same few words.
-* Keep generation deterministic for tests.
+  - the newest character;
+  - unresolved review characters;
+  - current weak characters.
+
+- Avoid repeatedly selecting the same few words.
+- Keep generation deterministic for tests.
 
 ## G2. Word-copy transition
 
@@ -588,15 +596,15 @@ Button:
 
 For initial word cards:
 
-* Do not reveal the expected length.
-* Play the word once.
-* Allow the learner to type the word.
-* Submit on Enter.
-* Preserve optional Replay, but mark the answer replayed/assisted and exclude it from clean mastery.
-* Use sequence alignment for grading.
-* Show neutral feedback after submission.
-* Start with short eligible words.
-* Add callsigns, abbreviations, phrases, and timed word streams later, not in this change unless already easy to support.
+- Do not reveal the expected length.
+- Play the word once.
+- Allow the learner to type the word.
+- Submit on Enter.
+- Preserve optional Replay, but mark the answer replayed/assisted and exclude it from clean mastery.
+- Use sequence alignment for grading.
+- Show neutral feedback after submission.
+- Start with short eligible words.
+- Add callsigns, abbreviations, phrases, and timed word streams later, not in this change unless already easy to support.
 
 Random continuous copy and word copy serve different purposes. Keep both.
 
@@ -607,29 +615,34 @@ Use this target flow for the first K/M lesson:
 1. Introduce K.
 2. Adaptive K acquisition:
 
-   * minimum eight clean attempts;
-   * extend based on recent performance;
-   * bounded maximum.
+   - minimum eight clean attempts;
+   - extend based on recent performance;
+   - bounded maximum.
+
 3. Introduce M.
 4. Adaptive M acquisition with the same rule.
 5. Balanced mixed single-character copy:
 
-   * minimum 16 prompts;
-   * extend adaptively up to 24.
+   - minimum 16 prompts;
+   - extend adaptively up to 24.
+
 6. Transition:
 
-   * **Ready for something longer?**
-   * Go.
+   - **Ready for something longer?**
+   - Go.
+
 7. Eight two-character groups.
 8. Brief notification:
 
-   * **Now copying 3-character groups**
+   - **Now copying 3-character groups**
+
 9. Eight three-character groups.
 10. Transition:
 
-    * **Ready for continuous copy?**
-    * Explain that the learner should type continuously while listening.
-    * Go.
+    - **Ready for continuous copy?**
+    - Explain that the learner should type continuously while listening.
+    - Go.
+
 11. One-minute continuous K/M stream.
 12. Session summary.
 13. Checkpoint-readiness result.
@@ -652,27 +665,27 @@ The existing “cards” and “attempts” metrics become ambiguous with contin
 
 Update the model to report clearly:
 
-* Cards completed
-* Isolated prompts completed
-* Groups completed
-* Words completed
-* Continuous-copy duration
-* Characters transmitted
-* Characters typed
-* Aligned character accuracy
-* Characters needing review
-* Assisted/replayed items excluded from mastery
-* Checkpoint readiness
+- Cards completed
+- Isolated prompts completed
+- Groups completed
+- Words completed
+- Continuous-copy duration
+- Characters transmitted
+- Characters typed
+- Aligned character accuracy
+- Characters needing review
+- Assisted/replayed items excluded from mastery
+- Checkpoint readiness
 
 Do not count a one-minute stream as merely one scored attempt without also reporting its character-level work.
 
 Keep analytics semantics explicit:
 
-* Card-level correctness for ordinary cards.
-* Character-level aligned correctness for groups, words, and streams.
-* Only unassisted/unreplayed observations feed mastery.
-* Continuous-copy accuracy does not clear isolated remediation.
-* Practice never unlocks characters.
+- Card-level correctness for ordinary cards.
+- Character-level aligned correctness for groups, words, and streams.
+- Only unassisted/unreplayed observations feed mastery.
+- Continuous-copy accuracy does not clear isolated remediation.
+- Practice never unlocks characters.
 
 # Part J: State-machine and architecture requirements
 
@@ -695,54 +708,55 @@ LessonController
 
 Requirements:
 
-* Pure domain logic should decide progression.
-* React should render and orchestrate audio, not decide pedagogical rules.
-* Every phase must have explicit entry and exit criteria.
-* Randomness remains injected and seedable.
-* Configuration remains named and testable.
-* No phase should unlock the curriculum.
-* Checkpoint logic remains separate.
-* Avoid one giant React hook containing acquisition rules, stream generation, timers, audio lifecycle, and grading.
-* Continuous-copy audio/UI orchestration may have its own hook.
-* Reuse shared audio cancellation and lifecycle primitives rather than creating another independent race-prone implementation.
+- Pure domain logic should decide progression.
+- React should render and orchestrate audio, not decide pedagogical rules.
+- Every phase must have explicit entry and exit criteria.
+- Randomness remains injected and seedable.
+- Configuration remains named and testable.
+- No phase should unlock the curriculum.
+- Checkpoint logic remains separate.
+- Avoid one giant React hook containing acquisition rules, stream generation, timers, audio lifecycle, and grading.
+- Continuous-copy audio/UI orchestration may have its own hook.
+- Reuse shared audio cancellation and lifecycle primitives rather than creating another independent race-prone implementation.
 
 # Part K: UX and tone
 
 Keep the interaction encouraging and low-friction:
 
-* No red crosses.
-* No sad faces.
-* No lives.
-* No punitive streak-reset animation.
-* Misses cause more practice, not failure messaging.
-* Use positive transition copy without claiming mastery too early.
-* Keep the automatic flow within a phase.
-* Use Go only at meaningful mode changes.
-* Continue supporting manual pacing.
-* Manual pacing should not require Continue after every character in continuous copy.
-* Ensure all controls are keyboard accessible.
-* Maintain visible focus and screen-reader labels.
-* Announce phase transitions through an appropriate live region without repeatedly announcing every typed character.
+- No red crosses.
+- No sad faces.
+- No lives.
+- No punitive streak-reset animation.
+- Misses cause more practice, not failure messaging.
+- Use positive transition copy without claiming mastery too early.
+- Keep the automatic flow within a phase.
+- Use Go only at meaningful mode changes.
+- Continue supporting manual pacing.
+- Manual pacing should not require Continue after every character in continuous copy.
+- Ensure all controls are keyboard accessible.
+- Maintain visible focus and screen-reader labels.
+- Announce phase transitions through an appropriate live region without repeatedly announcing every typed character.
 
 # Part L: Scope constraints
 
 Do not:
 
-* Reintroduce TX cards into Learn.
-* Make TX affect readiness, remediation, checkpoints, lesson completion, or unlocking.
-* Change the checkpoint pass thresholds:
+- Reintroduce TX cards into Learn.
+- Make TX affect readiness, remediation, checkpoints, lesson completion, or unlocking.
+- Change the checkpoint pass thresholds:
 
-  * overall ≥90%;
-  * newest ≥85%;
-  * minimum newest coverage.
-* Add an older-character checkpoint accuracy floor.
-* Allow practice to unlock characters.
-* Reintroduce Check, Next, or Got it for ordinary isolated prompts.
-* Reveal checkpoint answers before completion.
-* Reveal continuous-copy targets while copying.
-* Require word copy before enough eligible words exist.
-* Implement timed sending or paddle work in this milestone.
-* Perform unrelated visual redesign, storage overhaul, or deployment work.
+  - overall ≥90%;
+  - newest ≥85%;
+  - minimum newest coverage.
+
+- Add an older-character checkpoint accuracy floor.
+- Allow practice to unlock characters.
+- Reintroduce Check, Next, or Got it for ordinary isolated prompts.
+- Reveal checkpoint answers before completion.
+- Reveal continuous-copy targets while copying.
+- Require word copy before enough eligible words exist.
+- Implement timed sending or paddle work in this milestone.
+- Perform unrelated visual redesign, storage overhaul, or deployment work.
 
 # Part M: Automated tests
 
@@ -750,109 +764,109 @@ Add or update tests for all of the following.
 
 ## Correctness follow-up
 
-* `needsReview` vetoes readiness.
-* Review streak starts only after the flag is set.
-* Accuracy-decay transition resets the streak.
-* Full fresh clean streak is required.
-* Held physical key cannot answer a later prompt.
-* Replay locks input.
-* Stale playback completion cannot clear current playback state.
-* Cancellation settles before suspension.
-* Stale suspension cannot interrupt a new flow.
+- `needsReview` vetoes readiness.
+- Review streak starts only after the flag is set.
+- Accuracy-decay transition resets the streak.
+- Full fresh clean streak is required.
+- Held physical key cannot answer a later prompt.
+- Replay locks input.
+- Stale playback completion cannot clear current playback state.
+- Cancellation settles before suspension.
+- Stale suspension cannot interrupt a new flow.
 
 ## Adaptive acquisition
 
-* Minimum attempts always occur.
-* Clean performance exits after the minimum.
-* Weak performance extends acquisition.
-* Maximum cap is enforced.
-* Assisted and replayed cards do not satisfy acquisition criteria.
-* K and M receive equal minimum initial coverage.
-* Seeded behavior is deterministic.
+- Minimum attempts always occur.
+- Clean performance exits after the minimum.
+- Weak performance extends acquisition.
+- Maximum cap is enforced.
+- Assisted and replayed cards do not satisfy acquisition criteria.
+- K and M receive equal minimum initial coverage.
+- Seeded behavior is deterministic.
 
 ## Transitions
 
-* Transition events record no attempt.
-* Go advances to the intended phase.
-* No multi-character audio begins before Go.
-* Two-to-three-character notification appears.
-* Persistent phase labels match the actual phase.
-* Manual and automatic pacing remain coherent.
+- Transition events record no attempt.
+- Go advances to the intended phase.
+- No multi-character audio begins before Go.
+- Two-to-three-character notification appears.
+- Persistent phase labels match the actual phase.
+- Manual and automatic pacing remain coherent.
 
 ## Groups
 
-* Required number of two-character groups.
-* Required number of three-character groups.
-* Focus character is present.
-* Weak/review characters receive intended weighting.
-* Sequence alignment remains deterministic.
+- Required number of two-character groups.
+- Required number of three-character groups.
+- Focus character is present.
+- Weak/review characters receive intended weighting.
+- Sequence alignment remains deterministic.
 
 ## Continuous copy
 
-* Generated targets contain only active characters.
-* Target schedule meets or slightly exceeds requested duration without cutting a character.
-* Same seed produces the same target.
-* Coverage and weighting rules hold.
-* Excessive identical runs are prevented.
-* Input is enabled during playback.
-* No live correctness feedback appears.
-* Input remains editable throughout.
-* End-of-stream grace period works.
-* Alignment handles insertion, deletion, substitution, and repeated characters.
-* Aborted streams do not penalize unplayed material.
-* Results update clean practice data but never unlock.
-* Results cannot clear isolated remediation.
-* Ten-minute generation and grading meet a reasonable performance budget.
-* Cancellation/navigation leaves no timers, voices, or stale state.
+- Generated targets contain only active characters.
+- Target schedule meets or slightly exceeds requested duration without cutting a character.
+- Same seed produces the same target.
+- Coverage and weighting rules hold.
+- Excessive identical runs are prevented.
+- Input is enabled during playback.
+- No live correctness feedback appears.
+- Input remains editable throughout.
+- End-of-stream grace period works.
+- Alignment handles insertion, deletion, substitution, and repeated characters.
+- Aborted streams do not penalize unplayed material.
+- Results update clean practice data but never unlock.
+- Results cannot clear isolated remediation.
+- Ten-minute generation and grading meet a reasonable performance budget.
+- Cancellation/navigation leaves no timers, voices, or stale state.
 
 ## Word copy
 
-* Hidden until eligible-word threshold is reached.
-* Every selected word uses only active characters.
-* Selection favors the newest/weak/review character when possible.
-* Word length remains hidden.
-* Enter submits.
-* Replay excludes the result from clean mastery.
-* Word transition records no attempt.
+- Hidden until eligible-word threshold is reached.
+- Every selected word uses only active characters.
+- Selection favors the newest/weak/review character when possible.
+- Word length remains hidden.
+- Enter submits.
+- Replay excludes the result from clean mastery.
+- Word transition records no attempt.
 
 ## Regression
 
-* Checkpoint remains isolated and unassisted.
-* Checkpoint feedback remains withheld.
-* A pass unlocks at most one character.
-* Learn remains RX-only.
-* Existing punctuation input still works.
-* Introduction persistence still records only completed introductions.
-* Audio does not overlap at slow settings.
-* Volume and output-device behavior remain correct.
+- Checkpoint remains isolated and unassisted.
+- Checkpoint feedback remains withheld.
+- A pass unlocks at most one character.
+- Learn remains RX-only.
+- Existing punctuation input still works.
+- Introduction persistence still records only completed introductions.
+- Audio does not overlap at slow settings.
+- Volume and output-device behavior remain correct.
 
 # Part N: Manual browser verification
 
 Test at:
 
-* Normal timing: 20 WPM character / 12 WPM effective.
-* Slow timing: 8 WPM character / 5 WPM effective.
-* Automatic pacing.
-* Manual pacing.
-* Physical keyboard.
-* Mobile or browser-emulated soft keyboard.
+- Normal timing: 20 WPM character / 12 WPM effective.
+- Slow timing: 8 WPM character / 5 WPM effective.
+- Automatic pacing.
+- Manual pacing.
+- Physical keyboard.
+- Mobile or browser-emulated soft keyboard.
 
 Verify:
 
-* K and M each receive substantial practice.
-* Phase changes are obvious.
-* Multi-character audio never starts before Go.
-* Two- and three-character modes are labeled.
-* Continuous input remains available while Morse plays.
-* A one-minute stream lasts approximately one scheduled minute.
-* No audible gaps or overlapping tones occur.
-* Held keys do not answer later prompts.
-* Replay cannot be answered during playback.
-* Ending or navigating away releases audio.
-* Returning immediately does not trigger stale suspension.
-* Word copy appears only when useful words exist.
-* No TX cards appear.
-* No console errors occur.
+- K and M each receive substantial practice.
+- Phase changes are obvious.
+- Multi-character audio never starts before Go.
+- Two- and three-character modes are labeled.
+- Continuous input remains available while Morse plays.
+- A one-minute stream lasts approximately one scheduled minute.
+- No audible gaps or overlapping tones occur.
+- Held keys do not answer later prompts.
+- Replay cannot be answered during playback.
+- Ending or navigating away releases audio.
+- Returning immediately does not trigger stale suspension.
+- Word copy appears only when useful words exist.
+- No TX cards appear.
+- No console errors occur.
 
 # Part O: Required verification commands
 
@@ -888,16 +902,16 @@ Do not combine all work into one large commit.
 
 When finished, report:
 
-* Commit SHAs and one-line summaries.
-* Any changes to the proposed architecture.
-* Exact configuration defaults implemented.
-* Exact test counts.
-* Results of every verification command.
-* Browser scenarios tested.
-* Actual measured one-minute stream duration at 20/12 and 8/5.
-* Maximum-stream generation and grading performance.
-* Confirmation that Learn contains no TX exercises.
-* Confirmation that practice cannot unlock characters.
-* Confirmation that continuous-copy results cannot clear remediation.
-* Confirmation that the AudioContext releases correctly.
-* Any deliberate deviations from this specification and the reason for each.
+- Commit SHAs and one-line summaries.
+- Any changes to the proposed architecture.
+- Exact configuration defaults implemented.
+- Exact test counts.
+- Results of every verification command.
+- Browser scenarios tested.
+- Actual measured one-minute stream duration at 20/12 and 8/5.
+- Maximum-stream generation and grading performance.
+- Confirmation that Learn contains no TX exercises.
+- Confirmation that practice cannot unlock characters.
+- Confirmation that continuous-copy results cannot clear remediation.
+- Confirmation that the AudioContext releases correctly.
+- Any deliberate deviations from this specification and the reason for each.

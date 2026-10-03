@@ -20,8 +20,8 @@ The app must never unlock a character automatically. When the evidence is strong
 
 Actions:
 
-* **Learn U** — unlock exactly one character and begin its introduction.
-* **Practice these characters again** — retain the current active set and start another lesson.
+- **Learn U** — unlock exactly one character and begin its introduction.
+- **Practice these characters again** — retain the current active set and start another lesson.
 
 This replaces all checkpoint UI and terminology.
 
@@ -53,19 +53,19 @@ Preserve the checkpoint’s existing evidence-size behavior for condition 7:
 minimum = max(
   24,
   round(activeCharacterCount * 6),
-  activeCharacterCount - 1 + 8
-)
+  activeCharacterCount - 1 + 8,
+);
 ```
 
 Clamp the normal scaled length to the existing maximum of 50, while still treating an impossible configuration as an error. Prefer extracting and renaming the current checkpoint-length logic rather than subtly changing its behavior.
 
 Do not add a per-character accuracy floor for older characters. The intended rule remains:
 
-* Overall ≥ 90%.
-* Newest ≥ 85%.
-* Newest has sufficient observations.
-* Every active character is represented.
-* Existing review state may veto advancement.
+- Overall ≥ 90%.
+- Newest ≥ 85%.
+- Newest has sufficient observations.
+- Every active character is represented.
+- Existing review state may veto advancement.
 
 A weak older character may therefore be carried by the overall score unless it has already triggered `needsReview`. Add a test that preserves this decision.
 
@@ -103,24 +103,24 @@ The exact shape may differ, but the result must provide enough structured inform
 
 Keep thresholds as named, tunable configuration values. Rename `CheckpointConfig` to something appropriate such as `AdvancementConfig`, preserving the current values:
 
-* Overall accuracy: 0.90
-* Newest accuracy: 0.85
-* Minimum newest observations: 8
-* Minimum evidence length: 24
-* Maximum scaled evidence length: 50
-* Observations per active character: 6
+- Overall accuracy: 0.90
+- Newest accuracy: 0.85
+- Minimum newest observations: 8
+- Minimum evidence length: 24
+- Maximum scaled evidence length: 50
+- Observations per active character: 6
 
 ## Evidence source
 
 Use `ContinuousCopyResult.perCharacterResults` to calculate:
 
-* Total observations
-* Total correct
-* Overall accuracy
-* Per-character observation counts
-* Per-character correct counts
-* Newest-character accuracy
-* Active-set coverage
+- Total observations
+- Total correct
+- Overall accuracy
+- Per-character observation counts
+- Per-character correct counts
+- Newest-character accuracy
+- Active-set coverage
 
 Do not infer these values from the displayed summary strings.
 
@@ -132,14 +132,14 @@ Both random-group and word characters may contribute to advancement evidence. Th
 
 Maintain these distinctions:
 
-* Ordinary isolated, group, and word exercises feed practice history and scheduling.
-* Assisted and replayed exercises remain excluded from mastery.
-* Continuous copy feeds practice history and produces advancement evidence.
-* Continuous copy must not unlock a character by itself.
-* Only explicit learner acceptance of a valid advancement offer may unlock.
-* Continuous copy must not clear `needsReview`; remediation remains responsible for that.
-* TX remains irrelevant to RX progression.
-* At most one character may be unlocked from one assessment.
+- Ordinary isolated, group, and word exercises feed practice history and scheduling.
+- Assisted and replayed exercises remain excluded from mastery.
+- Continuous copy feeds practice history and produces advancement evidence.
+- Continuous copy must not unlock a character by itself.
+- Only explicit learner acceptance of a valid advancement offer may unlock.
+- Continuous copy must not clear `needsReview`; remediation remains responsible for that.
+- TX remains irrelevant to RX progression.
+- At most one character may be unlocked from one assessment.
 
 Rename comments and APIs that still claim “only a checkpoint advances the curriculum.”
 
@@ -148,7 +148,7 @@ Rename comments and APIs that still claim “only a checkpoint advances the curr
 Add a single action such as:
 
 ```ts
-acceptAdvancement()
+acceptAdvancement();
 ```
 
 It must:
@@ -185,20 +185,20 @@ Do not use “pass,” “fail,” “test,” or “checkpoint.”
 
 For an ineligible session, give one concise, constructive message based on the assessment reason:
 
-* Low overall accuracy:
+- Low overall accuracy:
   “You copied 87% overall. Keep practicing and aim for 90%.”
-* Low newest accuracy:
+- Low newest accuracy:
   “Keep practicing M. You copied it correctly 78% of the time.”
-* Insufficient newest observations:
+- Insufficient newest observations:
   “Let’s hear M a few more times before adding another character.”
-* Incomplete active-set coverage:
+- Incomplete active-set coverage:
   “This session didn’t include enough of the full character set yet.”
-* Needs review:
+- Needs review:
   “A little more practice with K will help before adding another character.”
-* Insufficient total evidence:
+- Insufficient total evidence:
   “Keep copying a little longer so the app has enough information.”
-* Abandoned stream: retain the current neutral message that it was not counted.
-* Complete curriculum: retain the message that all characters are unlocked.
+- Abandoned stream: retain the current neutral message that it was not counted.
+- Complete curriculum: retain the message that all characters are unlocked.
 
 Avoid showing multiple failure reasons simultaneously. The pure evaluator should define a deterministic reason priority.
 
@@ -220,18 +220,18 @@ If you believe overall/newest ordering should differ for clearer feedback, repor
 
 Once advancement assessment and acceptance are working, remove:
 
-* `CheckpointSession`
-* `CheckpointResult` and checkpoint-specific application types
-* `buildCheckpoint()` and `gradeCheckpoint()`
-* Checkpoint React phases
-* Checkpoint refs and hook state
-* `startCheckpoint()` and `acceptCheckpoint()`
-* Checkpoint input UI
-* “Start checkpoint” and “Try a checkpoint” buttons
-* “Checkpoint passed” and “Not yet” screens
-* Checkpoint-specific physical-key handling branches
-* Dead checkpoint tests and documentation
-* Comments that describe checkpoint-only progression
+- `CheckpointSession`
+- `CheckpointResult` and checkpoint-specific application types
+- `buildCheckpoint()` and `gradeCheckpoint()`
+- Checkpoint React phases
+- Checkpoint refs and hook state
+- `startCheckpoint()` and `acceptCheckpoint()`
+- Checkpoint input UI
+- “Start checkpoint” and “Try a checkpoint” buttons
+- “Checkpoint passed” and “Not yet” screens
+- Checkpoint-specific physical-key handling branches
+- Dead checkpoint tests and documentation
+- Comments that describe checkpoint-only progression
 
 Do not remove alignment, prompt-token, keyboard, review, or curriculum utilities merely because checkpoint code used them.
 
@@ -254,48 +254,48 @@ If `canUnlockNext()` or `unlockNext()` becomes unused or represents the obsolete
 
 Cover at least:
 
-* Perfect completed stream is eligible.
-* Exactly 90% overall passes.
-* Just below 90% overall does not pass.
-* Exactly 85% newest passes.
-* Just below 85% newest does not pass.
-* Exactly eight newest observations passes.
-* Seven newest observations does not pass.
-* Every active character covered passes.
-* One missing active character blocks the offer.
-* Evidence exactly at the calculated minimum passes.
-* Evidence one observation below the minimum does not pass.
-* Abandoned stream never qualifies.
-* Any unresolved `needsReview` blocks advancement.
-* Completed curriculum returns `COMPLETE`.
-* Strong overall score may carry an older character without a separate per-character floor.
-* Spaces and token boundaries do not change evidence.
-* Words and random groups both contribute correctly.
-* Repeated and ambiguous aligned characters retain deterministic attribution.
-* Evaluation is pure and does not mutate curriculum state.
+- Perfect completed stream is eligible.
+- Exactly 90% overall passes.
+- Just below 90% overall does not pass.
+- Exactly 85% newest passes.
+- Just below 85% newest does not pass.
+- Exactly eight newest observations passes.
+- Seven newest observations does not pass.
+- Every active character covered passes.
+- One missing active character blocks the offer.
+- Evidence exactly at the calculated minimum passes.
+- Evidence one observation below the minimum does not pass.
+- Abandoned stream never qualifies.
+- Any unresolved `needsReview` blocks advancement.
+- Completed curriculum returns `COMPLETE`.
+- Strong overall score may carry an older character without a separate per-character floor.
+- Spaces and token boundaries do not change evidence.
+- Words and random groups both contribute correctly.
+- Repeated and ambiguous aligned characters retain deterministic attribution.
+- Evaluation is pure and does not mutate curriculum state.
 
 ## Required integration and UI tests
 
 Cover at least:
 
-* A qualifying completed stream displays the readiness suggestion.
-* The suggestion includes actual overall and newest-character metrics.
-* The primary button names the actual next character.
-* Clicking **Learn U** unlocks only U.
-* Double-clicking or repeated invocation cannot unlock a second character.
-* Accepting immediately begins U’s introduction.
-* The introduction still waits indefinitely for Start practice.
-* Clicking **Practice these characters again** starts a lesson without unlocking.
-* A nonqualifying stream never displays a Learn-next-character button.
-* An abandoned stream never displays an advancement offer.
-* A stream with unresolved review never displays an advancement offer.
-* Ordinary practice cannot unlock.
-* Completing continuous copy cannot unlock without explicit acceptance.
-* Assisted or replayed work cannot create advancement evidence.
-* Continuous copy cannot clear remediation state.
-* TX cannot affect advancement.
-* No checkpoint buttons, headings, input fields, or routes remain.
-* Existing consecutive-key, type-behind, audio lifecycle, introduction, mobile, and alignment tests continue to pass.
+- A qualifying completed stream displays the readiness suggestion.
+- The suggestion includes actual overall and newest-character metrics.
+- The primary button names the actual next character.
+- Clicking **Learn U** unlocks only U.
+- Double-clicking or repeated invocation cannot unlock a second character.
+- Accepting immediately begins U’s introduction.
+- The introduction still waits indefinitely for Start practice.
+- Clicking **Practice these characters again** starts a lesson without unlocking.
+- A nonqualifying stream never displays a Learn-next-character button.
+- An abandoned stream never displays an advancement offer.
+- A stream with unresolved review never displays an advancement offer.
+- Ordinary practice cannot unlock.
+- Completing continuous copy cannot unlock without explicit acceptance.
+- Assisted or replayed work cannot create advancement evidence.
+- Continuous copy cannot clear remediation state.
+- TX cannot affect advancement.
+- No checkpoint buttons, headings, input fields, or routes remain.
+- Existing consecutive-key, type-behind, audio lifecycle, introduction, mobile, and alignment tests continue to pass.
 
 ## Manual browser verification
 
@@ -334,10 +334,10 @@ Use focused commits if practical:
 
 Report:
 
-* Commit SHAs
-* Files removed
-* Advancement configuration values
-* Automated test totals
-* Browser scenarios completed
-* Any deliberate deviations
-* Any remaining physical-device or audible checks
+- Commit SHAs
+- Files removed
+- Advancement configuration values
+- Automated test totals
+- Browser scenarios completed
+- Any deliberate deviations
+- Any remaining physical-device or audible checks
