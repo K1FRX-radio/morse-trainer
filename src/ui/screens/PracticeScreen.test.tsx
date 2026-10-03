@@ -152,6 +152,14 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+function lastPlayedPrompt(): string {
+  const calls = vi.mocked(audio.playText).mock.calls as unknown as Array<
+    [string, ...unknown[]]
+  >;
+  const last = calls[calls.length - 1]?.[0];
+  return typeof last === "string" ? last : "";
+}
+
 beforeEach(() => {
   vi.spyOn(performance, "now").mockImplementation(() => 1000);
 });
@@ -163,12 +171,96 @@ afterEach(() => {
 });
 
 describe("CopyPractice persistence", () => {
+  it("defaults to unlocked scope", () => {
+    const session = persistence();
+    renderPractice(<CopyPractice />, session);
+
+    expect(screen.getByLabelText("Practice scope")).toHaveValue("unlocked");
+  });
+
+  it("generates unlocked-only letter groups by default", async () => {
+    const session = persistence();
+    renderPractice(<CopyPractice />, session, {
+      curriculum: sendCurriculum(["K", "M"]),
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+
+    await waitFor(() => expect(audio.playText).toHaveBeenCalled());
+    expect(lastPlayedPrompt()).toMatch(/^[KM]+$/);
+  });
+
+  it("does not inject locked digits in unlocked letters-numbers mode", async () => {
+    const session = persistence();
+    renderPractice(<CopyPractice />, session, {
+      curriculum: sendCurriculum(["K", "M"]),
+    });
+
+    fireEvent.change(screen.getByLabelText("Content"), {
+      target: { value: "letters-numbers" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+
+    await waitFor(() => expect(audio.playText).toHaveBeenCalled());
+    expect(lastPlayedPrompt()).toMatch(/^[KM]+$/);
+  });
+
+  it("shows a safe unavailable state when no unlocked words are eligible", async () => {
+    const session = persistence();
+    renderPractice(<CopyPractice />, session, {
+      curriculum: sendCurriculum(["K", "M"]),
+    });
+
+    fireEvent.change(screen.getByLabelText("Content"), {
+      target: { value: "words" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+
+    await screen.findByRole("alert");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "No eligible words are available for the unlocked character set yet.",
+    );
+    expect(audio.playText).not.toHaveBeenCalled();
+  });
+
+  it("shows a safe unavailable state for callsigns without unlocked digits", async () => {
+    const session = persistence();
+    renderPractice(<CopyPractice />, session, {
+      curriculum: sendCurriculum(["K", "M", "U"]),
+    });
+
+    fireEvent.change(screen.getByLabelText("Content"), {
+      target: { value: "callsigns" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+
+    await screen.findByRole("alert");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Callsign practice in Unlocked scope needs at least one unlocked letter and one unlocked digit.",
+    );
+    expect(audio.playText).not.toHaveBeenCalled();
+  });
+
+  it("preserves broad prompt pool in all-characters scope", async () => {
+    const session = persistence();
+    renderPractice(<CopyPractice />, session, {
+      curriculum: sendCurriculum(["K", "M"]),
+    });
+
+    fireEvent.change(screen.getByLabelText("Practice scope"), {
+      target: { value: "all-characters" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+
+    await waitFor(() => expect(audio.playText).toHaveBeenCalled());
+    expect(lastPlayedPrompt()).toMatch(/^[A-Z]+$/);
+    expect(lastPlayedPrompt()).not.toMatch(/^[KM]+$/);
+  });
+
   it("starts on Start and commits one assisted attempt on Check", async () => {
     const session = persistence();
-    const { startPracticeSessionPersistence, unmount } = renderPractice(
-      <CopyPractice />,
-      session,
-    );
+    const { startPracticeSessionPersistence, saveCurriculum, unmount } =
+      renderPractice(<CopyPractice />, session);
 
     fireEvent.click(screen.getByRole("button", { name: "Start" }));
     await screen.findByLabelText("Your copy");
@@ -192,6 +284,7 @@ describe("CopyPractice persistence", () => {
       }),
       expect.objectContaining({ completedCards: 1 }),
     );
+    expect(saveCurriculum).not.toHaveBeenCalled();
     unmount();
     await waitFor(() => expect(session.finish).toHaveBeenCalledOnce());
   });
