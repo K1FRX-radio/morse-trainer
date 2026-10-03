@@ -202,16 +202,19 @@ export function useLearnSession() {
   });
 
   const persistenceSnapshot = useCallback(
-    (session: LearnSession): LearnPersistenceSnapshot => ({
-      activeMs: session.elapsedActiveMs,
-      activeDateBuckets: session.activeDateBuckets,
-      completedCards: session.completedCards,
-      curriculum: stateRef.current,
-      introductions: [
-        ...loadIntroductions(),
-        ...session.completedIntroductions,
-      ],
-    }),
+    (session: LearnSession): LearnPersistenceSnapshot => {
+      const activeTime = session.activeTimeSnapshot;
+      return {
+        activeMs: activeTime.activeMs,
+        activeDateBuckets: activeTime.activeDateBuckets,
+        completedCards: session.completedCards,
+        curriculum: stateRef.current,
+        introductions: [
+          ...loadIntroductions(),
+          ...session.completedIntroductions,
+        ],
+      };
+    },
     [loadIntroductions],
   );
 

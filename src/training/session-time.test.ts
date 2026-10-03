@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ActiveTimeTracker,
+  type ActiveTimeSnapshot,
   type ActiveTimeContext,
   type ActiveTimePoint,
 } from "./session-time.ts";
@@ -48,6 +49,14 @@ const captureUtc = captureInZone("UTC", [
   { startsAt: "1970-01-01T00:00:00.000Z", offsetMinutes: 0 },
 ]);
 
+function expectBucketInvariant(snapshot: ActiveTimeSnapshot): void {
+  const bucketTotal = snapshot.activeDateBuckets.reduce(
+    (total, bucket) => total + bucket.activeMs,
+    0,
+  );
+  expect(Math.abs(bucketTotal - snapshot.activeMs)).toBeLessThanOrEqual(0.001);
+}
+
 describe("ActiveTimeTracker", () => {
   it("tracks an ordinary single-day session", () => {
     const tracker = new ActiveTimeTracker({ captureAt: captureUtc });
@@ -56,7 +65,8 @@ describe("ActiveTimeTracker", () => {
       point(45000, "2026-09-24T10:00:45.000Z", captureUtc),
     );
 
-    expect(tracker.snapshot()).toEqual({
+    const snapshot = tracker.snapshot();
+    expect(snapshot).toEqual({
       activeMs: 45000,
       activeDateBuckets: [
         {
@@ -67,6 +77,7 @@ describe("ActiveTimeTracker", () => {
         },
       ],
     });
+    expectBucketInvariant(snapshot);
   });
 
   it("splits active time across local midnight", () => {
@@ -76,7 +87,8 @@ describe("ActiveTimeTracker", () => {
       point(40000, "2026-09-25T00:00:20.000Z", captureUtc),
     );
 
-    expect(tracker.snapshot().activeDateBuckets).toEqual([
+    const snapshot = tracker.snapshot();
+    expect(snapshot.activeDateBuckets).toEqual([
       {
         localDate: "2026-09-24",
         utcOffsetMinutes: 0,
@@ -90,6 +102,7 @@ describe("ActiveTimeTracker", () => {
         activeMs: 20000,
       },
     ]);
+    expectBucketInvariant(snapshot);
   });
 
   it("splits spring-forward activity at the offset transition", () => {
@@ -103,7 +116,8 @@ describe("ActiveTimeTracker", () => {
       point(40000, "2026-03-08T07:00:20.000Z", captureNewYork),
     );
 
-    expect(tracker.snapshot().activeDateBuckets).toEqual([
+    const snapshot = tracker.snapshot();
+    expect(snapshot.activeDateBuckets).toEqual([
       {
         localDate: "2026-03-08",
         utcOffsetMinutes: -300,
@@ -117,6 +131,7 @@ describe("ActiveTimeTracker", () => {
         activeMs: 20000,
       },
     ]);
+    expectBucketInvariant(snapshot);
   });
 
   it("splits fall-back activity at the offset transition", () => {
@@ -130,7 +145,8 @@ describe("ActiveTimeTracker", () => {
       point(40000, "2026-11-01T06:00:20.000Z", captureNewYork),
     );
 
-    expect(tracker.snapshot().activeDateBuckets).toEqual([
+    const snapshot = tracker.snapshot();
+    expect(snapshot.activeDateBuckets).toEqual([
       {
         localDate: "2026-11-01",
         utcOffsetMinutes: -240,
@@ -144,6 +160,7 @@ describe("ActiveTimeTracker", () => {
         activeMs: 20000,
       },
     ]);
+    expectBucketInvariant(snapshot);
   });
 
   it("caps an idle period from its starting activity across midnight", () => {
@@ -153,7 +170,8 @@ describe("ActiveTimeTracker", () => {
       point(120000, "2026-09-25T00:01:30.000Z", captureUtc),
     );
 
-    expect(tracker.snapshot()).toEqual({
+    const snapshot = tracker.snapshot();
+    expect(snapshot).toEqual({
       activeMs: 60000,
       activeDateBuckets: [
         {
@@ -170,6 +188,7 @@ describe("ActiveTimeTracker", () => {
         },
       ],
     });
+    expectBucketInvariant(snapshot);
   });
 
   it("keeps capped idle time in the starting timezone after a device change", () => {
@@ -192,7 +211,8 @@ describe("ActiveTimeTracker", () => {
       point(120000, "2026-09-25T05:01:30.000Z", captureChicago),
     );
 
-    expect(tracker.snapshot()).toEqual({
+    const snapshot = tracker.snapshot();
+    expect(snapshot).toEqual({
       activeMs: 60000,
       activeDateBuckets: [
         {
@@ -203,6 +223,7 @@ describe("ActiveTimeTracker", () => {
         },
       ],
     });
+    expectBucketInvariant(snapshot);
   });
 
   it("excludes paused and hidden-tab time", () => {
@@ -214,7 +235,37 @@ describe("ActiveTimeTracker", () => {
       point(85000, "2026-09-24T10:01:25.000Z", captureUtc),
     );
 
-    expect(tracker.snapshot().activeMs).toBe(25000);
+    const snapshot = tracker.snapshot();
+    expect(snapshot.activeMs).toBe(25000);
+    expectBucketInvariant(snapshot);
+  });
+
+  it("keeps bucket totals aligned under many fractional activity intervals", () => {
+    const captureNewYork = captureInZone("America/New_York", [
+      { startsAt: "1970-01-01T00:00:00.000Z", offsetMinutes: -240 },
+      { startsAt: "2026-11-01T06:00:00.000Z", offsetMinutes: -300 },
+    ]);
+    const tracker = new ActiveTimeTracker({ captureAt: captureNewYork });
+    const baseUtc = Date.parse("2026-11-01T05:59:59.400Z");
+    let monotonic = 0;
+    tracker.start({
+      monotonicMs: monotonic,
+      wallTime: captureNewYork(new Date(baseUtc)),
+    });
+
+    for (let step = 1; step <= 400; step += 1) {
+      monotonic += 7.125;
+      const wallUtcMs = baseUtc + monotonic;
+      tracker.recordActivity({
+        monotonicMs: monotonic,
+        wallTime: captureNewYork(new Date(wallUtcMs)),
+      });
+      if (step % 50 === 0) {
+        expectBucketInvariant(tracker.snapshot());
+      }
+    }
+
+    expectBucketInvariant(tracker.snapshot());
   });
 
   it("uses elapsed activity and finalized attempts for interrupted validity", () => {

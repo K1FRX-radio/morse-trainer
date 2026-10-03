@@ -8,6 +8,7 @@ import {
   type LessonPhase,
   type PlannedExercise,
 } from "./lesson-plan.ts";
+import type { ActiveTimeContext } from "./session-time.ts";
 
 function isExercise(event: LessonEvent): event is PlannedExercise {
   return (
@@ -98,6 +99,66 @@ describe("LearnSession active time", () => {
     const { session } = freshSession();
     session.start(0);
     expect(session.end(10000).valid).toBe(false);
+  });
+
+  it("keeps persistence-active-time invariant after many fractional attempts", () => {
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    const startUtc = Date.parse("2026-11-01T05:59:59.400Z");
+    let monotonic = 0;
+    const now = () => monotonic;
+    const wallNow = () => new Date(startUtc + monotonic);
+    const captureAt = (date: Date): ActiveTimeContext => {
+      const instant = date.getTime();
+      const offsetMinutes =
+        instant >= Date.parse("2026-11-01T06:00:00.000Z") ? -300 : -240;
+      const local = new Date(instant + offsetMinutes * 60000);
+      return {
+        utc: date.toISOString(),
+        localDate: local.toISOString().slice(0, 10),
+        utcOffsetMinutes: offsetMinutes,
+        timeZone: "America/New_York",
+      };
+    };
+    const session = new LearnSession({
+      state,
+      rng: createRng(42),
+      now,
+      wallNow,
+      captureAt,
+    });
+
+    session.start();
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      monotonic += 1.75;
+      const event = session.next();
+      if (!event) break;
+      if (event.type === "transition") {
+        session.continueTransition();
+      } else if (event.type === "notification") {
+        session.continueNotification();
+      } else if (event.type === "continuous-copy") {
+        session.completeContinuousCopy(
+          event.plan.gradingTarget,
+          event.plan.scheduledDurationMs,
+        );
+      } else if (event.type === "introduce") {
+        session.submit("");
+      } else if (event.type === "send-character") {
+        session.submit(true);
+      } else {
+        session.submit(event.target);
+      }
+
+      monotonic += 7.125;
+      const snapshot = session.activeTimeSnapshot;
+      const bucketTotal = snapshot.activeDateBuckets.reduce(
+        (total, bucket) => total + bucket.activeMs,
+        0,
+      );
+      expect(Math.abs(bucketTotal - snapshot.activeMs)).toBeLessThanOrEqual(
+        0.001,
+      );
+    }
   });
 });
 

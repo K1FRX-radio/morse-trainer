@@ -18,6 +18,7 @@ import { captureDateTime } from "./time.ts";
 
 const DEFAULT_LEASE_DURATION_MS = 60000;
 const DEFAULT_LEASE_RENEWAL_MS = 20000;
+const ACTIVE_TIME_TOLERANCE_MS = 0.001;
 
 export type LearnPersistenceSettings = {
   charWpm: number;
@@ -72,6 +73,25 @@ export interface LearnSessionPersistence {
     acceptance: AdvancementAcceptance,
   ): Promise<CurriculumState>;
   retry(): Promise<void>;
+}
+
+function activeBucketSum(snapshot: LearnPersistenceSnapshot): number {
+  return snapshot.activeDateBuckets.reduce(
+    (total, bucket) => total + bucket.activeMs,
+    0,
+  );
+}
+
+function assertConsistentActiveSnapshot(
+  snapshot: LearnPersistenceSnapshot,
+): void {
+  const bucketTotal = activeBucketSum(snapshot);
+  if (Math.abs(bucketTotal - snapshot.activeMs) <= ACTIVE_TIME_TOLERANCE_MS) {
+    return;
+  }
+  throw new Error(
+    `invalid Learn persistence snapshot: activeDateBuckets sum ${bucketTotal} does not match activeMs ${snapshot.activeMs}`,
+  );
 }
 
 function defaultId(): string {
@@ -201,6 +221,14 @@ export class DurableLearnSession implements LearnSessionPersistence {
     if (this.closingStatus) {
       return Promise.reject(new Error("Learn session is already closing"));
     }
+    let frozenSnapshot: LearnPersistenceSnapshot;
+    try {
+      assertConsistentActiveSnapshot(snapshot);
+      frozenSnapshot = structuredClone(snapshot);
+    } catch (cause) {
+      return Promise.reject(cause);
+    }
+
     const occurredAt = captureDateTime(this.now());
     const id = this.createId();
     const target = normalizeCopy(evidence.target);
@@ -235,7 +263,6 @@ export class DurableLearnSession implements LearnSessionPersistence {
         : { durationMs: evidence.durationMs }),
       ...this.settings,
     };
-    const frozenSnapshot = structuredClone(snapshot);
 
     return this.enqueue(async () => {
       const nextQualifyingAttemptCount =
@@ -324,6 +351,7 @@ export class DurableLearnSession implements LearnSessionPersistence {
     this.closingStatus = status;
     this.cancelRenewal();
     const endedAt = captureDateTime(this.now());
+    assertConsistentActiveSnapshot(snapshot);
     const frozenSnapshot = structuredClone(snapshot);
     await this.enqueue(async () => {
       const current = { ...this.record };

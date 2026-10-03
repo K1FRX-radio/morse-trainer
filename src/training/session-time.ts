@@ -35,6 +35,9 @@ export type ActiveTimeTrackerOptions = {
   captureAt?: (date: Date, timeZone?: string) => ActiveTimeContext;
 };
 
+const BOUNDARY_SEARCH_EPSILON_MS = 1e-6;
+const BOUNDARY_SEARCH_MAX_STEPS = 48;
+
 function pad(value: number): string {
   return String(value).padStart(2, "0");
 }
@@ -177,6 +180,7 @@ export class ActiveTimeTracker {
   }
 
   private addInterval(start: ActiveTimeContext, durationMs: number): void {
+    if (durationMs <= 0) return;
     const startMs = Date.parse(start.utc);
     if (!Number.isFinite(startMs)) {
       throw new RangeError("active-time point has an invalid UTC timestamp");
@@ -191,27 +195,38 @@ export class ActiveTimeTracker {
         utcOffsetMinutes: context.utcOffsetMinutes,
         ...(context.timeZone ? { timeZone: context.timeZone } : {}),
       };
-      let boundaryMs = endMs;
-      const finalContext = this.contextAt(new Date(endMs - 1), start);
-
-      if (bucketKey(identity) !== bucketKey(finalContext)) {
-        let low = cursorMs + 1;
-        let high = endMs - 1;
-        while (low < high) {
-          const middle = Math.floor((low + high) / 2);
-          const middleContext = this.contextAt(new Date(middle), start);
-          if (bucketKey(middleContext) === bucketKey(identity)) {
-            low = middle + 1;
-          } else {
-            high = middle;
-          }
-        }
-        boundaryMs = low;
-      }
+      const boundaryMs = this.findBoundaryMs(cursorMs, endMs, start, identity);
 
       this.addBucket(identity, boundaryMs - cursorMs);
       cursorMs = boundaryMs;
     }
+  }
+
+  private findBoundaryMs(
+    startMs: number,
+    endMs: number,
+    authority: ActiveTimeContext,
+    identity: Omit<ActiveDateBucket, "activeMs">,
+  ): number {
+    const probeMs = Math.max(startMs, endMs - BOUNDARY_SEARCH_EPSILON_MS);
+    const finalContext = this.contextAt(new Date(probeMs), authority);
+    if (bucketKey(finalContext) === bucketKey(identity)) {
+      return endMs;
+    }
+
+    let low = startMs;
+    let high = endMs;
+    for (let step = 0; step < BOUNDARY_SEARCH_MAX_STEPS; step += 1) {
+      if (high - low <= BOUNDARY_SEARCH_EPSILON_MS) break;
+      const middle = (low + high) / 2;
+      const middleContext = this.contextAt(new Date(middle), authority);
+      if (bucketKey(middleContext) === bucketKey(identity)) {
+        low = middle;
+      } else {
+        high = middle;
+      }
+    }
+    return high;
   }
 
   private contextAt(date: Date, start: ActiveTimeContext): ActiveTimeContext {
@@ -228,6 +243,7 @@ export class ActiveTimeTracker {
     identity: Omit<ActiveDateBucket, "activeMs">,
     activeMs: number,
   ): void {
+    if (activeMs <= 0) return;
     const key = bucketKey(identity);
     const existing = this.buckets.get(key);
     if (existing) {
