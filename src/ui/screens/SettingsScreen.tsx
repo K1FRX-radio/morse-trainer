@@ -7,6 +7,7 @@ import {
   type PracticeSettings,
   type SpeedSuggestionAfterAttempts,
 } from "../../core/settings.ts";
+import type { PortableBackupReplaceConfirmation } from "../../data/backup.ts";
 import {
   getOutputSupport,
   listOutputDevices,
@@ -64,6 +65,9 @@ export function SettingsScreen() {
   const [pendingBackupJson, setPendingBackupJson] = useState<
     string | undefined
   >(undefined);
+  const [pendingReplaceConfirmation, setPendingReplaceConfirmation] = useState<
+    PortableBackupReplaceConfirmation | undefined
+  >(undefined);
   const [importPreview, setImportPreview] = useState<string | undefined>(
     undefined,
   );
@@ -108,6 +112,7 @@ export function SettingsScreen() {
   async function loadImport(file: File): Promise<void> {
     const text = await file.text();
     setPendingBackupJson(text);
+    setPendingReplaceConfirmation(undefined);
     if (!previewPortableBackup) {
       setImportPreview(undefined);
       setImportError("Backup import is unavailable in this build.");
@@ -119,10 +124,12 @@ export function SettingsScreen() {
         ? `${preview.sessionRange.firstStartedAt} to ${preview.sessionRange.lastStartedAt}`
         : "no sessions";
       setImportError(undefined);
+      setPendingReplaceConfirmation(preview.replaceConfirmation);
       setImportPreview(
         `Backup from ${preview.exportedAt} (${preview.appVersion}). Sessions: ${preview.counts.sessions}, attempts: ${preview.counts.attempts}, unlocked: ${preview.unlockedCharacters}, mastered: ${preview.masteredCharacters}, range: ${range}.`,
       );
     } catch (error) {
+      setPendingReplaceConfirmation(undefined);
       setImportPreview(undefined);
       setImportError(
         error instanceof Error ? error.message : "Backup preview failed.",
@@ -134,13 +141,20 @@ export function SettingsScreen() {
     if (!replacePortableBackup || !pendingBackupJson) {
       return;
     }
+    if (!pendingReplaceConfirmation) {
+      setImportError("Preview the backup again before replacing data.");
+      return;
+    }
     if (
       !window.confirm("Replace all portable learner data with this backup?")
     ) {
       return;
     }
     try {
-      await replacePortableBackup(pendingBackupJson);
+      await replacePortableBackup(
+        pendingBackupJson,
+        pendingReplaceConfirmation,
+      );
       window.location.reload();
     } catch (error) {
       setImportError(
@@ -357,7 +371,11 @@ export function SettingsScreen() {
         <button
           type="button"
           onClick={() => void confirmReplaceImport()}
-          disabled={!pendingBackupJson || Boolean(importError)}
+          disabled={
+            !pendingBackupJson ||
+            !pendingReplaceConfirmation ||
+            Boolean(importError)
+          }
         >
           Replace with import
         </button>

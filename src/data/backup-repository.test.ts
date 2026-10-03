@@ -1,9 +1,14 @@
 import { IDBKeyRange, indexedDB } from "fake-indexeddb";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { OUTPUT_DEVICE_STORAGE_KEY } from "../ui/settings-context.ts";
 import { DEFAULT_CURRICULUM_CONFIG } from "../content/curriculum-data.ts";
 import { createInitialState } from "../core/curriculum.ts";
 import { DEFAULT_SETTINGS } from "../core/settings.ts";
+import {
+  LEGACY_MIGRATION_MARKER_KEY,
+  LEGACY_ROLLBACK_KEY,
+} from "./legacy-migration.ts";
+import { createPortableBackupDocument } from "./backup.ts";
 import { TrainerDatabase } from "./indexeddb.ts";
 import { DexieTrainingRepository } from "./repository.ts";
 
@@ -99,6 +104,20 @@ async function seedPortableState(repository: DexieTrainingRepository) {
   await repository.saveIntroductions(["K", "M"]);
 }
 
+async function importConfirmation(
+  repository: DexieTrainingRepository,
+  rawJson: string,
+) {
+  const preview = await repository.previewPortableBackup(rawJson);
+  return preview.replaceConfirmation;
+}
+
+const DUMMY_CONFIRMATION = {
+  targetDatasetGeneration: "dataset-dummy",
+  backupDigestHex: "0".repeat(64),
+  operationKey: "1".repeat(64),
+};
+
 describe("portable backup and reset", () => {
   it("exports portable authoritative records and excludes projection rows", async () => {
     const database = new TrainerDatabase({
@@ -153,6 +172,35 @@ describe("portable backup and reset", () => {
     }
   });
 
+  it("reads export snapshot in one readonly transaction", async () => {
+    const database = new TrainerDatabase({
+      name: crypto.randomUUID(),
+      indexedDB,
+      IDBKeyRange,
+    });
+    const repository = new DexieTrainingRepository(database, {
+      now: () => new Date("2026-10-03T10:00:00.000Z"),
+      createId: () => "dataset-1b",
+    });
+
+    try {
+      await repository.open();
+      await seedPortableState(repository);
+      await database.sessions.put(sessionRecord());
+      await database.attempts.put(attemptRecord());
+
+      const spy = vi.spyOn(database, "transaction");
+
+      await repository.exportPortableBackup("1.2.3");
+
+      expect(spy).toHaveBeenCalled();
+      expect(spy.mock.calls[0]?.[0]).toBe("r");
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
   it("round-trips export -> reset -> replace import with equivalent authoritative data", async () => {
     const database = new TrainerDatabase({
       name: crypto.randomUUID(),
@@ -183,7 +231,10 @@ describe("portable backup and reset", () => {
       expect(await database.sessions.count()).toBe(0);
       expect(await database.attempts.count()).toBe(0);
 
-      await repository.replacePortableBackup(raw);
+      await repository.replacePortableBackup(
+        raw,
+        await importConfirmation(repository, raw),
+      );
       expect(await database.sessions.count()).toBe(1);
       expect(await database.attempts.count()).toBe(1);
       expect(await repository.getPortableSettings()).toMatchObject({
@@ -221,16 +272,21 @@ describe("portable backup and reset", () => {
 
       const stableSettings = await repository.getPortableSettings();
       const stableSessionCount = await database.sessions.count();
+      const stableAttemptCount = await database.attempts.count();
 
-      await expect(repository.replacePortableBackup("{")).rejects.toThrow(
-        "backup JSON is malformed",
-      );
+      await expect(
+        repository.replacePortableBackup("{", DUMMY_CONFIRMATION),
+      ).rejects.toThrow("backup JSON is malformed");
+
+      const fresh = await repository.exportPortableBackup("1.2.3");
+      const freshRaw = JSON.stringify(fresh);
+      const confirmation = await importConfirmation(repository, freshRaw);
 
       const future = await repository.exportPortableBackup("1.2.3");
       const futureRaw = JSON.stringify({ ...future, formatVersion: 999 });
-      await expect(repository.replacePortableBackup(futureRaw)).rejects.toThrow(
-        "backup format version is newer than supported",
-      );
+      await expect(
+        repository.replacePortableBackup(futureRaw, confirmation),
+      ).rejects.toThrow("backup format version is newer than supported");
 
       const badIntegrity = await repository.exportPortableBackup("1.2.3");
       const badRaw = JSON.stringify({
@@ -240,12 +296,58 @@ describe("portable backup and reset", () => {
           digestHex: "0".repeat(64),
         },
       });
-      await expect(repository.replacePortableBackup(badRaw)).rejects.toThrow(
-        "backup integrity digest does not match payload",
-      );
+      await expect(
+        repository.replacePortableBackup(badRaw, confirmation),
+      ).rejects.toThrow("backup integrity digest does not match payload");
+
+      const invalidCrossRecord = await createPortableBackupDocument({
+        ...fresh,
+        payload: {
+          ...fresh.payload,
+          progressionEvents: [
+            {
+              id: "event-1",
+              schemaVersion: 1,
+              updatedAt: "2026-10-03T10:00:00.000Z",
+              idempotencyKey: "event:1",
+              type: "advancement-accepted",
+              occurredAt: {
+                utc: "2026-10-03T10:00:00.000Z",
+                localDate: "2026-10-03",
+                utcOffsetMinutes: 0,
+              },
+              activeCharacters: ["K", "M"],
+              masteredCharacters: [],
+              migrationDerived: false,
+            },
+          ],
+          milestones: [
+            {
+              id: "milestone-1",
+              schemaVersion: 1,
+              updatedAt: "2026-10-03T10:00:00.000Z",
+              idempotencyKey: "milestone:1",
+              eventId: "missing-event",
+              type: "character-unlocked",
+              occurredAt: {
+                utc: "2026-10-03T10:00:00.000Z",
+                localDate: "2026-10-03",
+                utcOffsetMinutes: 0,
+              },
+              character: "U",
+              migrationDerived: false,
+            },
+          ],
+        },
+      });
+      const invalidRaw = JSON.stringify(invalidCrossRecord);
+      await expect(
+        repository.replacePortableBackup(invalidRaw, DUMMY_CONFIRMATION),
+      ).rejects.toThrow("milestone references unknown event missing-event");
 
       expect(await repository.getPortableSettings()).toEqual(stableSettings);
       expect(await database.sessions.count()).toBe(stableSessionCount);
+      expect(await database.attempts.count()).toBe(stableAttemptCount);
     } finally {
       repository.close();
       await database.delete();
@@ -272,6 +374,7 @@ describe("portable backup and reset", () => {
       const backup = await repository.exportPortableBackup("1.2.3");
       const raw = JSON.stringify(backup);
       const originalSettings = await repository.getPortableSettings();
+      const confirmation = await importConfirmation(repository, raw);
 
       const originalPut = database.curriculum.put.bind(database.curriculum);
       let failed = false;
@@ -283,9 +386,9 @@ describe("portable backup and reset", () => {
         return originalPut(...args);
       }) as typeof database.curriculum.put;
 
-      await expect(repository.replacePortableBackup(raw)).rejects.toThrow(
-        "simulated write failure",
-      );
+      await expect(
+        repository.replacePortableBackup(raw, confirmation),
+      ).rejects.toThrow("simulated write failure");
 
       expect(await repository.getPortableSettings()).toEqual(originalSettings);
       expect(await database.sessions.count()).toBe(1);
@@ -320,6 +423,8 @@ describe("portable backup and reset", () => {
       });
 
       localStorage.setItem(OUTPUT_DEVICE_STORAGE_KEY, "device-xyz");
+      localStorage.setItem(LEGACY_MIGRATION_MARKER_KEY, '{"done":true}');
+      localStorage.setItem(LEGACY_ROLLBACK_KEY, '{"rollback":true}');
       await repository.resetPortableData();
 
       expect(localStorage.getItem(OUTPUT_DEVICE_STORAGE_KEY)).toBe(
@@ -328,12 +433,110 @@ describe("portable backup and reset", () => {
       expect(
         await database.metadata.get("migration:legacy-local-storage-v1"),
       ).toBeDefined();
+      expect(localStorage.getItem(LEGACY_MIGRATION_MARKER_KEY)).toBe(
+        '{"done":true}',
+      );
+      expect(localStorage.getItem(LEGACY_ROLLBACK_KEY)).toBe(
+        '{"rollback":true}',
+      );
       expect(await database.sessions.count()).toBe(0);
       expect(await database.attempts.count()).toBe(0);
     } finally {
       repository.close();
       await database.delete();
       localStorage.removeItem(OUTPUT_DEVICE_STORAGE_KEY);
+      localStorage.removeItem(LEGACY_MIGRATION_MARKER_KEY);
+      localStorage.removeItem(LEGACY_ROLLBACK_KEY);
+    }
+  });
+
+  it("treats confirmed replace-import retries as idempotent", async () => {
+    const database = new TrainerDatabase({
+      name: crypto.randomUUID(),
+      indexedDB,
+      IDBKeyRange,
+    });
+    const repository = new DexieTrainingRepository(database, {
+      now: () => new Date("2026-10-03T10:00:00.000Z"),
+      createId: () => "dataset-6",
+    });
+
+    try {
+      await repository.open();
+      await seedPortableState(repository);
+      await database.sessions.put(sessionRecord());
+      await database.attempts.put(attemptRecord());
+
+      const raw = JSON.stringify(
+        await repository.exportPortableBackup("1.2.3"),
+      );
+      const confirmation = await importConfirmation(repository, raw);
+
+      const firstResult = await repository.replacePortableBackup(
+        raw,
+        confirmation,
+      );
+      const metadataAfterFirst = await database.metadata
+        .where("id")
+        .startsWith("operation:replace-import:")
+        .count();
+
+      const secondResult = await repository.replacePortableBackup(
+        raw,
+        confirmation,
+      );
+      const metadataAfterSecond = await database.metadata
+        .where("id")
+        .startsWith("operation:replace-import:")
+        .count();
+
+      expect(firstResult).toBe("applied");
+      expect(secondResult).toBe("already-applied");
+      expect(metadataAfterFirst).toBe(1);
+      expect(metadataAfterSecond).toBe(1);
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
+  it("requires a fresh confirmation after target dataset generation changes", async () => {
+    let generationIndex = 0;
+    const database = new TrainerDatabase({
+      name: crypto.randomUUID(),
+      indexedDB,
+      IDBKeyRange,
+    });
+    const repository = new DexieTrainingRepository(database, {
+      now: () => new Date("2026-10-03T10:00:00.000Z"),
+      createId: () => `dataset-7-${generationIndex++}`,
+    });
+
+    try {
+      await repository.open();
+      await seedPortableState(repository);
+      await database.sessions.put(sessionRecord());
+      await database.attempts.put(attemptRecord());
+
+      const raw = JSON.stringify(
+        await repository.exportPortableBackup("1.2.3"),
+      );
+      const staleConfirmation = await importConfirmation(repository, raw);
+
+      await repository.resetPortableData();
+      await expect(
+        repository.replacePortableBackup(raw, staleConfirmation),
+      ).rejects.toThrow(
+        "import confirmation is stale; preview the backup again",
+      );
+
+      const freshConfirmation = await importConfirmation(repository, raw);
+      await expect(
+        repository.replacePortableBackup(raw, freshConfirmation),
+      ).resolves.toBe("applied");
+    } finally {
+      repository.close();
+      await database.delete();
     }
   });
 });

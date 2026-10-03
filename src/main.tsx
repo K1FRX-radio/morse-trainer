@@ -78,8 +78,8 @@ async function start(): Promise<void> {
             previewPortableBackup={(rawJson) =>
               bootstrap.repository.previewPortableBackup(rawJson)
             }
-            replacePortableBackup={(rawJson) =>
-              bootstrap.repository.replacePortableBackup(rawJson)
+            replacePortableBackup={(rawJson, confirmation) =>
+              bootstrap.repository.replacePortableBackup(rawJson, confirmation)
             }
             resetPortableData={() => bootstrap.repository.resetPortableData()}
           >

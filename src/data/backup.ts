@@ -71,12 +71,19 @@ export type PortableBackupPreview = {
   counts: PortableBackupRecordCounts;
   unlockedCharacters: number;
   masteredCharacters: number;
+  replaceConfirmation: PortableBackupReplaceConfirmation;
   sessionRange:
     | {
         firstStartedAt: string;
         lastStartedAt: string;
       }
     | undefined;
+};
+
+export type PortableBackupReplaceConfirmation = {
+  targetDatasetGeneration: string;
+  backupDigestHex: string;
+  operationKey: string;
 };
 
 const documentHeaderSchema = z
@@ -134,7 +141,7 @@ async function sha256Hex(value: string): Promise<string> {
 
 function parsePayload(value: unknown): PortableBackupPayload {
   const payload = value as Record<string, unknown>;
-  return {
+  const parsed: PortableBackupPayload = {
     settings: parsePortableSettingsRecord(payload.settings),
     curriculum: parseCurriculumStateRecord(payload.curriculum),
     introductions: parseIntroductionsRecord(payload.introductions),
@@ -154,6 +161,41 @@ function parsePayload(value: unknown): PortableBackupPayload {
       .parse(payload.migrationLedgers)
       .map((row) => parseMigrationLedger(row)),
   };
+
+  const progressionIds = new Set<string>();
+  const progressionKeys = new Set<string>();
+  for (const event of parsed.progressionEvents) {
+    if (progressionIds.has(event.id)) {
+      throw new Error(`duplicate progression event id ${event.id}`);
+    }
+    if (progressionKeys.has(event.idempotencyKey)) {
+      throw new Error(
+        `duplicate progression event key ${event.idempotencyKey}`,
+      );
+    }
+    progressionIds.add(event.id);
+    progressionKeys.add(event.idempotencyKey);
+  }
+
+  const milestoneIds = new Set<string>();
+  const milestoneKeys = new Set<string>();
+  for (const milestone of parsed.milestones) {
+    if (milestoneIds.has(milestone.id)) {
+      throw new Error(`duplicate milestone id ${milestone.id}`);
+    }
+    if (milestoneKeys.has(milestone.idempotencyKey)) {
+      throw new Error(`duplicate milestone key ${milestone.idempotencyKey}`);
+    }
+    if (!progressionIds.has(milestone.eventId)) {
+      throw new Error(
+        `milestone references unknown event ${milestone.eventId}`,
+      );
+    }
+    milestoneIds.add(milestone.id);
+    milestoneKeys.add(milestone.idempotencyKey);
+  }
+
+  return parsed;
 }
 
 export function countPortableBackupRecords(
@@ -264,8 +306,23 @@ export async function parsePortableBackupJson(
   return parsePortableBackupDocument(parsed);
 }
 
+export async function createReplaceImportConfirmation(options: {
+  backupDigestHex: string;
+  targetDatasetGeneration: string;
+}): Promise<PortableBackupReplaceConfirmation> {
+  const operationKey = await sha256Hex(
+    `${options.backupDigestHex}:${options.targetDatasetGeneration}`,
+  );
+  return {
+    targetDatasetGeneration: options.targetDatasetGeneration,
+    backupDigestHex: options.backupDigestHex,
+    operationKey,
+  };
+}
+
 export function summarizePortableBackup(
   backup: PortableBackupDocument,
+  replaceConfirmation: PortableBackupReplaceConfirmation,
 ): PortableBackupPreview {
   const startedAtValues = backup.payload.sessions
     .map((session) => session.startedAt.utc)
@@ -280,6 +337,7 @@ export function summarizePortableBackup(
     counts: backup.counts,
     unlockedCharacters: backup.payload.curriculum.characters.length,
     masteredCharacters: mastered,
+    replaceConfirmation,
     sessionRange:
       startedAtValues.length === 0
         ? undefined

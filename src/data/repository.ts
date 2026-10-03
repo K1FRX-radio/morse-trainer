@@ -41,10 +41,12 @@ import {
   type RetryCounterIdentity,
 } from "./retry-history.ts";
 import {
+  createReplaceImportConfirmation,
   createPortableBackupDocument,
   parsePortableBackupJson,
   summarizePortableBackup,
   type PortableBackupDocument,
+  type PortableBackupReplaceConfirmation,
   type PortableBackupPreview,
 } from "./backup.ts";
 import {
@@ -186,7 +188,10 @@ export interface TrainingDataRepository extends LegacyMigrationRepository {
   rebuildProjections(): Promise<void>;
   exportPortableBackup(appVersion: string): Promise<PortableBackupDocument>;
   previewPortableBackup(rawJson: string): Promise<PortableBackupPreview>;
-  replacePortableBackup(rawJson: string): Promise<void>;
+  replacePortableBackup(
+    rawJson: string,
+    confirmation: PortableBackupReplaceConfirmation,
+  ): Promise<"applied" | "already-applied">;
   resetPortableData(): Promise<void>;
 }
 
@@ -1083,7 +1088,32 @@ export class DexieTrainingRepository implements TrainingDataRepository {
     appVersion: string,
   ): Promise<PortableBackupDocument> {
     const exportedAt = this.now().toISOString();
-    const [
+    const snapshot = await this.database.transaction(
+      "r",
+      [
+        this.database.metadata,
+        this.database.settings,
+        this.database.curriculum,
+        this.database.introductions,
+        this.database.sessions,
+        this.database.attempts,
+        this.database.progressionEvents,
+        this.database.milestones,
+      ],
+      async () => ({
+        settings: await this.database.settings.get("portable-settings"),
+        curriculum: await this.database.curriculum.get("curriculum-state"),
+        introductions: await this.database.introductions.get(
+          "completed-introductions",
+        ),
+        sessions: await this.database.sessions.toArray(),
+        attempts: await this.database.attempts.toArray(),
+        progressionEvents: await this.database.progressionEvents.toArray(),
+        milestones: await this.database.milestones.toArray(),
+        metadata: await this.database.metadata.toArray(),
+      }),
+    );
+    const {
       settings,
       curriculum,
       introductions,
@@ -1092,16 +1122,7 @@ export class DexieTrainingRepository implements TrainingDataRepository {
       progressionEvents,
       milestones,
       metadata,
-    ] = await Promise.all([
-      this.database.settings.get("portable-settings"),
-      this.database.curriculum.get("curriculum-state"),
-      this.database.introductions.get("completed-introductions"),
-      this.database.sessions.toArray(),
-      this.database.attempts.toArray(),
-      this.database.progressionEvents.toArray(),
-      this.database.milestones.toArray(),
-      this.database.metadata.toArray(),
-    ]);
+    } = snapshot;
     const dataset = parseTrainingDataset(sessions, attempts);
 
     if (!settings || !curriculum || !introductions) {
@@ -1145,11 +1166,36 @@ export class DexieTrainingRepository implements TrainingDataRepository {
   }
 
   async previewPortableBackup(rawJson: string): Promise<PortableBackupPreview> {
-    return summarizePortableBackup(await parsePortableBackupJson(rawJson));
+    const backup = await parsePortableBackupJson(rawJson);
+    const schemaMetadata = parseSchemaMetadata(
+      await this.database.metadata.get("schema-metadata"),
+    );
+    const confirmation = await createReplaceImportConfirmation({
+      backupDigestHex: backup.integrity.digestHex,
+      targetDatasetGeneration: schemaMetadata.datasetGeneration,
+    });
+    return summarizePortableBackup(backup, confirmation);
   }
 
-  async replacePortableBackup(rawJson: string): Promise<void> {
+  async replacePortableBackup(
+    rawJson: string,
+    confirmation: PortableBackupReplaceConfirmation,
+  ): Promise<"applied" | "already-applied"> {
     const backup = await parsePortableBackupJson(rawJson);
+    if (
+      confirmation.backupDigestHex.toLowerCase() !==
+      backup.integrity.digestHex.toLowerCase()
+    ) {
+      throw new Error("import confirmation does not match backup digest");
+    }
+    const expectedConfirmation = await createReplaceImportConfirmation({
+      backupDigestHex: backup.integrity.digestHex,
+      targetDatasetGeneration: confirmation.targetDatasetGeneration,
+    });
+    if (expectedConfirmation.operationKey !== confirmation.operationKey) {
+      throw new Error("import confirmation key is invalid");
+    }
+
     const dataset = parseTrainingDataset(
       backup.payload.sessions,
       backup.payload.attempts,
@@ -1161,7 +1207,7 @@ export class DexieTrainingRepository implements TrainingDataRepository {
       generatedAt,
     );
 
-    await this.database.transaction(
+    return this.database.transaction(
       "rw",
       [
         this.database.metadata,
@@ -1177,6 +1223,35 @@ export class DexieTrainingRepository implements TrainingDataRepository {
         this.database.confusionProjections,
       ],
       async () => {
+        const operationId = `operation:replace-import:${confirmation.operationKey}`;
+        const existingOperation = await this.database.metadata.get(operationId);
+        if (existingOperation !== undefined) {
+          return "already-applied";
+        }
+
+        const currentSchemaMetadata = parseSchemaMetadata(
+          await this.database.metadata.get("schema-metadata"),
+        );
+        if (
+          currentSchemaMetadata.datasetGeneration !==
+          confirmation.targetDatasetGeneration
+        ) {
+          throw new Error(
+            "import confirmation is stale; preview the backup again",
+          );
+        }
+
+        const operationRecord: OperationLedgerRecord = {
+          id: operationId,
+          schemaVersion: RECORD_SCHEMA_VERSION,
+          updatedAt: generatedAt,
+          kind: "operation",
+          operation: "replace-portable-backup",
+          idempotencyKey: confirmation.operationKey,
+          completedAt: generatedAt,
+          resultRecordId: backup.payload.schemaMetadata.datasetGeneration,
+        };
+
         await this.database.settings.clear();
         await this.database.curriculum.clear();
         await this.database.introductions.clear();
@@ -1210,6 +1285,7 @@ export class DexieTrainingRepository implements TrainingDataRepository {
         if (backup.payload.migrationLedgers.length > 0) {
           await this.database.metadata.bulkPut(backup.payload.migrationLedgers);
         }
+        await this.database.metadata.put(operationRecord);
 
         if (rows.daily.length > 0) {
           await this.database.dailyProjections.bulkPut(rows.daily);
@@ -1220,6 +1296,8 @@ export class DexieTrainingRepository implements TrainingDataRepository {
         if (rows.confusions.length > 0) {
           await this.database.confusionProjections.bulkPut(rows.confusions);
         }
+
+        return "applied";
       },
     );
   }

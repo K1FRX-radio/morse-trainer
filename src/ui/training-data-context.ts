@@ -17,6 +17,7 @@ import type {
 } from "../data/models.ts";
 import type {
   PortableBackupDocument,
+  PortableBackupReplaceConfirmation,
   PortableBackupPreview,
 } from "../data/backup.ts";
 import type {
@@ -57,7 +58,10 @@ export type TrainingDataContextValue = {
     appVersion: string,
   ) => Promise<PortableBackupDocument>;
   previewPortableBackup?: (rawJson: string) => Promise<PortableBackupPreview>;
-  replacePortableBackup?: (rawJson: string) => Promise<void>;
+  replacePortableBackup?: (
+    rawJson: string,
+    confirmation: PortableBackupReplaceConfirmation,
+  ) => Promise<"applied" | "already-applied">;
   resetPortableData?: () => Promise<void>;
 };
 
