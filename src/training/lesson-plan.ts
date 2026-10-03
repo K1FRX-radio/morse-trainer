@@ -207,7 +207,6 @@ export type LessonConfig = {
   contrastMinAccuracy: number;
   twoCharacterGroupCount: number;
   threeCharacterGroupCount: number;
-  groupLengthNoticeMs: number;
   minimumEligibleWordCount: number;
   initialWordMinLength: number;
   initialWordMaxLength: number;
@@ -227,7 +226,6 @@ export const DEFAULT_LESSON_CONFIG: LessonConfig = {
   contrastMinAccuracy: 0.8,
   twoCharacterGroupCount: 8,
   threeCharacterGroupCount: 8,
-  groupLengthNoticeMs: 1800,
   minimumEligibleWordCount: 10,
   initialWordMinLength: 2,
   initialWordMaxLength: 4,

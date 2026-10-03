@@ -7,11 +7,11 @@ only which issue should be implemented next and what follows it.
 
 ## Next
 
-- #28 — Cleanup: remove dead 3-char notice delay configuration
+- #43 — Add external CW paddle support via USB HID/MIDI
 
 ## Queue
 
-1. #43 — Add external CW paddle support via USB HID/MIDI
+None.
 
 ## Blocked / awaiting decision
 
@@ -19,6 +19,7 @@ None.
 
 ## Recently completed
 
+- #28 — Cleanup: remove dead 3-char notice delay configuration
 - #29 — Add regression: Send Practice does not mutate Learn progression
 - #31 — Isolate GitHub Pages deployment concurrency from PR CI
 - #36 — Avoid creating empty Copy Practice sessions for unavailable content
