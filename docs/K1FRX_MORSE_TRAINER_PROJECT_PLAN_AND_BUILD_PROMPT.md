@@ -153,7 +153,7 @@ Google's most valuable concepts are:
 
 Do **not** port Phaser or clone the original interface. Reimplement the relevant learning concepts cleanly in TypeScript.
 
-Licensing note: `morse-learn` is Apache-2.0. Reusing its *ideas* (curriculum ordering, word-selection strategy, hint escalation) carries no attribution obligation. The Apache-2.0 `NOTICE`/attribution and license-header obligations trigger only when actual source code or assets are copied or adapted. Therefore:
+Licensing note: `morse-learn` is Apache-2.0. Reusing its _ideas_ (curriculum ordering, word-selection strategy, hint escalation) carries no attribution obligation. The Apache-2.0 `NOTICE`/attribution and license-header obligations trigger only when actual source code or assets are copied or adapted. Therefore:
 
 - prefer original K1FRX visual assets and mnemonic concepts unless use of Google's assets is explicitly approved;
 - if any code or asset is copied or adapted, record the exact source file and commit in `THIRD-PARTY-NOTICES`, retain the license header, and add the required attribution; and
@@ -189,7 +189,7 @@ Recommended initial behavior:
 - require at least eight newest-character observations and at least one
   observation of every active character;
 - require total evidence of `max(24, round(activeCharacterCount * 6),
-  activeCharacterCount - 1 + 8)`, capped at 50 for the normal scaled length;
+activeCharacterCount - 1 + 8)`, capped at 50 for the normal scaled length;
 - unresolved `needsReview` state vetoes advancement;
 - a valid assessment offers the next character but does not unlock it until the
   learner explicitly accepts;
@@ -235,7 +235,7 @@ The scheduler should weight candidates using:
 
 The algorithm must be deterministic when supplied with a seeded random-number generator. Return an explanation or reason code with each selected exercise, such as `NEW_CHARACTER`, `WEAK_RX`, `WEAK_TX`, `CONFUSION_REVIEW`, `SPACED_REVIEW`, or `BALANCED_PRACTICE`. This makes behavior testable and debuggable.
 
-**Confusion-pair definition (shared by scheduler and analytics).** A confusion is recorded on an RX copy error as the *directional ordered pair* `(target, answer)`, e.g. `(U, V)` is distinct from `(V, U)`. Only single-character copy errors count toward pair aggregation; word/group errors are attributed per mismatched character position. Aggregation uses the same rolling window as RX progression (initially the last 50 eligible attempts per involved character) so that stale confusions decay. A pair is "recurring" once it occurs at least a configured minimum number of times within the window. These names and values are configuration and covered by tests.
+**Confusion-pair definition (shared by scheduler and analytics).** A confusion is recorded on an RX copy error as the _directional ordered pair_ `(target, answer)`, e.g. `(U, V)` is distinct from `(V, U)`. Only single-character copy errors count toward pair aggregation; word/group errors are attributed per mismatched character position. Aggregation uses the same rolling window as RX progression (initially the last 50 eligible attempts per involved character) so that stale confusions decay. A pair is "recurring" once it occurs at least a configured minimum number of times within the window. These names and values are configuration and covered by tests.
 
 Do not introduce opaque machine learning in the initial product.
 
@@ -711,7 +711,7 @@ If the actual GitHub organization or repository naming differs, confirm before c
 5. Move the Morse dictionary and timing math into pure, tested domain modules.
 6. Rebuild the Web Audio scheduler behind an interface and verify it against timing schedules.
 7. Extract key input/decoding behind input adapters.
-8. Port existing free Copy and Send modes with behavioral parity. In the parity table, mark Farnsworth timing as a *new* capability rather than a port: the prototype runs a single WPM with no Farnsworth spacing, so effective-speed behavior is added, not reproduced.
+8. Port existing free Copy and Send modes with behavioral parity. In the parity table, mark Farnsworth timing as a _new_ capability rather than a port: the prototype runs a single WPM with no Farnsworth spacing, so effective-speed behavior is added, not reproduced.
 9. Add persistence and data migration/import paths. If the old prototype has saved state, explicitly decide whether and how to import it.
 10. Build Learn mode and its scheduler on the new foundation.
 11. Deploy the web/PWA version.
@@ -980,7 +980,7 @@ Critical flows:
 
 1. New user completes onboarding and first lesson.
 2. Seeded user completes a qualifying stream, receives an offer, and explicitly
-  unlocks one character.
+   unlocks one character.
 3. User makes a confusion error and sees it represented in progress.
 4. User performs sending practice with keyboard and pointer.
 5. User closes/reopens and resumes with preserved data.
@@ -1082,18 +1082,18 @@ Capacitor Android alpha is a post-web-MVP milestone, not a reason to delay the P
 
 ## 15. Risks and mitigations
 
-| Risk | Mitigation |
-|---|---|
-| Browser audio restrictions or timing errors | Explicit audio onboarding; Web Audio clock scheduling; schedule-level tests; device QA |
-| Overcomplicated adaptive algorithm | Start with named, explainable weights and reason codes; tune using simulations and real practice |
-| Gamification distorts learning | Tie rewards to meaningful practice and skill; keep progression grounded in RX performance |
-| Local-only data is lost | Early export/import; transactional writes; migrations; clear backup affordance |
-| IndexedDB history becomes slow | Indexed fields, aggregation queries, materialized projections, generated large-dataset tests |
-| Mobile shell behaves differently | Keep platform boundaries behind adapters; add Capacitor only after web core stabilizes |
-| Copied visual assets create rights issues | Prefer original assets; audit all reused material; preserve required license notices |
-| Scope expands before a usable trainer ships | Enforce milestone gates and deferred list; always leave a runnable vertical slice |
-| Old URL/bookmarks break | Preserve `/morse-trainer/` via hosted app or redirect and test it in production |
-| Service-worker update loses or strands data | IndexedDB migration tests, backward-compatible releases, safe update UI |
+| Risk                                        | Mitigation                                                                                       |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Browser audio restrictions or timing errors | Explicit audio onboarding; Web Audio clock scheduling; schedule-level tests; device QA           |
+| Overcomplicated adaptive algorithm          | Start with named, explainable weights and reason codes; tune using simulations and real practice |
+| Gamification distorts learning              | Tie rewards to meaningful practice and skill; keep progression grounded in RX performance        |
+| Local-only data is lost                     | Early export/import; transactional writes; migrations; clear backup affordance                   |
+| IndexedDB history becomes slow              | Indexed fields, aggregation queries, materialized projections, generated large-dataset tests     |
+| Mobile shell behaves differently            | Keep platform boundaries behind adapters; add Capacitor only after web core stabilizes           |
+| Copied visual assets create rights issues   | Prefer original assets; audit all reused material; preserve required license notices             |
+| Scope expands before a usable trainer ships | Enforce milestone gates and deferred list; always leave a runnable vertical slice                |
+| Old URL/bookmarks break                     | Preserve `/morse-trainer/` via hosted app or redirect and test it in production                  |
+| Service-worker update loses or strands data | IndexedDB migration tests, backward-compatible releases, safe update UI                          |
 
 ---
 

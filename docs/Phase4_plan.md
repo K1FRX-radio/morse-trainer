@@ -171,7 +171,7 @@ valid advancement offer:
 5. Mark the new character as learning.
 6. Emit an unlock milestone.
 7. Persist the source curriculum state, advancement/mastery events, milestones,
-  and session change atomically.
+   and session change atomically.
 
 Do not equate unlocked with mastered. Do not dynamically infer mastery from all
 accumulated attempts, because thresholds and later Practice history can change.
