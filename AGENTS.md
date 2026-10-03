@@ -5,6 +5,35 @@
 Maintain and extend the K1FRX Morse Trainer while preserving its learning model,
 architecture boundaries, persisted-data compatibility, and test discipline.
 
+## Task selection and roadmap
+
+`docs/ROADMAP.md` is the authoritative implementation order.
+
+When instructed to "pick up the next issue" or equivalent:
+
+1. Read `docs/ROADMAP.md`.
+2. Select the issue listed under `## Next`.
+3. Verify that the issue is still open and does not already have an active
+   implementation PR.
+4. Read the full issue before changing code.
+5. Execute that issue according to these instructions. Do not silently substitute
+   another issue.
+6. In the implementation PR, update `docs/ROADMAP.md` in the same change:
+   - move the completed `Next` issue to the top of `Recently completed`;
+   - promote the first queued issue to `Next`;
+   - preserve the remaining queue order.
+7. Do not reprioritize, skip, add, or remove roadmap items without explicit user
+   direction.
+8. If the `Next` issue is closed, blocked, already being implemented, requires
+   a product decision, or otherwise cannot be started safely, stop and report
+   that condition rather than choosing another task.
+
+GitHub issue bodies are the source of truth for task requirements.
+`docs/STATUS.md` describes product/milestone state and is not the task queue.
+Update `STATUS.md` only when the completed work materially changes that state.
+
+Do not self-merge implementation PRs unless explicitly instructed.
+
 ## Architecture
 
 This is a React + TypeScript + Vite application.
