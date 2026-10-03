@@ -1,0 +1,2376 @@
+diff --git a/src/content/curriculum-data.ts b/src/content/curriculum-data.ts
+index 8a97aaf..cfe7a14 100644
+--- a/src/content/curriculum-data.ts
++++ b/src/content/curriculum-data.ts
+@@ -73,3 +73,47 @@ export const DEFAULT_CURRICULUM_CONFIG: CurriculumConfig = {
+   minNewCharObservations: 20,
+   reviewDecayAccuracy: 0.7,
+ };
++
++export type ReadinessConfig = {
++  /** Clean practice observations of the newest char before a checkpoint. */
++  minNewestObservations: number;
++  /** Minimum recent practice accuracy on the newest char. */
++  minNewestAccuracy: number;
++  /** Older chars with at least this many recent observations can veto. */
++  vetoMinObservations: number;
++  /** Recent accuracy below this on a well-sampled older char requires review. */
++  vetoAccuracy: number;
++};
++
++export const DEFAULT_READINESS_CONFIG: ReadinessConfig = {
++  minNewestObservations: 10,
++  minNewestAccuracy: 0.8,
++  vetoMinObservations: 8,
++  vetoAccuracy: 0.7,
++};
++
++export type CheckpointConfig = {
++  /** Overall accuracy required across the active set. */
++  overallAccuracy: number;
++  /** Accuracy required on the newest character. */
++  newestAccuracy: number;
++  /** Newest-character items required in the checkpoint (coverage). */
++  minNewestObservations: number;
++  /** Fraction of the checkpoint devoted to the newest character. */
++  newestShare: number;
++  /** Checkpoint length grows with the active set, within these bounds. */
++  minLength: number;
++  maxLength: number;
++  /** Target items per active character before clamping to the length bounds. */
++  itemsPerActive: number;
++};
++
++export const DEFAULT_CHECKPOINT_CONFIG: CheckpointConfig = {
++  overallAccuracy: 0.9,
++  newestAccuracy: 0.85,
++  minNewestObservations: 8,
++  newestShare: 0.35,
++  minLength: 24,
++  maxLength: 50,
++  itemsPerActive: 6,
++};
+diff --git a/src/core/curriculum.ts b/src/core/curriculum.ts
+index 23db3f0..d9a69ab 100644
+--- a/src/core/curriculum.ts
++++ b/src/core/curriculum.ts
+@@ -1,7 +1,11 @@
+ // Koch-style curriculum state and unlock rules. RX performance drives unlocks;
+ // TX performance is tracked separately and never blocks progression.
+ 
+-import type { CurriculumConfig } from "../content/curriculum-data.ts";
++import {
++  DEFAULT_READINESS_CONFIG,
++  type CurriculumConfig,
++  type ReadinessConfig,
++} from "../content/curriculum-data.ts";
+ import type { CharacterProgress, Direction, SkillProgress } from "./types.ts";
+ 
+ export type CurriculumState = {
+@@ -153,3 +157,72 @@ export function unlockNext(
+ export function unlockedCharacters(state: CurriculumState): string[] {
+   return state.characters.map((c) => c.character);
+ }
++
++/**
++ * Unlocks the next locked character unconditionally. Advancement is gated by a
++ * passed checkpoint (see training/checkpoint), not by practice history.
++ */
++export function forceUnlockNext(
++  state: CurriculumState,
++  at?: string,
++): string | undefined {
++  const next = nextLockedCharacter(state);
++  if (next === undefined) {
++    return undefined;
++  }
++  state.characters.push(unlockedProgress(next, at));
++  return next;
++}
++
++export type ReadinessReason =
++  | "READY"
++  | "NEEDS_PRACTICE"
++  | "NEEDS_REVIEW"
++  | "COMPLETE";
++
++export type Readiness = {
++  ready: boolean;
++  reason: ReadinessReason;
++  /** The older character that must be reviewed before a checkpoint, if any. */
++  weakCharacter?: string;
++};
++
++/**
++ * Whether the learner is ready to attempt a checkpoint, based on clean practice
++ * history. A well-sampled but clearly weak older character vetoes readiness so a
++ * forgotten character is not carried indefinitely.
++ */
++export function checkpointReadiness(
++  state: CurriculumState,
++  config: ReadinessConfig = DEFAULT_READINESS_CONFIG,
++): Readiness {
++  if (nextLockedCharacter(state) === undefined) {
++    return { ready: false, reason: "COMPLETE" };
++  }
++  const newest = newestCharacter(state);
++  if (!newest) {
++    return { ready: false, reason: "NEEDS_PRACTICE" };
++  }
++  for (const progress of state.characters) {
++    if (progress.character === newest.character) {
++      continue;
++    }
++    if (
++      progress.rx.recentResults.length >= config.vetoMinObservations &&
++      recentAccuracy(progress.rx) < config.vetoAccuracy
++    ) {
++      return {
++        ready: false,
++        reason: "NEEDS_REVIEW",
++        weakCharacter: progress.character,
++      };
++    }
++  }
++  if (
++    newest.rx.recentResults.length < config.minNewestObservations ||
++    recentAccuracy(newest.rx) < config.minNewestAccuracy
++  ) {
++    return { ready: false, reason: "NEEDS_PRACTICE" };
++  }
++  return { ready: true, reason: "READY" };
++}
+diff --git a/src/core/settings.ts b/src/core/settings.ts
+index d5e347c..f783092 100644
+--- a/src/core/settings.ts
++++ b/src/core/settings.ts
+@@ -2,6 +2,8 @@
+ // Framework- and DOM-free; adapters and UI read these values to configure
+ // audio and timing.
+ 
++export type PacingMode = "auto" | "manual";
++
+ export type PracticeSettings = {
+   /** Character speed in WPM; sets element and intra-character timing. */
+   charWpm: number;
+@@ -13,6 +15,8 @@ export type PracticeSettings = {
+   volume: number;
+   /** Band-noise level in [0, 1]; 0 disables noise. */
+   noiseLevel: number;
++  /** Learn-mode flow: auto-advance, or wait for Enter between cards. */
++  pacing: PacingMode;
+ };
+ 
+ export type SettingRange = {
+@@ -21,14 +25,17 @@ export type SettingRange = {
+   default: number;
+ };
+ 
+-/** Inclusive ranges and defaults for each setting. Tunable configuration. */
++/** Inclusive ranges and defaults for each numeric setting. Tunable config. */
+ export const SETTING_RANGES = {
+   charWpm: { min: 5, max: 40, default: 20 },
+   effectiveWpm: { min: 5, max: 40, default: 12 },
+   toneHz: { min: 300, max: 1000, default: 600 },
+   volume: { min: 0, max: 1, default: 0.7 },
+   noiseLevel: { min: 0, max: 1, default: 0 },
+-} as const satisfies Record<keyof PracticeSettings, SettingRange>;
++} as const satisfies Record<
++  "charWpm" | "effectiveWpm" | "toneHz" | "volume" | "noiseLevel",
++  SettingRange
++>;
+ 
+ export const DEFAULT_SETTINGS: PracticeSettings = {
+   charWpm: SETTING_RANGES.charWpm.default,
+@@ -36,6 +43,7 @@ export const DEFAULT_SETTINGS: PracticeSettings = {
+   toneHz: SETTING_RANGES.toneHz.default,
+   volume: SETTING_RANGES.volume.default,
+   noiseLevel: SETTING_RANGES.noiseLevel.default,
++  pacing: "auto",
+ };
+ 
+ function clamp(value: number, range: SettingRange): number {
+@@ -72,5 +80,6 @@ export function normalizeSettings(
+       settings.noiseLevel ?? DEFAULT_SETTINGS.noiseLevel,
+       SETTING_RANGES.noiseLevel,
+     ),
++    pacing: settings.pacing === "manual" ? "manual" : "auto",
+   };
+ }
+diff --git a/src/training/checkpoint.test.ts b/src/training/checkpoint.test.ts
+new file mode 100644
+index 0000000..7db2c0f
+--- /dev/null
++++ b/src/training/checkpoint.test.ts
+@@ -0,0 +1,175 @@
++import { describe, expect, it } from "vitest";
++import {
++  DEFAULT_CHECKPOINT_CONFIG,
++  DEFAULT_CURRICULUM_CONFIG,
++  KOCH_ORDER,
++} from "../content/curriculum-data.ts";
++import {
++  checkpointReadiness,
++  createInitialState,
++  forceUnlockNext,
++  type CurriculumState,
++} from "../core/curriculum.ts";
++import { createRng } from "../core/rng.ts";
++import {
++  CheckpointSession,
++  applyCheckpoint,
++  buildCheckpoint,
++  checkpointLength,
++  gradeCheckpoint,
++  type CheckpointResult,
++} from "./checkpoint.ts";
++
++function makeState(activeCount: number): CurriculumState {
++  const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
++  while (state.characters.length < activeCount) {
++    forceUnlockNext(state);
++  }
++  return state;
++}
++
++function setRx(state: CurriculumState, char: string, results: boolean[]) {
++  const progress = state.characters.find((c) => c.character === char);
++  if (progress) progress.rx.recentResults = [...results];
++}
++
++describe("buildCheckpoint", () => {
++  const active = ["K", "M", "U", "R"];
++
++  it("has a bounded length that grows with the active set", () => {
++    expect(checkpointLength(2)).toBe(DEFAULT_CHECKPOINT_CONFIG.minLength);
++    expect(checkpointLength(100)).toBe(DEFAULT_CHECKPOINT_CONFIG.maxLength);
++  });
++
++  it("guarantees newest-character coverage and only active characters", () => {
++    const items = buildCheckpoint(active, "R", createRng(1));
++    expect(items.length).toBe(checkpointLength(active.length));
++    const newest = items.filter((c) => c === "R").length;
++    expect(newest).toBeGreaterThanOrEqual(
++      DEFAULT_CHECKPOINT_CONFIG.minNewestObservations,
++    );
++    for (const item of items) {
++      expect(active).toContain(item);
++    }
++  });
++
++  it("is deterministic for a seed", () => {
++    expect(buildCheckpoint(active, "R", createRng(9))).toEqual(
++      buildCheckpoint(active, "R", createRng(9)),
++    );
++  });
++});
++
++describe("gradeCheckpoint", () => {
++  const targets = [...Array(8).fill("R"), ...Array(12).fill("K")];
++
++  it("passes when overall and newest thresholds are met with coverage", () => {
++    const result = gradeCheckpoint(targets, targets.slice(), "R");
++    expect(result.pass).toBe(true);
++    expect(result.overallAccuracy).toBe(1);
++    expect(result.newestObservations).toBe(8);
++  });
++
++  it("fails when the newest character is below its threshold", () => {
++    const answers = targets.slice();
++    answers[0] = "X";
++    answers[1] = "X"; // 6/8 newest = 0.75 < 0.85
++    expect(gradeCheckpoint(targets, answers, "R").pass).toBe(false);
++  });
++
++  it("fails when overall accuracy is below threshold", () => {
++    const answers = targets.slice();
++    answers[8] = "X";
++    answers[9] = "X";
++    answers[10] = "X"; // 17/20 = 0.85 < 0.9
++    const result = gradeCheckpoint(targets, answers, "R");
++    expect(result.pass).toBe(false);
++    expect(result.missedCharacters).toContain("K");
++  });
++
++  it("fails without sufficient newest coverage even when perfect", () => {
++    const few = [...Array(4).fill("R"), ...Array(20).fill("K")];
++    expect(gradeCheckpoint(few, few.slice(), "R").pass).toBe(false);
++  });
++});
++
++describe("CheckpointSession", () => {
++  it("collects answers and grades without per-item feedback", () => {
++    const session = new CheckpointSession({
++      active: ["K", "M"],
++      newest: "M",
++      rng: createRng(2),
++    });
++    expect(session.length).toBe(checkpointLength(2));
++    while (!session.isComplete()) {
++      session.answer(session.current() ?? ""); // answer correctly
++    }
++    const result = session.grade();
++    expect(result.pass).toBe(true);
++    expect(result.correct).toBe(result.total);
++  });
++});
++
++describe("applyCheckpoint", () => {
++  function result(overrides: Partial<CheckpointResult>): CheckpointResult {
++    return {
++      pass: false,
++      overallAccuracy: 1,
++      newestAccuracy: 1,
++      newestObservations: 8,
++      total: 20,
++      correct: 20,
++      missedCharacters: [],
++      ...overrides,
++    };
++  }
++
++  it("unlocks exactly one character on a pass", () => {
++    const state = makeState(3); // K, M, U -> next locked is R
++    const applied = applyCheckpoint(state, result({ pass: true }));
++    expect(applied.unlockedCharacter).toBe("R");
++    expect(state.characters).toHaveLength(4);
++  });
++
++  it("unlocks nothing on a fail", () => {
++    const state = makeState(3);
++    const applied = applyCheckpoint(state, result({ pass: false }));
++    expect(applied.unlockedCharacter).toBeUndefined();
++    expect(state.characters).toHaveLength(3);
++  });
++
++  it("flags missed characters for review even on a pass", () => {
++    const state = makeState(3);
++    applyCheckpoint(state, result({ pass: true, missedCharacters: ["M"] }));
++    expect(state.characters.find((c) => c.character === "M")?.needsReview).toBe(
++      true,
++    );
++  });
++});
++
++describe("checkpointReadiness", () => {
++  it("is COMPLETE when every character is unlocked", () => {
++    const state = makeState(KOCH_ORDER.length);
++    expect(checkpointReadiness(state).reason).toBe("COMPLETE");
++  });
++
++  it("needs practice when the newest character is under-sampled", () => {
++    const state = makeState(3); // newest U, no observations
++    expect(checkpointReadiness(state).reason).toBe("NEEDS_PRACTICE");
++  });
++
++  it("is ready when the newest character is well practiced", () => {
++    const state = makeState(3);
++    setRx(state, "U", Array(12).fill(true));
++    expect(checkpointReadiness(state)).toEqual({ ready: true, reason: "READY" });
++  });
++
++  it("vetoes readiness for a well-sampled weak older character", () => {
++    const state = makeState(3);
++    setRx(state, "U", Array(12).fill(true));
++    setRx(state, "K", [...Array(8)].map((_, i) => i < 5)); // 62.5% over 8
++    const readiness = checkpointReadiness(state);
++    expect(readiness.reason).toBe("NEEDS_REVIEW");
++    expect(readiness.weakCharacter).toBe("K");
++  });
++});
+diff --git a/src/training/checkpoint.ts b/src/training/checkpoint.ts
+new file mode 100644
+index 0000000..3056b04
+--- /dev/null
++++ b/src/training/checkpoint.ts
+@@ -0,0 +1,197 @@
++// Unassisted RX-only checkpoint: the assessment that advances the curriculum.
++// Isolated characters are sampled across the active set with guaranteed newest
++// coverage; correctness is withheld until the end. Pure and seedable. Advancement
++// is at most one character per passed checkpoint.
++
++import {
++  DEFAULT_CHECKPOINT_CONFIG,
++  type CheckpointConfig,
++} from "../content/curriculum-data.ts";
++import { forceUnlockNext, type CurriculumState } from "../core/curriculum.ts";
++import type { Rng } from "../core/rng.ts";
++import { normalizeCopy } from "../core/scoring.ts";
++
++export function checkpointLength(
++  activeCount: number,
++  config: CheckpointConfig = DEFAULT_CHECKPOINT_CONFIG,
++): number {
++  return Math.min(
++    config.maxLength,
++    Math.max(config.minLength, Math.round(activeCount * config.itemsPerActive)),
++  );
++}
++
++/**
++ * Builds the isolated-character checkpoint sequence: enough of the newest
++ * character for coverage, the remainder sampled across the active set, then a
++ * deterministic shuffle.
++ */
++export function buildCheckpoint(
++  active: readonly string[],
++  newest: string,
++  rng: Rng,
++  config: CheckpointConfig = DEFAULT_CHECKPOINT_CONFIG,
++): string[] {
++  const length = checkpointLength(active.length, config);
++  const newestCount = Math.min(
++    length,
++    Math.max(
++      config.minNewestObservations,
++      Math.round(length * config.newestShare),
++    ),
++  );
++
++  const items: string[] = [];
++  for (let i = 0; i < newestCount; i++) {
++    items.push(newest);
++  }
++  for (let i = newestCount; i < length; i++) {
++    items.push(active[Math.floor(rng() * active.length)]);
++  }
++
++  // Deterministic Fisher-Yates shuffle.
++  for (let i = items.length - 1; i > 0; i--) {
++    const j = Math.floor(rng() * (i + 1));
++    [items[i], items[j]] = [items[j], items[i]];
++  }
++  return items;
++}
++
++export type CheckpointResult = {
++  pass: boolean;
++  overallAccuracy: number;
++  newestAccuracy: number;
++  newestObservations: number;
++  total: number;
++  correct: number;
++  /** Characters missed at least once, for targeted review after the checkpoint. */
++  missedCharacters: string[];
++};
++
++export function gradeCheckpoint(
++  targets: readonly string[],
++  answers: readonly string[],
++  newest: string,
++  config: CheckpointConfig = DEFAULT_CHECKPOINT_CONFIG,
++): CheckpointResult {
++  const total = targets.length;
++  let correct = 0;
++  let newestTotal = 0;
++  let newestCorrect = 0;
++  const missed = new Set<string>();
++
++  targets.forEach((target, index) => {
++    const ok = normalizeCopy(answers[index] ?? "") === normalizeCopy(target);
++    if (ok) {
++      correct += 1;
++    } else {
++      missed.add(target);
++    }
++    if (target === newest) {
++      newestTotal += 1;
++      if (ok) newestCorrect += 1;
++    }
++  });
++
++  const overallAccuracy = total === 0 ? 0 : correct / total;
++  const newestAccuracy = newestTotal === 0 ? 0 : newestCorrect / newestTotal;
++  const pass =
++    total > 0 &&
++    overallAccuracy >= config.overallAccuracy &&
++    newestTotal >= config.minNewestObservations &&
++    newestAccuracy >= config.newestAccuracy;
++
++  return {
++    pass,
++    overallAccuracy,
++    newestAccuracy,
++    newestObservations: newestTotal,
++    total,
++    correct,
++    missedCharacters: [...missed],
++  };
++}
++
++type CheckpointOptions = {
++  active: readonly string[];
++  newest: string;
++  rng: Rng;
++  config?: CheckpointConfig;
++};
++
++/** Drives a checkpoint one isolated character at a time, without feedback. */
++export class CheckpointSession {
++  private readonly targets: string[];
++  private readonly answers: string[] = [];
++  private readonly newest: string;
++  private readonly config: CheckpointConfig;
++  private cursor = 0;
++
++  constructor(options: CheckpointOptions) {
++    this.newest = options.newest;
++    this.config = options.config ?? DEFAULT_CHECKPOINT_CONFIG;
++    this.targets = buildCheckpoint(
++      options.active,
++      options.newest,
++      options.rng,
++      this.config,
++    );
++  }
++
++  get length(): number {
++    return this.targets.length;
++  }
++
++  get position(): number {
++    return this.cursor;
++  }
++
++  current(): string | undefined {
++    return this.targets[this.cursor];
++  }
++
++  /** Records the answer to the current item and advances. No feedback. */
++  answer(input: string): void {
++    if (this.cursor >= this.targets.length) {
++      return;
++    }
++    this.answers[this.cursor] = input;
++    this.cursor += 1;
++  }
++
++  isComplete(): boolean {
++    return this.cursor >= this.targets.length;
++  }
++
++  grade(): CheckpointResult {
++    return gradeCheckpoint(this.targets, this.answers, this.newest, this.config);
++  }
++}
++
++export type CheckpointApplied = {
++  result: CheckpointResult;
++  /** The character unlocked by a pass, if any (at most one). */
++  unlockedCharacter?: string;
++};
++
++/**
++ * Applies a checkpoint result: flags missed characters for review (pass or
++ * fail), and on a pass unlocks the next character (at most one).
++ */
++export function applyCheckpoint(
++  state: CurriculumState,
++  result: CheckpointResult,
++  at?: string,
++): CheckpointApplied {
++  for (const character of result.missedCharacters) {
++    const progress = state.characters.find((c) => c.character === character);
++    if (progress) {
++      progress.needsReview = true;
++    }
++  }
++  if (!result.pass) {
++    return { result };
++  }
++  const unlocked = forceUnlockNext(state, at);
++  return unlocked ? { result, unlockedCharacter: unlocked } : { result };
++}
+diff --git a/src/training/learn-session.test.ts b/src/training/learn-session.test.ts
+index 9d1f0d5..34b5af6 100644
+--- a/src/training/learn-session.test.ts
++++ b/src/training/learn-session.test.ts
+@@ -14,98 +14,198 @@ function freshSession(overrides = {}) {
+     now,
+     ...overrides,
+   });
+-  return { session, state, advance: (ms: number) => (t += ms), at: () => t };
++  return { session, state, advance: (ms: number) => (t += ms) };
++}
++
++/** Plays a full lesson submitting the correct answer to every card. */
++function playPerfect(session: LearnSession, advance: (ms: number) => void) {
++  advance(1000);
++  let card = session.next();
++  while (card) {
++    if (card.type === "introduce") {
++      session.submit("");
++    } else if (card.type === "send-character") {
++      session.submit(true);
++    } else {
++      session.submit(card.target);
++    }
++    advance(1000);
++    card = session.next();
++  }
+ }
+ 
+ describe("LearnSession active time", () => {
+   it("accrues elapsed active time between events", () => {
+     const { session } = freshSession();
+     session.start(0);
+-    const summary = session.end(10000);
+-    expect(summary.activeMs).toBe(10000);
++    expect(session.end(10000).activeMs).toBe(10000);
+   });
+ 
+   it("clamps idle gaps to the idle threshold", () => {
+     const { session } = freshSession();
+     session.start(0);
+-    // A 200 s gap counts only up to the 60 s idle threshold.
+-    const summary = session.end(200000);
+-    expect(summary.activeMs).toBe(60000);
++    expect(session.end(200000).activeMs).toBe(60000);
+   });
+ 
+   it("excludes paused spans", () => {
+     const { session } = freshSession();
+     session.start(0);
+-    session.pause(30000); // 30 s active so far
+-    session.resume(80000); // 50 s paused, excluded
+-    const summary = session.end(85000); // 5 s more active
+-    expect(summary.activeMs).toBe(35000);
++    session.pause(30000);
++    session.resume(80000);
++    expect(session.end(85000).activeMs).toBe(35000);
+   });
+ 
+   it("marks a session invalid below the minimum active time", () => {
+     const { session } = freshSession();
+     session.start(0);
+-    const summary = session.end(10000);
+-    expect(summary.valid).toBe(false);
++    expect(session.end(10000).valid).toBe(false);
+   });
+ });
+ 
+-describe("LearnSession progression", () => {
+-  it("unlocks the next character from correct RX copy", () => {
+-    const { session, advance } = freshSession({
+-      // Force single-character RX copy so RX observations accumulate.
+-      exerciseOptions: { txShare: 0, wordShare: 0, groupShare: 0 },
+-    });
++describe("LearnSession practice", () => {
++  it("does not unlock characters from practice, even when perfect", () => {
++    const { session, state, advance } = freshSession();
+     session.start(0);
+-
+-    let unlocked: string | undefined;
+-    for (let i = 0; i < 400 && !unlocked; i++) {
+-      advance(2000);
+-      const exercise = session.next();
+-      const outcome = session.submit(
+-        exercise.type === "introduce" ? "" : exercise.target,
+-      );
+-      unlocked = outcome.unlockedCharacter;
+-    }
+-
+-    expect(unlocked).toBe("U"); // K, M unlocked at start; U is next.
+-    expect(session.unlockedNow).toContain("U");
++    playPerfect(session, advance);
++    expect(session.unlockedNow).toEqual(["K", "M"]);
++    expect(state.characters).toHaveLength(2);
+   });
+ 
+-  it("does not let TX failures block RX-driven unlocks", () => {
+-    const { session, advance } = freshSession({
+-      exerciseOptions: { txShare: 0.5, wordShare: 0, groupShare: 0 },
+-    });
++  it("introduces both starting characters and records no attempt for intros", () => {
++    const { session, advance } = freshSession();
+     session.start(0);
+ 
+-    let unlocked: string | undefined;
+-    for (let i = 0; i < 800 && !unlocked; i++) {
+-      advance(1000);
+-      const exercise = session.next();
+-      if (exercise.type === "send-character") {
+-        session.submit(false); // always fail sending
+-      } else if (exercise.type === "introduce") {
++    let intros = 0;
++    let card = session.next();
++    while (card) {
++      const before = session.summary().attempts;
++      if (card.type === "introduce") {
++        intros += 1;
+         session.submit("");
++        expect(session.summary().attempts).toBe(before); // no scored attempt
++      } else if (card.type === "send-character") {
++        session.submit(true);
+       } else {
+-        const outcome = session.submit(exercise.target); // correct copy
+-        unlocked = outcome.unlockedCharacter;
++        session.submit(card.target);
+       }
++      advance(500);
++      card = session.next();
+     }
++    expect(intros).toBe(2);
++    expect(session.newlyIntroduced).toEqual(["K", "M"]);
++  });
+ 
+-    expect(unlocked).toBe("U");
++  it("counts cards and scored attempts separately", () => {
++    const { session, advance } = freshSession();
++    session.start(0);
++    playPerfect(session, advance);
++    const summary = session.summary();
++    // Two introductions are cards but not scored attempts.
++    expect(summary.cards).toBe(summary.attempts + 2);
+   });
+ 
+-  it("records no attempt for an introduction", () => {
+-    const { session } = freshSession();
++  it("inserts an immediate repeat after a missed isolated card", () => {
++    const { session, advance } = freshSession();
+     session.start(0);
+-    // The first featured newest character is an introduction.
+-    let exercise = session.next();
+-    while (exercise.type !== "introduce") {
+-      session.submit(exercise.target);
+-      exercise = session.next();
++    advance(1000);
++    let card = session.next();
++    while (card && card.phase !== "acquire") {
++      session.submit("");
++      advance(500);
++      card = session.next();
+     }
+-    const before = session.summary().attempts;
+-    session.submit("");
+-    expect(session.summary().attempts).toBe(before);
++    expect(card?.type).toBe("copy-character");
++    const before = session.totalCards;
++    session.submit(""); // wrong answer
++    expect(session.totalCards).toBe(before + 1);
++  });
++
++  it("does not re-introduce characters from earlier sessions", () => {
++    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
++    const session = new LearnSession({
++      state,
++      rng: createRng(1),
++      introduced: ["K", "M"],
++    });
++    expect(session.newlyIntroduced).toEqual([]);
++  });
++});
++
++describe("LearnSession Stage A fixes", () => {
++  function advanceToPhase(session: LearnSession, phase: string) {
++    let card = session.next();
++    while (card && card.phase !== phase) {
++      session.submit(
++        card.type === "introduce"
++          ? ""
++          : card.type === "send-character"
++            ? true
++            : card.target,
++      );
++      card = session.next();
++    }
++    return card;
++  }
++
++  it("persists only introductions actually completed", () => {
++    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
++    const session = new LearnSession({ state, rng: createRng(1) });
++    session.start(0);
++    const first = session.next();
++    expect(first?.type).toBe("introduce");
++    session.submit(""); // complete only the K introduction
++    expect(session.completedIntroductions).toEqual(["K"]);
++    expect(session.newlyIntroduced).toEqual(["K", "M"]); // planned, not completed
++  });
++
++  it("does not update per-character mastery from group answers", () => {
++    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
++    const session = new LearnSession({ state, rng: createRng(5) });
++    session.start(0);
++    const group = advanceToPhase(session, "groups");
++    expect(group?.type).toBe("copy-group");
++    const before = state.characters.map((c) => c.rx.recentResults.length);
++    session.submit(group?.target ?? "");
++    const after = state.characters.map((c) => c.rx.recentResults.length);
++    expect(after).toEqual(before);
++  });
++
++  it("excludes assisted reinforcement cards from mastery and scoring", () => {
++    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
++    const session = new LearnSession({ state, rng: createRng(1) });
++    session.start(0);
++    const acquire = advanceToPhase(session, "acquire");
++    expect(acquire?.type).toBe("copy-character");
++    session.submit(""); // miss -> inserts an assisted repeat
++    const attemptsBefore = session.summary().attempts;
++    const assisted = session.next();
++    expect(assisted?.assisted).toBe(true);
++    const focus = assisted?.focus ?? "";
++    const rxBefore =
++      state.characters.find((c) => c.character === focus)?.rx.recentResults
++        .length ?? 0;
++    session.submit(assisted?.target ?? ""); // correct, but assisted
++    const rxAfter =
++      state.characters.find((c) => c.character === focus)?.rx.recentResults
++        .length ?? 0;
++    expect(rxAfter).toBe(rxBefore);
++    expect(session.summary().attempts).toBe(attemptsBefore);
++  });
++
++  it("excludes a replayed answer from mastery", () => {
++    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
++    const session = new LearnSession({ state, rng: createRng(1) });
++    session.start(0);
++    const acquire = advanceToPhase(session, "acquire");
++    const focus = acquire?.focus ?? "";
++    const rxBefore =
++      state.characters.find((c) => c.character === focus)?.rx.recentResults
++        .length ?? 0;
++    session.markReplayed();
++    session.submit(acquire?.target ?? ""); // correct, but replayed
++    const rxAfter =
++      state.characters.find((c) => c.character === focus)?.rx.recentResults
++        .length ?? 0;
++    expect(rxAfter).toBe(rxBefore);
+   });
+ });
+diff --git a/src/training/learn-session.ts b/src/training/learn-session.ts
+index 4516ac4..55e127f 100644
+--- a/src/training/learn-session.ts
++++ b/src/training/learn-session.ts
+@@ -1,26 +1,23 @@
+-// Learn-mode session orchestrator. Generates exercises, records results into
+-// the curriculum, detects unlocks, and tracks active practice time excluding
+-// idle and paused spans. Pure application service: no DOM or storage. The UI
+-// drives it and reacts to the returned outcomes.
++// Learn-mode practice session. Drives a phase-based LessonPlan, records practice
++// results into the curriculum for scheduling and review, and tracks active
++// practice time excluding idle and paused spans. Practice does NOT advance the
++// curriculum; a separate checkpoint (later stage) drives unlocks. Pure
++// application service: no DOM or storage.
+ 
+-import { selectEligibleWord } from "../content/words.ts";
+ import {
++  newestCharacter,
+   recordAttempt,
+-  unlockNext,
+   unlockedCharacters,
+   type CurriculumState,
+ } from "../core/curriculum.ts";
+-import {
+-  nextExercise,
+-  type ExerciseOptions,
+-  type LearnExercise,
+-} from "../core/exercises.ts";
+ import type { Rng } from "../core/rng.ts";
+ import { gradeCopy } from "../core/scoring.ts";
+-
+-// selectEligibleWord is re-exported so the UI can preview words without
+-// reaching into the content layer directly.
+-export { selectEligibleWord };
++import {
++  DEFAULT_LESSON_CONFIG,
++  LessonPlan,
++  type LessonConfig,
++  type PlannedExercise,
++} from "./lesson-plan.ts";
+ 
+ export type SessionConfig = {
+   /** Gaps longer than this (ms) between activity are treated as idle. */
+@@ -35,21 +32,21 @@ export const DEFAULT_SESSION_CONFIG: SessionConfig = {
+ };
+ 
+ export type AttemptOutcome = {
+-  exercise: LearnExercise;
++  exercise: PlannedExercise;
+   correct: boolean;
+-  /** Newly unlocked character, if this attempt crossed the threshold. */
+-  unlockedCharacter?: string;
+ };
+ 
+ export type SessionSummary = {
+   activeMs: number;
++  /** Cards completed, including introductions. */
++  cards: number;
++  /** Scored attempts (excludes introductions). */
+   attempts: number;
+   correct: number;
+   accuracy: number;
+   rxAttempts: number;
+   txAttempts: number;
+   charactersPracticed: string[];
+-  unlockedCharacters: string[];
+   /** True when the session meets the minimum active time and attempt count. */
+   valid: boolean;
+ };
+@@ -57,65 +54,74 @@ export type SessionSummary = {
+ type SessionOptions = {
+   state: CurriculumState;
+   rng: Rng;
++  /** Characters already introduced in earlier sessions. */
++  introduced?: Iterable<string>;
+   now?: () => number;
+-  exerciseOptions?: Omit<ExerciseOptions, "introduced">;
++  lessonConfig?: LessonConfig;
+   sessionConfig?: SessionConfig;
+ };
+ 
+ export class LearnSession {
+   private readonly state: CurriculumState;
+-  private readonly rng: Rng;
+   private readonly now: () => number;
+-  private readonly exerciseOptions: Omit<ExerciseOptions, "introduced">;
+   private readonly config: SessionConfig;
+-  private readonly introduced = new Set<string>();
++  private readonly plan: LessonPlan;
+ 
+-  private current: LearnExercise | undefined;
++  private current: PlannedExercise | undefined;
+   private lastActivityAt: number | undefined;
+   private paused = false;
+   private activeMs = 0;
+ 
++  private cards = 0;
+   private attempts = 0;
+   private correctCount = 0;
+   private rxAttempts = 0;
+   private txAttempts = 0;
++  private replayedThisCard = false;
+   private readonly practiced = new Set<string>();
+-  private readonly unlocked: string[] = [];
++  private readonly introducedCompleted = new Set<string>();
+ 
+   constructor(options: SessionOptions) {
+     this.state = options.state;
+-    this.rng = options.rng;
+     this.now =
+       options.now ??
+       (() =>
+         typeof performance !== "undefined" ? performance.now() : Date.now());
+-    this.exerciseOptions = options.exerciseOptions ?? {};
+     this.config = options.sessionConfig ?? DEFAULT_SESSION_CONFIG;
++    this.plan = new LessonPlan({
++      active: unlockedCharacters(options.state),
++      introduced: options.introduced ?? [],
++      newest: newestCharacter(options.state)?.character ?? "",
++      rng: options.rng,
++      config: options.lessonConfig ?? DEFAULT_LESSON_CONFIG,
++    });
+   }
+ 
+   start(time = this.now()): void {
+     this.lastActivityAt = time;
+   }
+ 
+-  /** Generates and stores the next exercise. */
+-  next(): LearnExercise {
++  /** The next planned card, or undefined when the lesson is complete. */
++  next(): PlannedExercise | undefined {
+     this.accrue(this.now());
+-    const exercise = nextExercise(this.state, this.rng, {
+-      ...this.exerciseOptions,
+-      introduced: this.introduced,
+-    });
+-    this.current = exercise;
+-    return exercise;
++    this.replayedThisCard = false;
++    this.current = this.plan.next();
++    return this.current;
+   }
+ 
+-  get currentExercise(): LearnExercise | undefined {
++  get currentExercise(): PlannedExercise | undefined {
+     return this.current;
+   }
+ 
++  /** Marks the current card as replayed, so its result does not feed mastery. */
++  markReplayed(): void {
++    this.replayedThisCard = true;
++  }
++
+   /**
+-   * Records the result for the current exercise. Pass the typed answer for copy
+-   * exercises, or a boolean for sending drills. Introductions take any input and
+-   * record no attempt.
++   * Records the result for the current card. Pass the typed answer for copy
++   * cards, or a boolean for sending drills. Introductions take any input and
++   * record no attempt. Practice never unlocks characters.
+    */
+   submit(input: string | boolean): AttemptOutcome {
+     const exercise = this.current;
+@@ -123,42 +129,49 @@ export class LearnSession {
+       throw new Error("submit called before next");
+     }
+     this.accrue(this.now());
++    this.cards += 1;
+ 
+     if (exercise.type === "introduce") {
+-      this.introduced.add(exercise.target);
++      this.introducedCompleted.add(exercise.target);
+       return { exercise, correct: true };
+     }
+ 
++    // Assisted or replayed cards reveal or repeat the answer, so they are
++    // teaching moments and must not feed the curriculum or scored accuracy.
++    const assisted = exercise.assisted || this.replayedThisCard;
++
+     let correct: boolean;
+     if (exercise.type === "send-character") {
+       correct = input === true;
+-      recordAttempt(this.state, exercise.target, "tx", correct);
+-      this.txAttempts += 1;
++      if (!assisted) {
++        recordAttempt(this.state, exercise.target, "tx", correct);
++        this.txAttempts += 1;
++      }
+       this.practiced.add(exercise.target);
+-    } else {
++    } else if (exercise.type === "copy-character") {
+       const answer = typeof input === "string" ? input : "";
+-      const grade = gradeCopy(exercise.target, answer);
+-      correct = grade.correct;
+-      const chars = [...exercise.target.toUpperCase()];
+-      chars.forEach((char, index) => {
+-        recordAttempt(this.state, char, "rx", grade.perChar[index] ?? false);
++      correct = gradeCopy(exercise.target, answer).correct;
++      if (!assisted) {
++        recordAttempt(this.state, exercise.target, "rx", correct);
+         this.rxAttempts += 1;
+-        this.practiced.add(char);
+-      });
+-    }
+-
+-    this.attempts += 1;
+-    if (correct) {
+-      this.correctCount += 1;
++      }
++      this.practiced.add(exercise.target);
++    } else {
++      // Groups and words: grade the whole answer for feedback only. Positional
++      // per-character mastery is unsafe until sequence alignment exists.
++      const answer = typeof input === "string" ? input : "";
++      correct = gradeCopy(exercise.target, answer).correct;
++      this.practiced.add(exercise.focus);
+     }
+ 
+-    const outcome: AttemptOutcome = { exercise, correct };
+-    const unlockedChar = unlockNext(this.state);
+-    if (unlockedChar) {
+-      this.unlocked.push(unlockedChar);
+-      outcome.unlockedCharacter = unlockedChar;
++    if (!assisted) {
++      this.attempts += 1;
++      if (correct) {
++        this.correctCount += 1;
++      }
+     }
+-    return outcome;
++    this.plan.reportResult(correct);
++    return { exercise, correct };
+   }
+ 
+   pause(time = this.now()): void {
+@@ -184,24 +197,42 @@ export class LearnSession {
+     return this.activeMs;
+   }
+ 
++  get totalCards(): number {
++    return this.plan.length;
++  }
++
++  get completedCards(): number {
++    return this.cards;
++  }
++
++  /** Characters newly introduced by this session's lesson. */
++  get newlyIntroduced(): string[] {
++    return this.plan.newlyIntroduced;
++  }
++
++  /** Characters whose introduction card was actually completed this session. */
++  get completedIntroductions(): string[] {
++    return [...this.introducedCompleted];
++  }
++
++  get unlockedNow(): string[] {
++    return unlockedCharacters(this.state);
++  }
++
+   summary(): SessionSummary {
+     return {
+       activeMs: this.activeMs,
++      cards: this.cards,
+       attempts: this.attempts,
+       correct: this.correctCount,
+       accuracy: this.attempts === 0 ? 0 : this.correctCount / this.attempts,
+       rxAttempts: this.rxAttempts,
+       txAttempts: this.txAttempts,
+       charactersPracticed: [...this.practiced],
+-      unlockedCharacters: [...this.unlocked],
+       valid: this.activeMs >= this.config.minActiveMs && this.attempts > 0,
+     };
+   }
+ 
+-  get unlockedNow(): string[] {
+-    return unlockedCharacters(this.state);
+-  }
+-
+   private accrue(time: number): void {
+     if (!this.paused && this.lastActivityAt !== undefined) {
+       const delta = time - this.lastActivityAt;
+diff --git a/src/training/lesson-plan.test.ts b/src/training/lesson-plan.test.ts
+new file mode 100644
+index 0000000..f04a217
+--- /dev/null
++++ b/src/training/lesson-plan.test.ts
+@@ -0,0 +1,140 @@
++import { describe, expect, it } from "vitest";
++import { createRng } from "../core/rng.ts";
++import {
++  DEFAULT_LESSON_CONFIG,
++  LessonPlan,
++  type PlannedExercise,
++} from "./lesson-plan.ts";
++
++function drain(plan: LessonPlan): PlannedExercise[] {
++  const all: PlannedExercise[] = [];
++  let card = plan.next();
++  while (card) {
++    all.push(card);
++    card = plan.next();
++  }
++  return all;
++}
++
++function firstLesson(seed = 1): LessonPlan {
++  return new LessonPlan({
++    active: ["K", "M"],
++    introduced: [],
++    newest: "M",
++    rng: createRng(seed),
++  });
++}
++
++describe("LessonPlan first lesson", () => {
++  it("introduces every new character exactly once", () => {
++    const cards = drain(firstLesson());
++    const intros = cards.filter((c) => c.type === "introduce").map((c) => c.target);
++    expect(intros).toEqual(["K", "M"]);
++  });
++
++  it("never tests a character before it has been introduced", () => {
++    const cards = drain(firstLesson());
++    const introducedSoFar = new Set<string>();
++    for (const card of cards) {
++      if (card.type === "introduce") {
++        introducedSoFar.add(card.target);
++        continue;
++      }
++      for (const char of card.target) {
++        expect(introducedSoFar.has(char)).toBe(true);
++      }
++    }
++  });
++
++  it("keeps early groups short", () => {
++    const cards = drain(firstLesson());
++    for (const card of cards) {
++      if (card.type === "copy-group") {
++        expect(card.target.length).toBeLessThanOrEqual(
++          DEFAULT_LESSON_CONFIG.groupMaxLen,
++        );
++        expect(card.target.length).toBeGreaterThanOrEqual(
++          DEFAULT_LESSON_CONFIG.groupMinLen,
++        );
++      }
++    }
++  });
++
++  it("includes the focus character in every group", () => {
++    const cards = drain(firstLesson());
++    for (const card of cards) {
++      if (card.type === "copy-group") {
++        expect(card.target).toContain(card.focus);
++      }
++    }
++  });
++
++  it("emits sending drills with tx direction", () => {
++    const cards = drain(firstLesson());
++    const sends = cards.filter((c) => c.type === "send-character");
++    expect(sends.length).toBe(DEFAULT_LESSON_CONFIG.sendCount);
++    for (const card of sends) {
++      expect(card.direction).toBe("tx");
++    }
++  });
++
++  it("is deterministic for a seed", () => {
++    expect(drain(firstLesson(7))).toEqual(drain(firstLesson(7)));
++  });
++});
++
++describe("LessonPlan misses", () => {
++  it("inserts an immediate repeat after a missed isolated card", () => {
++    const plan = firstLesson();
++    // Advance to the first acquire card (after the K introduction).
++    let card = plan.next();
++    while (card && card.phase !== "acquire") {
++      card = plan.next();
++    }
++    expect(card?.type).toBe("copy-character");
++    const before = plan.length;
++    plan.reportResult(false);
++    expect(plan.length).toBe(before + 1);
++    const repeat = plan.next();
++    expect(repeat?.assisted).toBe(true);
++    expect(repeat?.focus).toBe(card?.focus);
++  });
++
++  it("does not repeat after a correct card", () => {
++    const plan = firstLesson();
++    plan.next();
++    const before = plan.length;
++    plan.reportResult(true);
++    expect(plan.length).toBe(before);
++  });
++
++  it("does not insert a second repeat after a missed assisted card", () => {
++    const plan = firstLesson();
++    let card = plan.next();
++    while (card && card.phase !== "acquire") {
++      card = plan.next();
++    }
++    plan.reportResult(false); // inserts an assisted repeat
++    const assisted = plan.next();
++    expect(assisted?.assisted).toBe(true);
++    const before = plan.length;
++    plan.reportResult(false); // miss on the assisted card must not recurse
++    expect(plan.length).toBe(before);
++  });
++});
++
++describe("LessonPlan later stage", () => {
++  it("does not re-introduce already-introduced characters", () => {
++    const plan = new LessonPlan({
++      active: ["K", "M", "U"],
++      introduced: ["K", "M"],
++      newest: "U",
++      rng: createRng(3),
++    });
++    expect(plan.newlyIntroduced).toEqual(["U"]);
++    const intros = drain(plan)
++      .filter((c) => c.type === "introduce")
++      .map((c) => c.target);
++    expect(intros).toEqual(["U"]);
++  });
++});
+diff --git a/src/training/lesson-plan.ts b/src/training/lesson-plan.ts
+new file mode 100644
+index 0000000..15b53dd
+--- /dev/null
++++ b/src/training/lesson-plan.ts
+@@ -0,0 +1,221 @@
++// Phase-based Learn lesson plan. Replaces random exercise mixing with a
++// deterministic acquisition sequence: introduce every un-introduced active
++// character, drill it in isolation (repeating misses), then contrast within the
++// active set, short groups, and a few sends. Pure and seedable. Advancement is
++// NOT decided here; a separate checkpoint (later stage) drives unlocks.
++
++import type { LearnExerciseType } from "../core/exercises.ts";
++import type { Rng } from "../core/rng.ts";
++import type { Direction } from "../core/types.ts";
++
++export type LessonPhase =
++  | "introduce"
++  | "acquire"
++  | "contrast"
++  | "groups"
++  | "send";
++
++export type PlannedExercise = {
++  type: LearnExerciseType;
++  target: string;
++  direction: Direction;
++  phase: LessonPhase;
++  /** The character this card focuses on. */
++  focus: string;
++  newestCharacter: boolean;
++  /** True when this card is an assisted reinforcement after a miss (shows the
++   * character + Morse). Assisted cards must not count toward checkpoint
++   * readiness. */
++  assisted: boolean;
++};
++
++export type LessonConfig = {
++  /** Isolated reps of each new character right after its introduction. */
++  acquirePerNewChar: number;
++  /** Mixed isolated recognition cards drawn from the active set. */
++  contrastCount: number;
++  /** Short group cards. */
++  groupCount: number;
++  groupMinLen: number;
++  groupMaxLen: number;
++  /** Sending cards near the end of the lesson. */
++  sendCount: number;
++  /** Cap on immediate repeat cards inserted after misses. */
++  maxMissRepeats: number;
++};
++
++export const DEFAULT_LESSON_CONFIG: LessonConfig = {
++  acquirePerNewChar: 4,
++  contrastCount: 6,
++  groupCount: 4,
++  groupMinLen: 2,
++  groupMaxLen: 3,
++  sendCount: 2,
++  maxMissRepeats: 6,
++};
++
++type LessonOptions = {
++  /** Unlocked characters in curriculum order. */
++  active: readonly string[];
++  /** Characters already introduced in earlier sessions. */
++  introduced: Iterable<string>;
++  /** Newest unlocked character. */
++  newest: string;
++  rng: Rng;
++  config?: LessonConfig;
++};
++
++function pick<T>(items: readonly T[], rng: Rng): T {
++  return items[Math.floor(rng() * items.length)];
++}
++
++function randomGroup(
++  pool: readonly string[],
++  size: number,
++  mustInclude: string,
++  rng: Rng,
++): string {
++  const chars: string[] = [];
++  for (let i = 0; i < size; i++) {
++    chars.push(pick(pool, rng));
++  }
++  if (!chars.includes(mustInclude)) {
++    chars[Math.floor(rng() * size)] = mustInclude;
++  }
++  return chars.join("");
++}
++
++export class LessonPlan {
++  private readonly queue: PlannedExercise[];
++  private readonly config: LessonConfig;
++  private readonly newest: string;
++  private cursor = 0;
++  private insertedRepeats = 0;
++
++  readonly newlyIntroduced: string[];
++
++  constructor(options: LessonOptions) {
++    this.config = options.config ?? DEFAULT_LESSON_CONFIG;
++    this.newest = options.newest;
++    const introduced = new Set(options.introduced);
++    const active = options.active;
++    const newChars = active.filter((char) => !introduced.has(char));
++    this.newlyIntroduced = newChars;
++    this.queue = this.build(active, newChars, options.rng);
++  }
++
++  private card(
++    type: LearnExerciseType,
++    target: string,
++    direction: Direction,
++    phase: LessonPhase,
++    focus: string,
++    assisted = false,
++  ): PlannedExercise {
++    return {
++      type,
++      target,
++      direction,
++      phase,
++      focus,
++      newestCharacter: focus === this.newest,
++      assisted,
++    };
++  }
++
++  private build(
++    active: readonly string[],
++    newChars: readonly string[],
++    rng: Rng,
++  ): PlannedExercise[] {
++    const q: PlannedExercise[] = [];
++    const focusPool = newChars.length > 0 ? newChars : active;
++
++    // Introduce each new character, then drill it in isolation.
++    for (const char of newChars) {
++      q.push(this.card("introduce", char, "rx", "introduce", char));
++      for (let i = 0; i < this.config.acquirePerNewChar; i++) {
++        q.push(this.card("copy-character", char, "rx", "acquire", char));
++      }
++    }
++
++    // Mixed isolated recognition across the active set, favoring new chars.
++    for (let i = 0; i < this.config.contrastCount; i++) {
++      const focus = rng() < 0.6 ? pick(focusPool, rng) : pick(active, rng);
++      q.push(this.card("copy-character", focus, "rx", "contrast", focus));
++    }
++
++    // Short groups with a ramping length, each containing the focus character.
++    if (active.length > 1) {
++      const span = this.config.groupMaxLen - this.config.groupMinLen + 1;
++      for (let i = 0; i < this.config.groupCount; i++) {
++        const len = Math.min(
++          this.config.groupMaxLen,
++          this.config.groupMinLen +
++            Math.floor((i * span) / Math.max(1, this.config.groupCount)),
++        );
++        const focus = rng() < 0.6 ? pick(focusPool, rng) : pick(active, rng);
++        const group = randomGroup(active, len, focus, rng);
++        q.push(this.card("copy-group", group, "rx", "groups", focus));
++      }
++    }
++
++    // A few sending drills near the end.
++    for (let i = 0; i < this.config.sendCount; i++) {
++      const focus = rng() < 0.6 ? pick(focusPool, rng) : pick(active, rng);
++      q.push(this.card("send-character", focus, "tx", "send", focus));
++    }
++
++    return q;
++  }
++
++  hasNext(): boolean {
++    return this.cursor < this.queue.length;
++  }
++
++  next(): PlannedExercise | undefined {
++    const exercise = this.queue[this.cursor];
++    if (exercise) {
++      this.cursor += 1;
++    }
++    return exercise;
++  }
++
++  /**
++   * Reports the result of the exercise just returned by next(). A missed
++   * isolated recognition card inserts one immediate repeat, up to the cap.
++   */
++  reportResult(correct: boolean): void {
++    const justDone = this.queue[this.cursor - 1];
++    if (
++      !correct &&
++      justDone &&
++      justDone.type === "copy-character" &&
++      (justDone.phase === "acquire" || justDone.phase === "contrast") &&
++      !justDone.assisted &&
++      this.insertedRepeats < this.config.maxMissRepeats
++    ) {
++      this.queue.splice(
++        this.cursor,
++        0,
++        this.card(
++          "copy-character",
++          justDone.focus,
++          "rx",
++          justDone.phase,
++          justDone.focus,
++          true,
++        ),
++      );
++      this.insertedRepeats += 1;
++    }
++  }
++
++  get length(): number {
++    return this.queue.length;
++  }
++
++  get position(): number {
++    return this.cursor;
++  }
++}
+diff --git a/src/ui/hooks/useLearnSession.ts b/src/ui/hooks/useLearnSession.ts
+index 2ece099..e1821c6 100644
+--- a/src/ui/hooks/useLearnSession.ts
++++ b/src/ui/hooks/useLearnSession.ts
+@@ -1,25 +1,43 @@
+ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+ import { DEFAULT_CURRICULUM_CONFIG } from "../../content/curriculum-data.ts";
+ import {
++  checkpointReadiness,
+   createInitialState,
+   newestCharacter,
++  unlockedCharacters,
+   type CurriculumState,
++  type Readiness,
+ } from "../../core/curriculum.ts";
+-import type { LearnExercise } from "../../core/exercises.ts";
+ import { encodeText } from "../../core/morse.ts";
+ import { createRng } from "../../core/rng.ts";
+ import type { CharacterProgress } from "../../core/types.ts";
++import {
++  applyCheckpoint,
++  CheckpointSession,
++  type CheckpointApplied,
++} from "../../training/checkpoint.ts";
+ import {
+   LearnSession,
+   type SessionSummary,
+ } from "../../training/learn-session.ts";
++import type { PlannedExercise } from "../../training/lesson-plan.ts";
+ import { useSettings } from "../settings-context.ts";
+ import { useAudioEngine } from "./useAudioEngine.ts";
+ 
+-const CURRICULUM_STORAGE_KEY = "k1frx.curriculum.v1";
+-const SESSION_LENGTH = 12;
++const CURRICULUM_STORAGE_KEY = "k1frx.curriculum.v2";
++const INTRODUCED_STORAGE_KEY = "k1frx.introduced.v1";
++
++// Brief holds after grading an answer (ms); introductions are paced by audio.
++const ADVANCE_AFTER_CORRECT = 500;
++const ADVANCE_AFTER_MISS = 1500;
++const INTRO_GAP = 400;
+ 
+-export type LearnPhase = "onboarding" | "exercise" | "summary";
++export type LearnPhase =
++  | "onboarding"
++  | "exercise"
++  | "summary"
++  | "checkpoint"
++  | "checkpoint-result";
+ 
+ export type Feedback = {
+   correct: boolean;
+@@ -49,125 +67,254 @@ function saveCurriculum(state: CurriculumState): void {
+       JSON.stringify(state.characters),
+     );
+   } catch {
+-    // Persisting progress is best-effort until the storage milestone.
++    // Best-effort until the storage milestone.
++  }
++}
++
++function loadIntroduced(): string[] {
++  try {
++    const raw = localStorage.getItem(INTRODUCED_STORAGE_KEY);
++    if (raw) {
++      const chars = JSON.parse(raw) as string[];
++      if (Array.isArray(chars)) return chars;
++    }
++  } catch {
++    // Ignore malformed storage.
++  }
++  return [];
++}
++
++function saveIntroduced(chars: string[]): void {
++  try {
++    localStorage.setItem(
++      INTRODUCED_STORAGE_KEY,
++      JSON.stringify([...new Set(chars)]),
++    );
++  } catch {
++    // Best-effort.
+   }
+ }
+ 
+-/** Renders a target as spaced dit/dah notation for hints. */
+ function toMorse(target: string): string {
+   return encodeText(target)
+     .map((entry) => entry.pattern)
+     .join(" ");
+ }
+ 
++function delay(ms: number): Promise<void> {
++  return new Promise((resolve) => window.setTimeout(resolve, ms));
++}
++
+ export function useLearnSession() {
+   const { settings } = useSettings();
+   const { engine, unlock } = useAudioEngine();
++  const auto = settings.pacing === "auto";
+ 
+-  const stateRef = useRef<CurriculumState>(undefined as unknown as CurriculumState);
++  const stateRef = useRef<CurriculumState>(
++    undefined as unknown as CurriculumState,
++  );
+   if (!stateRef.current) {
+     stateRef.current = loadCurriculum();
+   }
+   const sessionRef = useRef<LearnSession | undefined>(undefined);
++  const timers = useRef<number[]>([]);
++  const flowToken = useRef(0);
++  const introDoneToken = useRef<number | null>(null);
+ 
+   const [phase, setPhase] = useState<LearnPhase>("onboarding");
+-  const [exercise, setExercise] = useState<LearnExercise | undefined>(undefined);
++  const [exercise, setExercise] = useState<PlannedExercise | undefined>(
++    undefined,
++  );
+   const [feedback, setFeedback] = useState<Feedback | undefined>(undefined);
++  const [awaitingContinue, setAwaitingContinue] = useState(false);
+   const [summary, setSummary] = useState<SessionSummary | undefined>(undefined);
+-  const [lastUnlock, setLastUnlock] = useState<string | undefined>(undefined);
+-  const [completed, setCompleted] = useState(0);
++  const [, forceTick] = useState(0);
+ 
+   const timing = useMemo(
+     () => ({ charWpm: settings.charWpm, effectiveWpm: settings.effectiveWpm }),
+     [settings.charWpm, settings.effectiveWpm],
+   );
+ 
++  const clearTimers = useCallback(() => {
++    for (const id of timers.current) window.clearTimeout(id);
++    timers.current = [];
++  }, []);
++
++  // Resolves when playback finishes so introductions pace to real audio length.
+   const play = useCallback(
+-    (text: string) => {
+-      void engine.playText(text, timing, { toneHz: settings.toneHz });
+-    },
++    (text: string): Promise<void> =>
++      engine.playText(text, timing, { toneHz: settings.toneHz }),
+     [engine, timing, settings.toneHz],
+   );
+ 
++  const advanceRef = useRef<() => void>(() => {});
++
++  const endSession = useCallback(() => {
++    clearTimers();
++    flowToken.current += 1;
++    const session = sessionRef.current;
++    if (!session) return;
++    setSummary(session.end());
++    saveIntroduced([...loadIntroduced(), ...session.completedIntroductions]);
++    saveCurriculum(stateRef.current);
++    setPhase("summary");
++  }, [clearTimers]);
++
++  // Records the current introduction exactly once, then advances.
++  const completeIntro = useCallback(() => {
++    const token = flowToken.current;
++    if (introDoneToken.current === token) return;
++    introDoneToken.current = token;
++    sessionRef.current?.submit("");
++    saveCurriculum(stateRef.current);
++    advanceRef.current();
++  }, []);
++
++  const runIntro = useCallback(
++    async (card: PlannedExercise, token: number) => {
++      await play(card.target);
++      if (token !== flowToken.current) return;
++      await delay(INTRO_GAP);
++      if (token !== flowToken.current) return;
++      await play(card.target);
++      if (token !== flowToken.current) return;
++      if (auto) completeIntro();
++      else setAwaitingContinue(true);
++    },
++    [auto, play, completeIntro],
++  );
++
+   const showExercise = useCallback(
+-    (next: LearnExercise) => {
++    (next: PlannedExercise) => {
++      clearTimers();
++      const token = (flowToken.current += 1);
+       setExercise(next);
+       setFeedback(undefined);
+-      if (next.type !== "send-character") {
+-        play(next.target);
++      setAwaitingContinue(false);
++
++      if (next.type === "introduce") {
++        void runIntro(next, token);
++      } else if (next.type !== "send-character") {
++        void play(next.target);
+       }
+     },
+-    [play],
++    [clearTimers, play, runIntro],
+   );
+ 
++  const advance = useCallback(() => {
++    clearTimers();
++    const session = sessionRef.current;
++    if (!session) return;
++    const next = session.next();
++    if (!next) {
++      endSession();
++      return;
++    }
++    showExercise(next);
++  }, [clearTimers, endSession, showExercise]);
++  advanceRef.current = advance;
++
+   const begin = useCallback(async () => {
+     await unlock();
+     const session = new LearnSession({
+       state: stateRef.current,
+       rng: createRng(Date.now() >>> 0),
++      introduced: loadIntroduced(),
+     });
+     session.start();
+     sessionRef.current = session;
+-    setCompleted(0);
++    introDoneToken.current = null;
+     setSummary(undefined);
+-    setLastUnlock(undefined);
+     setPhase("exercise");
+-    showExercise(session.next());
+-  }, [unlock, showExercise]);
+-
+-  const endSession = useCallback(() => {
+-    const session = sessionRef.current;
+-    if (!session) {
+-      return;
+-    }
+-    setSummary(session.end());
+-    saveCurriculum(stateRef.current);
+-    setPhase("summary");
+-  }, []);
+-
+-  const advance = useCallback(() => {
+-    const session = sessionRef.current;
+-    if (!session) {
+-      return;
+-    }
+-    if (completed >= SESSION_LENGTH) {
+-      endSession();
+-      return;
+-    }
+-    showExercise(session.next());
+-  }, [completed, endSession, showExercise]);
++    const first = session.next();
++    if (first) showExercise(first);
++    else endSession();
++  }, [unlock, showExercise, endSession]);
+ 
+   const record = useCallback(
+     (input: string | boolean) => {
+       const session = sessionRef.current;
+-      if (!session || !exercise) {
+-        return;
+-      }
++      if (!session || !exercise || feedback) return;
+       const outcome = session.submit(input);
+       saveCurriculum(stateRef.current);
+-      setCompleted((count) => count + 1);
+-      setLastUnlock(outcome.unlockedCharacter);
+-
+-      if (exercise.type !== "introduce") {
+-        setFeedback({
+-          correct: outcome.correct,
+-          expected: exercise.target,
+-          morse: toMorse(exercise.target),
+-        });
++      forceTick((n) => n + 1);
++
++      setFeedback({
++        correct: outcome.correct,
++        expected: exercise.target,
++        morse: toMorse(exercise.target),
++      });
++      if (!outcome.correct) {
++        void play(exercise.target);
++      }
++      if (auto) {
++        const id = window.setTimeout(
++          () => advanceRef.current(),
++          outcome.correct ? ADVANCE_AFTER_CORRECT : ADVANCE_AFTER_MISS,
++        );
++        timers.current.push(id);
+       } else {
+-        advance();
++        setAwaitingContinue(true);
+       }
+     },
+-    [exercise, advance],
++    [auto, exercise, feedback, play],
+   );
+ 
+   const replay = useCallback(() => {
+-    if (exercise && exercise.type !== "send-character") {
+-      play(exercise.target);
++    if (!exercise || exercise.type === "send-character") return;
++    if (exercise.type !== "introduce") {
++      // Replaying an answer card is an assist, so exclude it from mastery.
++      sessionRef.current?.markReplayed();
+     }
++    void play(exercise.target);
+   }, [exercise, play]);
+ 
+-  // Pause active-time accrual while the tab is hidden.
++  const continueNow = useCallback(() => {
++    if (exercise?.type === "introduce") completeIntro();
++    else advance();
++  }, [exercise, completeIntro, advance]);
++
++  // --- Checkpoint mode -----------------------------------------------------
++  const checkpointRef = useRef<CheckpointSession | undefined>(undefined);
++  const [checkpointResult, setCheckpointResult] = useState<
++    CheckpointApplied | undefined
++  >(undefined);
++
++  const presentCheckpoint = useCallback(() => {
++    const target = checkpointRef.current?.current();
++    if (target) void play(target);
++  }, [play]);
++
++  const startCheckpoint = useCallback(async () => {
++    await unlock();
++    checkpointRef.current = new CheckpointSession({
++      active: unlockedCharacters(stateRef.current),
++      newest: newestCharacter(stateRef.current)?.character ?? "",
++      rng: createRng(Date.now() >>> 0),
++    });
++    setCheckpointResult(undefined);
++    setPhase("checkpoint");
++    presentCheckpoint();
++  }, [unlock, presentCheckpoint]);
++
++  const checkpointAnswer = useCallback(
++    (input: string) => {
++      const cp = checkpointRef.current;
++      if (!cp) return;
++      cp.answer(input);
++      forceTick((n) => n + 1);
++      if (cp.isComplete()) {
++        const applied = applyCheckpoint(stateRef.current, cp.grade());
++        saveCurriculum(stateRef.current);
++        setCheckpointResult(applied);
++        setPhase("checkpoint-result");
++      } else {
++        presentCheckpoint();
++      }
++    },
++    [presentCheckpoint],
++  );
++
+   useEffect(() => {
+     const onVisibility = () => {
+       const session = sessionRef.current;
+@@ -179,25 +326,43 @@ export function useLearnSession() {
+     return () => document.removeEventListener("visibilitychange", onVisibility);
+   }, []);
+ 
++  useEffect(() => clearTimers, [clearTimers]);
++
+   const current: CharacterProgress | undefined = newestCharacter(
+     stateRef.current,
+   );
++  const session = sessionRef.current;
++  const checkpoint = checkpointRef.current;
++  const readiness: Readiness = checkpointReadiness(stateRef.current);
+ 
+   return {
+     phase,
+     exercise,
+     feedback,
++    awaitingContinue,
+     summary,
+-    lastUnlock,
+-    completed,
+-    sessionLength: SESSION_LENGTH,
++    auto,
++    readiness,
++    checkpointResult,
++    checkpoint: {
++      position: checkpoint?.position ?? 0,
++      length: checkpoint?.length ?? 0,
++    },
++    completed: session?.completedCards ?? 0,
++    total: session?.totalCards ?? 0,
+     progress: {
+       unlocked: stateRef.current.characters.length,
+       total: stateRef.current.config.order.length,
+       current: current?.character,
+     },
+-    toneHz: settings.toneHz,
+-    charWpm: settings.charWpm,
+-    actions: { begin, record, replay, advance, endSession },
++    actions: {
++      begin,
++      record,
++      replay,
++      continueNow,
++      endSession,
++      startCheckpoint,
++      checkpointAnswer,
++    },
+   };
+ }
+diff --git a/src/ui/screens/LearnScreen.tsx b/src/ui/screens/LearnScreen.tsx
+index db7f45a..eadf494 100644
+--- a/src/ui/screens/LearnScreen.tsx
++++ b/src/ui/screens/LearnScreen.tsx
+@@ -1,5 +1,11 @@
+-import { useEffect, useState, type FormEvent } from "react";
+-import { encodeCharacter } from "../../core/morse.ts";
++import {
++  useEffect,
++  useRef,
++  useState,
++  type ChangeEvent,
++  type KeyboardEvent,
++} from "react";
++import { encodeCharacter, isSupportedCharacter } from "../../core/morse.ts";
+ import { useLearnSession } from "../hooks/useLearnSession.ts";
+ import { SendPad } from "../components/SendPad.tsx";
+ 
+@@ -10,30 +16,92 @@ const PROMPTS: Record<string, string> = {
+   "send-character": "Send this character",
+ };
+ 
++function sanitize(value: string): string {
++  // Keep every supported Morse character, including punctuation like . , = / ?
++  return [...value.toUpperCase()].filter(isSupportedCharacter).join("");
++}
++
+ export function LearnScreen() {
+   const learn = useLearnSession();
+-  const { exercise, feedback, actions } = learn;
++  const { exercise, feedback, awaitingContinue } = learn;
++  const { record, replay, continueNow, begin, endSession, startCheckpoint, checkpointAnswer } =
++    learn.actions;
+ 
+-  const [answer, setAnswer] = useState("");
++  const [value, setValue] = useState("");
+   const [decoded, setDecoded] = useState("");
+   const [sendReset, setSendReset] = useState(0);
++  const inputRef = useRef<HTMLInputElement>(null);
++
++  const isCopy =
++    exercise?.direction === "rx" && exercise.type !== "introduce";
+ 
+   useEffect(() => {
+-    setAnswer("");
++    setValue("");
+     setDecoded("");
+     setSendReset((n) => n + 1);
+-  }, [exercise]);
++    if (isCopy) {
++      // Focus so physical and on-screen keyboards go straight to the answer.
++      inputRef.current?.focus();
++    }
++  }, [exercise, isCopy]);
++
++  // Sending auto-submits as correct as soon as the decode matches the target.
++  useEffect(() => {
++    if (
++      exercise?.type === "send-character" &&
++      !feedback &&
++      decoded.trim().toUpperCase() === exercise.target
++    ) {
++      record(true);
++    }
++  }, [decoded, exercise, feedback, record]);
++
++  // Checkpoint: refocus and clear the input for each new item.
++  useEffect(() => {
++    if (learn.phase === "checkpoint") {
++      setValue("");
++      inputRef.current?.focus();
++    }
++  }, [learn.phase, learn.checkpoint.position]);
++
++  function onCheckpointChange(event: ChangeEvent<HTMLInputElement>) {
++    const first = sanitize(event.target.value).slice(0, 1);
++    setValue("");
++    if (first) checkpointAnswer(first);
++  }
++
++  function onInputChange(event: ChangeEvent<HTMLInputElement>) {
++    if (!exercise || feedback) return;
++    const next = sanitize(event.target.value);
++    if (exercise.type === "copy-character") {
++      const first = next.slice(0, 1);
++      setValue(first);
++      if (first) record(first);
++      return;
++    }
++    setValue(next);
++    if (exercise.type === "copy-group" && next.length >= exercise.target.length) {
++      record(next);
++    }
++  }
++
++  function onInputKeyDown(event: KeyboardEvent<HTMLInputElement>) {
++    if (event.key !== "Enter" || !exercise || feedback) return;
++    if (exercise.type === "copy-word" || exercise.type === "copy-group") {
++      record(value);
++    }
++  }
+ 
+   if (learn.phase === "onboarding") {
+     return (
+       <section>
+         <h2>Learn</h2>
+         <p>
+-          Short adaptive sessions teach Morse by ear. You will hear characters
+-          and copy them, and send a few yourself. Progress unlocks new
+-          characters as your copy improves.
++          Short lessons teach Morse by ear: each new character is introduced by
++          sound, drilled on its own, then mixed with the ones you know. Just
++          listen and type. One tap to begin, then let it flow.
+         </p>
+-        <button type="button" onClick={() => void actions.begin()}>
++        <button type="button" onClick={() => void begin()}>
+           Start learning
+         </button>
+       </section>
+@@ -42,6 +110,7 @@ export function LearnScreen() {
+ 
+   if (learn.phase === "summary" && learn.summary) {
+     const s = learn.summary;
++    const { reason, weakCharacter } = learn.readiness;
+     return (
+       <section>
+         <h2>Session complete</h2>
+@@ -51,18 +120,110 @@ export function LearnScreen() {
+             {s.valid ? "" : " (too short to count)"}
+           </li>
+           <li>
+-            Attempts: {s.attempts} ({Math.round(s.accuracy * 100)}% correct)
++            Cards: {s.cards} · scored attempts: {s.attempts} (
++            {Math.round(s.accuracy * 100)}% correct)
+           </li>
+           <li>Characters practiced: {s.charactersPracticed.join(" ") || "—"}</li>
+-          <li>
+-            Unlocked:{" "}
+-            {s.unlockedCharacters.length
+-              ? s.unlockedCharacters.join(" ")
+-              : "none this session"}
+-          </li>
+         </ul>
+-        <button type="button" onClick={() => void actions.begin()}>
+-          Practice again
++
++        {reason === "READY" && (
++          <p className="feedback feedback--ok">
++            You’re ready for a checkpoint to unlock the next character.
++          </p>
++        )}
++        {reason === "NEEDS_REVIEW" && (
++          <p className="feedback feedback--neutral">
++            Review {weakCharacter} a little more before the next checkpoint.
++          </p>
++        )}
++        {reason === "NEEDS_PRACTICE" && (
++          <p className="field__label">
++            Keep practicing the newest character to get checkpoint-ready.
++          </p>
++        )}
++        {reason === "COMPLETE" && (
++          <p className="feedback feedback--ok">
++            You’ve unlocked every character. Keep practicing to stay sharp.
++          </p>
++        )}
++
++        <div className="practice__controls">
++          <button type="button" onClick={() => void begin()}>
++            Practice again
++          </button>
++          {reason !== "COMPLETE" && (
++            <button
++              type="button"
++              className={reason === "READY" ? "" : "tab"}
++              onClick={() => void startCheckpoint()}
++            >
++              {reason === "READY" ? "Start checkpoint" : "Try a checkpoint"}
++            </button>
++          )}
++        </div>
++      </section>
++    );
++  }
++
++  if (learn.phase === "checkpoint") {
++    const pct = learn.checkpoint.length
++      ? Math.round((learn.checkpoint.position / learn.checkpoint.length) * 100)
++      : 0;
++    return (
++      <section>
++        <div className="learn__top">
++          <span className="field__label">Checkpoint</span>
++          <div className="learn__bar" aria-hidden>
++            <span style={{ width: `${pct}%` }} />
++          </div>
++          <span className="field__label">
++            {learn.checkpoint.position}/{learn.checkpoint.length}
++          </span>
++        </div>
++        <p className="field__label">
++          Copy each character you hear. No replay or hints during the checkpoint.
++        </p>
++        <input
++          ref={inputRef}
++          className="learn__answer"
++          type="text"
++          inputMode="text"
++          autoComplete="off"
++          autoCapitalize="characters"
++          spellCheck={false}
++          maxLength={1}
++          placeholder="listen…"
++          value={value}
++          onChange={onCheckpointChange}
++          aria-label="Checkpoint answer"
++        />
++      </section>
++    );
++  }
++
++  if (learn.phase === "checkpoint-result" && learn.checkpointResult) {
++    const { result, unlockedCharacter } = learn.checkpointResult;
++    return (
++      <section>
++        <h2>{result.pass ? "Checkpoint passed" : "Not yet"}</h2>
++        {result.pass && unlockedCharacter && (
++          <p className="feedback feedback--ok">
++            New character unlocked: {unlockedCharacter}
++          </p>
++        )}
++        <ul className="summary">
++          <li>Overall: {Math.round(result.overallAccuracy * 100)}%</li>
++          <li>Newest character: {Math.round(result.newestAccuracy * 100)}%</li>
++        </ul>
++        {!result.pass && (
++          <p className="feedback feedback--neutral">
++            {result.missedCharacters.length
++              ? `A little more practice on ${result.missedCharacters.join(" ")}.`
++              : "Close. A little more practice and try again."}
++          </p>
++        )}
++        <button type="button" onClick={() => void begin()}>
++          {result.pass ? "Keep going" : "Back to practice"}
+         </button>
+       </section>
+     );
+@@ -75,11 +236,7 @@ export function LearnScreen() {
+   const progressPct = Math.round(
+     (learn.progress.unlocked / learn.progress.total) * 100,
+   );
+-
+-  function submitCopy(event: FormEvent) {
+-    event.preventDefault();
+-    actions.record(answer);
+-  }
++  const assisted = exercise.assisted && exercise.type === "copy-character";
+ 
+   return (
+     <section>
+@@ -92,16 +249,10 @@ export function LearnScreen() {
+           <span style={{ width: `${progressPct}%` }} />
+         </div>
+         <span className="field__label">
+-          {learn.completed}/{learn.sessionLength}
++          {learn.completed}/{learn.total}
+         </span>
+       </div>
+ 
+-      {learn.lastUnlock && (
+-        <p className="feedback feedback--ok" role="status">
+-          New character unlocked: {learn.lastUnlock}
+-        </p>
+-      )}
+-
+       {exercise.type === "introduce" ? (
+         <div className="learn__intro">
+           <p className="field__label">New character</p>
+@@ -109,12 +260,13 @@ export function LearnScreen() {
+           <code className="learn__morse">
+             {encodeCharacter(exercise.target) ?? ""}
+           </code>
++          <p className="field__label">Listen…</p>
+           <div className="practice__controls">
+-            <button type="button" onClick={actions.replay}>
+-              Play
++            <button type="button" className="tab" onClick={replay}>
++              Replay
+             </button>
+-            <button type="button" onClick={() => actions.record("")}>
+-              Got it
++            <button type="button" onClick={continueNow}>
++              Continue
+             </button>
+           </div>
+         </div>
+@@ -123,31 +275,56 @@ export function LearnScreen() {
+           <p className="field__label">
+             {PROMPTS[exercise.type]}
+             {exercise.type === "send-character" ? `: ${exercise.target}` : ""}
++            {exercise.type === "copy-group"
++              ? ` · ${exercise.target.length} characters`
++              : ""}
+           </p>
+ 
+-          {exercise.direction === "rx" ? (
++          {assisted && (
++            <div className="learn__assist" role="note">
++              <span className="learn__assist-char">{exercise.target}</span>
++              <code className="learn__morse">
++                {encodeCharacter(exercise.target) ?? ""}
++              </code>
++              <span className="field__label">Listen and type it.</span>
++            </div>
++          )}
++
++          {isCopy ? (
+             <>
++              <input
++                ref={inputRef}
++                className="learn__answer"
++                type="text"
++                inputMode="text"
++                autoComplete="off"
++                autoCapitalize="characters"
++                spellCheck={false}
++                maxLength={
++                  exercise.type === "copy-character"
++                    ? 1
++                    : exercise.type === "copy-group"
++                      ? exercise.target.length
++                      : undefined
++                }
++                placeholder={
++                  exercise.type === "copy-character"
++                    ? "type the letter"
++                    : exercise.type === "copy-group"
++                      ? `type ${exercise.target.length} characters`
++                      : "type the word, then Enter"
++                }
++                value={value}
++                onChange={onInputChange}
++                onKeyDown={onInputKeyDown}
++                disabled={!!feedback}
++                aria-label="Your copy"
++              />
+               <div className="practice__controls">
+-                <button type="button" onClick={actions.replay}>
++                <button type="button" className="tab" onClick={replay}>
+                   Replay
+                 </button>
+               </div>
+-              {!feedback && (
+-                <form className="practice__answer" onSubmit={submitCopy}>
+-                  <input
+-                    type="text"
+-                    autoComplete="off"
+-                    autoCapitalize="characters"
+-                    spellCheck={false}
+-                    placeholder="Type what you hear"
+-                    value={answer}
+-                    onChange={(e) => setAnswer(e.target.value)}
+-                    aria-label="Your copy"
+-                    autoFocus
+-                  />
+-                  <button type="submit">Check</button>
+-                </form>
+-              )}
+             </>
+           ) : (
+             <>
+@@ -160,13 +337,12 @@ export function LearnScreen() {
+                 <div className="practice__controls">
+                   <button
+                     type="button"
++                    className="tab"
+                     onClick={() =>
+-                      actions.record(
+-                        decoded.trim().toUpperCase() === exercise.target,
+-                      )
++                      record(decoded.trim().toUpperCase() === exercise.target)
+                     }
+                   >
+-                    Check
++                    Submit
+                   </button>
+                 </div>
+               )}
+@@ -174,30 +350,33 @@ export function LearnScreen() {
+           )}
+ 
+           {feedback && (
+-            <>
+-              <p
+-                className={
+-                  feedback.correct
+-                    ? "feedback feedback--ok"
+-                    : "feedback feedback--bad"
+-                }
+-                role="status"
+-              >
+-                {feedback.correct ? "Correct" : "Not quite"} — {feedback.expected}
+-                <code className="learn__morse"> {feedback.morse}</code>
+-              </p>
+-              <div className="practice__controls">
+-                <button type="button" onClick={actions.advance} autoFocus>
+-                  Next
+-                </button>
+-              </div>
+-            </>
++            <div className="learn__feedback" role="status">
++              {feedback.correct ? (
++                <span className="learn__mark">✓</span>
++              ) : exercise.type === "copy-character" ? (
++                <span className="feedback feedback--neutral">
++                  Let’s hear that one again
++                </span>
++              ) : (
++                <span className="feedback feedback--neutral">
++                  Expected {feedback.expected}
++                </span>
++              )}
++            </div>
++          )}
++
++          {awaitingContinue && (
++            <div className="practice__controls">
++              <button type="button" onClick={continueNow} autoFocus>
++                Continue
++              </button>
++            </div>
+           )}
+         </div>
+       )}
+ 
+       <div className="practice__controls learn__end">
+-        <button type="button" className="tab" onClick={actions.endSession}>
++        <button type="button" className="tab" onClick={endSession}>
+           End session
+         </button>
+       </div>
+diff --git a/src/ui/screens/SettingsScreen.tsx b/src/ui/screens/SettingsScreen.tsx
+index ab8f3ad..7b32ba2 100644
+--- a/src/ui/screens/SettingsScreen.tsx
++++ b/src/ui/screens/SettingsScreen.tsx
+@@ -105,6 +105,19 @@ export function SettingsScreen() {
+         onChange={(value) => update({ noiseLevel: value / 100 })}
+       />
+ 
++      <label className="field">
++        <span className="field__label">Learn pacing</span>
++        <select
++          value={settings.pacing}
++          onChange={(event) =>
++            update({ pacing: event.target.value === "manual" ? "manual" : "auto" })
++          }
++        >
++          <option value="auto">Automatic (recommended)</option>
++          <option value="manual">Press Continue between cards</option>
++        </select>
++      </label>
++
+       <p className="settings__note">
+         Effective speed is capped at the character speed (Farnsworth spacing).
+       </p>
