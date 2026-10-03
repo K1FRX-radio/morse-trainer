@@ -1,9 +1,12 @@
 import { DATABASE_VERSION, TrainerDatabase } from "./indexeddb.ts";
+import { DEFAULT_CURRICULUM_CONFIG } from "../content/curriculum-data.ts";
 import type {
   PracticeSettings,
   SpeedSuggestionAfterAttempts,
 } from "../core/settings.ts";
 import type { CurriculumState } from "../core/curriculum.ts";
+import { createInitialState } from "../core/curriculum.ts";
+import { DEFAULT_SETTINGS } from "../core/settings.ts";
 import {
   applyAdvancementTransition,
   evaluateAdvancementEvidence,
@@ -21,6 +24,7 @@ import {
   type DailyProjectionRecord,
   type IntroductionsRecord,
   type LegacyMigrationBundle,
+  type MigrationLedgerRecord,
   type MilestoneRecord,
   type OperationLedgerRecord,
   type PortableSettingsRecord,
@@ -37,6 +41,13 @@ import {
   type RetryCounterIdentity,
 } from "./retry-history.ts";
 import {
+  createPortableBackupDocument,
+  parsePortableBackupJson,
+  summarizePortableBackup,
+  type PortableBackupDocument,
+  type PortableBackupPreview,
+} from "./backup.ts";
+import {
   parseCurriculumStateRecord,
   parseCharacterProjectionRecord,
   parseConfusionProjectionRecord,
@@ -44,7 +55,9 @@ import {
   parseIntroductionsRecord,
   parseLegacyMigrationBundle,
   parseMigrationLedger,
+  parseMilestoneRecord,
   parsePortableSettingsRecord,
+  parseProgressionEventRecord,
   parseSchemaMetadata,
   parseTrainingAttempt,
   parseTrainingDataset,
@@ -171,6 +184,10 @@ export interface TrainingDataRepository extends LegacyMigrationRepository {
     query: ConfusionProjectionQuery,
   ): Promise<ConfusionProjectionRecord[]>;
   rebuildProjections(): Promise<void>;
+  exportPortableBackup(appVersion: string): Promise<PortableBackupDocument>;
+  previewPortableBackup(rawJson: string): Promise<PortableBackupPreview>;
+  replacePortableBackup(rawJson: string): Promise<void>;
+  resetPortableData(): Promise<void>;
 }
 
 export { MAX_PROJECTION_QUERY_LIMIT };
@@ -1059,6 +1076,222 @@ export class DexieTrainingRepository implements TrainingDataRepository {
 
     return ordered.map((row) =>
       structuredClone(parseConfusionProjectionRecord(structuredClone(row))),
+    );
+  }
+
+  async exportPortableBackup(
+    appVersion: string,
+  ): Promise<PortableBackupDocument> {
+    const exportedAt = this.now().toISOString();
+    const [
+      settings,
+      curriculum,
+      introductions,
+      sessions,
+      attempts,
+      progressionEvents,
+      milestones,
+      metadata,
+    ] = await Promise.all([
+      this.database.settings.get("portable-settings"),
+      this.database.curriculum.get("curriculum-state"),
+      this.database.introductions.get("completed-introductions"),
+      this.database.sessions.toArray(),
+      this.database.attempts.toArray(),
+      this.database.progressionEvents.toArray(),
+      this.database.milestones.toArray(),
+      this.database.metadata.toArray(),
+    ]);
+    const dataset = parseTrainingDataset(sessions, attempts);
+
+    if (!settings || !curriculum || !introductions) {
+      throw new Error("portable data is incomplete and cannot be exported");
+    }
+
+    const schemaMetadataRaw = metadata.find(
+      (record) => record.id === "schema-metadata",
+    );
+    if (!schemaMetadataRaw) {
+      throw new Error("schema metadata is missing and cannot be exported");
+    }
+
+    const migrationLedgers = metadata
+      .filter(
+        (record): record is MigrationLedgerRecord =>
+          "kind" in record && record.kind === "migration",
+      )
+      .map((record) => parseMigrationLedger(structuredClone(record)));
+
+    return createPortableBackupDocument({
+      appVersion,
+      databaseVersion: DATABASE_VERSION,
+      exportedAt,
+      payload: {
+        settings: parsePortableSettingsRecord(structuredClone(settings)),
+        curriculum: parseCurriculumStateRecord(structuredClone(curriculum)),
+        introductions: parseIntroductionsRecord(structuredClone(introductions)),
+        sessions: dataset.sessions,
+        attempts: dataset.attempts,
+        progressionEvents: progressionEvents.map((record) =>
+          parseProgressionEventRecord(structuredClone(record)),
+        ),
+        milestones: milestones.map((record) =>
+          parseMilestoneRecord(structuredClone(record)),
+        ),
+        schemaMetadata: parseSchemaMetadata(structuredClone(schemaMetadataRaw)),
+        migrationLedgers,
+      },
+    });
+  }
+
+  async previewPortableBackup(rawJson: string): Promise<PortableBackupPreview> {
+    return summarizePortableBackup(await parsePortableBackupJson(rawJson));
+  }
+
+  async replacePortableBackup(rawJson: string): Promise<void> {
+    const backup = await parsePortableBackupJson(rawJson);
+    const dataset = parseTrainingDataset(
+      backup.payload.sessions,
+      backup.payload.attempts,
+    );
+    const generatedAt = this.now().toISOString();
+    const rows = buildProjectionRows(
+      dataset.sessions,
+      dataset.attempts,
+      generatedAt,
+    );
+
+    await this.database.transaction(
+      "rw",
+      [
+        this.database.metadata,
+        this.database.settings,
+        this.database.curriculum,
+        this.database.introductions,
+        this.database.sessions,
+        this.database.attempts,
+        this.database.progressionEvents,
+        this.database.milestones,
+        this.database.dailyProjections,
+        this.database.characterProjections,
+        this.database.confusionProjections,
+      ],
+      async () => {
+        await this.database.settings.clear();
+        await this.database.curriculum.clear();
+        await this.database.introductions.clear();
+        await this.database.sessions.clear();
+        await this.database.attempts.clear();
+        await this.database.progressionEvents.clear();
+        await this.database.milestones.clear();
+        await this.database.dailyProjections.clear();
+        await this.database.characterProjections.clear();
+        await this.database.confusionProjections.clear();
+        await this.database.metadata.clear();
+
+        await this.database.settings.put(backup.payload.settings);
+        await this.database.curriculum.put(backup.payload.curriculum);
+        await this.database.introductions.put(backup.payload.introductions);
+        if (backup.payload.sessions.length > 0) {
+          await this.database.sessions.bulkPut(backup.payload.sessions);
+        }
+        if (backup.payload.attempts.length > 0) {
+          await this.database.attempts.bulkPut(backup.payload.attempts);
+        }
+        if (backup.payload.progressionEvents.length > 0) {
+          await this.database.progressionEvents.bulkPut(
+            backup.payload.progressionEvents,
+          );
+        }
+        if (backup.payload.milestones.length > 0) {
+          await this.database.milestones.bulkPut(backup.payload.milestones);
+        }
+        await this.database.metadata.put(backup.payload.schemaMetadata);
+        if (backup.payload.migrationLedgers.length > 0) {
+          await this.database.metadata.bulkPut(backup.payload.migrationLedgers);
+        }
+
+        if (rows.daily.length > 0) {
+          await this.database.dailyProjections.bulkPut(rows.daily);
+        }
+        if (rows.characters.length > 0) {
+          await this.database.characterProjections.bulkPut(rows.characters);
+        }
+        if (rows.confusions.length > 0) {
+          await this.database.confusionProjections.bulkPut(rows.confusions);
+        }
+      },
+    );
+  }
+
+  async resetPortableData(): Promise<void> {
+    const now = this.now().toISOString();
+    const freshCurriculum = createInitialState(DEFAULT_CURRICULUM_CONFIG, now);
+    const schemaMetadata = parseSchemaMetadata({
+      id: "schema-metadata",
+      schemaVersion: RECORD_SCHEMA_VERSION,
+      updatedAt: now,
+      databaseVersion: DATABASE_VERSION,
+      datasetGeneration: this.createId(),
+    });
+    const settings = parsePortableSettingsRecord({
+      id: "portable-settings",
+      schemaVersion: RECORD_SCHEMA_VERSION,
+      updatedAt: now,
+      value: DEFAULT_SETTINGS,
+    });
+    const curriculum = curriculumRecord(freshCurriculum, now);
+    const introductions = parseIntroductionsRecord({
+      id: "completed-introductions",
+      schemaVersion: RECORD_SCHEMA_VERSION,
+      updatedAt: now,
+      characters: [],
+    });
+
+    await this.database.transaction(
+      "rw",
+      [
+        this.database.metadata,
+        this.database.settings,
+        this.database.curriculum,
+        this.database.introductions,
+        this.database.sessions,
+        this.database.attempts,
+        this.database.progressionEvents,
+        this.database.milestones,
+        this.database.dailyProjections,
+        this.database.characterProjections,
+        this.database.confusionProjections,
+      ],
+      async () => {
+        const metadata = await this.database.metadata.toArray();
+        const migrationLedgers = metadata
+          .filter(
+            (record): record is MigrationLedgerRecord =>
+              "kind" in record && record.kind === "migration",
+          )
+          .map((record) => parseMigrationLedger(structuredClone(record)));
+
+        await this.database.settings.clear();
+        await this.database.curriculum.clear();
+        await this.database.introductions.clear();
+        await this.database.sessions.clear();
+        await this.database.attempts.clear();
+        await this.database.progressionEvents.clear();
+        await this.database.milestones.clear();
+        await this.database.dailyProjections.clear();
+        await this.database.characterProjections.clear();
+        await this.database.confusionProjections.clear();
+        await this.database.metadata.clear();
+
+        await this.database.metadata.put(schemaMetadata);
+        if (migrationLedgers.length > 0) {
+          await this.database.metadata.bulkPut(migrationLedgers);
+        }
+        await this.database.settings.put(settings);
+        await this.database.curriculum.put(curriculum);
+        await this.database.introductions.put(introductions);
+      },
     );
   }
 

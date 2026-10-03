@@ -3,6 +3,8 @@ import { KOCH_ORDER } from "../content/curriculum-data.ts";
 import { normalizeCopy } from "../core/scoring.ts";
 import { SETTING_RANGES } from "../core/settings.ts";
 import type {
+  MigrationLedgerRecord,
+  MilestoneRecord,
   CharacterProjectionRecord,
   ConfusionProjectionRecord,
   CurriculumStateRecord,
@@ -10,6 +12,7 @@ import type {
   IntroductionsRecord,
   LegacyMigrationBundle,
   PortableSettingsRecord,
+  ProgressionEventRecord,
   TrainingAttemptRecord,
   TrainingSessionRecord,
 } from "./models.ts";
@@ -883,8 +886,18 @@ export function parseLegacyMigrationBundle(
   return legacyMigrationBundleSchema.parse(value) as LegacyMigrationBundle;
 }
 
-export function parseMigrationLedger(value: unknown) {
-  return migrationLedgerRecordSchema.parse(value);
+export function parseMigrationLedger(value: unknown): MigrationLedgerRecord {
+  return migrationLedgerRecordSchema.parse(value) as MigrationLedgerRecord;
+}
+
+export function parseProgressionEventRecord(
+  value: unknown,
+): ProgressionEventRecord {
+  return progressionEventRecordSchema.parse(value) as ProgressionEventRecord;
+}
+
+export function parseMilestoneRecord(value: unknown): MilestoneRecord {
+  return milestoneRecordSchema.parse(value) as MilestoneRecord;
 }
 
 export function parseCurriculumStateRecord(
