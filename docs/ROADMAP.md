@@ -7,13 +7,12 @@ only which issue should be implemented next and what follows it.
 
 ## Next
 
-- #31 — Isolate GitHub Pages deployment concurrency from PR CI
+- #29 — Add regression: Send Practice does not mutate Learn progression
 
 ## Queue
 
-1. #29 — Add regression: Send Practice does not mutate Learn progression
-2. #28 — Cleanup: remove dead 3-char notice delay configuration
-3. #43 — Add external CW paddle support via USB HID/MIDI
+1. #28 — Cleanup: remove dead 3-char notice delay configuration
+2. #43 — Add external CW paddle support via USB HID/MIDI
 
 ## Blocked / awaiting decision
 
@@ -21,6 +20,7 @@ None.
 
 ## Recently completed
 
+- #31 — Isolate GitHub Pages deployment concurrency from PR CI
 - #36 — Avoid creating empty Copy Practice sessions for unavailable content
 - #41 — Fix Learn save failure when activeDateBuckets do not sum to activeMs
 - #35 — Add Learn progress dashboard and character familiarity map
