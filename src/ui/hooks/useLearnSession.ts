@@ -33,6 +33,7 @@ import {
   recommendRetry,
   type RetryRecommendation,
 } from "../../training/retry-recommendation.ts";
+import { deriveLearnDashboard } from "../../training/character-familiarity.ts";
 import { useLearnAudio } from "../learn-audio-context.ts";
 import { useSettings } from "../settings-context.ts";
 import { useTrainingData } from "../training-data-context.ts";
@@ -184,6 +185,10 @@ export function useLearnSession() {
     PersistenceDiagnostic | undefined
   >(undefined);
   const [persistenceRetrying, setPersistenceRetrying] = useState(false);
+  const [previewingCharacter, setPreviewingCharacter] = useState<
+    string | undefined
+  >(undefined);
+  const previewTokenRef = useRef(0);
   const [, forceTick] = useState(0);
   const failedOperationRef = useRef<PersistenceOperationCategory | undefined>(
     undefined,
@@ -679,6 +684,26 @@ export function useLearnSession() {
   }, [persistenceStatus, phase, startSession]);
   const begin = restartFullLesson;
 
+  const previewCharacter = useCallback(
+    async (character: string) => {
+      const unlocked = stateRef.current.characters.some(
+        (progress) => progress.character === character,
+      );
+      if (!unlocked || phase !== "onboarding") return;
+      const token = ++previewTokenRef.current;
+      setPreviewingCharacter(character);
+      try {
+        await audio.unlock();
+        await audio.play(character, timing, { toneHz: settings.toneHz });
+      } finally {
+        if (previewTokenRef.current === token) {
+          setPreviewingCharacter(undefined);
+        }
+      }
+    },
+    [audio, phase, settings.toneHz, timing],
+  );
+
   const retryRecommendation: RetryRecommendation | undefined = useMemo(() => {
     const assessment = summary?.advancementAssessment;
     if (!assessment || assessment.eligible) return undefined;
@@ -1115,6 +1140,8 @@ export function useLearnSession() {
       currentAnswerRef.current = "";
       playbackGeneration.current += 1;
       heldKeysRef.current.clear();
+      previewTokenRef.current += 1;
+      setPreviewingCharacter(undefined);
       void audio.cancelAndSuspend();
       const persistence = persistenceRef.current;
       const session = sessionRef.current;
@@ -1132,6 +1159,7 @@ export function useLearnSession() {
     stateRef.current,
   );
   const session = sessionRef.current;
+  const dashboard = deriveLearnDashboard(stateRef.current);
 
   return {
     phase,
@@ -1173,10 +1201,13 @@ export function useLearnSession() {
       total: stateRef.current.config.order.length,
       current: current?.character,
     },
+    dashboard,
+    previewingCharacter,
     actions: {
       begin,
       restartFullLesson,
       practiceLongCopy,
+      previewCharacter,
       acceptSpacingSuggestion,
       retryPersistence,
       acceptIsolated,

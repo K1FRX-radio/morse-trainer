@@ -1,5 +1,7 @@
 import {
+  Fragment,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ChangeEvent,
@@ -15,6 +17,13 @@ const PROMPTS: Record<string, string> = {
   "copy-group": "Copy the group you hear",
   "copy-word": "Copy the word you hear",
 };
+
+const FAMILIARITY_LABELS = {
+  new: "New",
+  learning: "Learning",
+  familiar: "Familiar",
+  solid: "Solid",
+} as const;
 
 export function LearnScreen() {
   const learn = useLearnSession();
@@ -53,9 +62,13 @@ export function LearnScreen() {
   } = learn.actions;
 
   const [value, setValue] = useState("");
+  const [selectedCharacter, setSelectedCharacter] = useState<
+    string | undefined
+  >(undefined);
   const composingRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const continuousInputRef = useRef<HTMLTextAreaElement>(null);
+  const detailRef = useRef<HTMLElement>(null);
 
   const isCopy = exercise?.direction === "rx" && exercise.type !== "introduce";
   const supportsTypeBehind =
@@ -66,6 +79,13 @@ export function LearnScreen() {
   const introControlsReady = introStage === "ready" && !isPlaying;
   const persistenceReady = learn.persistenceStatus === "ready";
   const canStartLongCopy = learn.progress.unlocked >= 2;
+  const selectedFamiliarity = useMemo(
+    () =>
+      learn.dashboard.characters.find(
+        (character) => character.character === selectedCharacter,
+      ),
+    [learn.dashboard.characters, selectedCharacter],
+  );
   const persistenceNotice =
     learn.persistenceStatus === "error" ? (
       <div className="feedback feedback--neutral" role="alert">
@@ -102,6 +122,14 @@ export function LearnScreen() {
   useEffect(() => {
     if (learn.continuousCopy.active) continuousInputRef.current?.focus();
   }, [learn.continuousCopy.active]);
+
+  useEffect(() => {
+    if (!selectedFamiliarity) return;
+    const detail = detailRef.current;
+    if (!detail) return;
+    detail.focus();
+    detail.scrollIntoView?.({ block: "nearest" });
+  }, [selectedFamiliarity]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -191,23 +219,153 @@ export function LearnScreen() {
   }
 
   if (learn.phase === "onboarding") {
+    const curriculumPct = Math.round(learn.dashboard.curriculumProgress * 100);
     return (
       <section data-learn-phase="onboarding">
         <h2>Learn</h2>
         {persistenceNotice}
+        <div className="learn__dashboard" aria-label="Curriculum progress">
+          <p className="field__label">
+            {learn.dashboard.unlocked} of {learn.dashboard.total} characters
+            discovered
+          </p>
+          <p className="field__label">
+            Progress shows discovered curriculum characters, not proficiency.
+          </p>
+          <div
+            className="learn__bar"
+            role="progressbar"
+            aria-label="Curriculum discovery progress"
+            aria-valuemin={0}
+            aria-valuemax={learn.dashboard.total}
+            aria-valuenow={learn.dashboard.unlocked}
+            aria-valuetext={`${curriculumPct}% of curriculum discovered`}
+          >
+            <span style={{ width: `${curriculumPct}%` }} />
+          </div>
+        </div>
+
+        <div className="practice__controls learn__onboarding-primary">
+          <button type="button" onClick={() => void begin()}>
+            Start learning
+          </button>
+          {canStartLongCopy && (
+            <button type="button" onClick={() => void practiceLongCopy()}>
+              Start long copy
+            </button>
+          )}
+        </div>
+
+        <div
+          className="learn__character-map"
+          aria-label="Discovered characters"
+        >
+          {learn.dashboard.characters.map((character) => {
+            const ringPct = Math.round(character.ringFill * 100);
+            return (
+              <Fragment key={character.character}>
+                <button
+                  type="button"
+                  className="learn__character-tile"
+                  aria-label={`Character ${character.character}`}
+                  aria-pressed={selectedCharacter === character.character}
+                  onClick={() => setSelectedCharacter(character.character)}
+                >
+                  <span
+                    className="learn__character-ring"
+                    aria-hidden
+                    style={{
+                      background: `conic-gradient(var(--k1frx-accent) ${ringPct}%, rgba(255,255,255,0.12) 0%)`,
+                    }}
+                  >
+                    <span className="learn__character-fill">
+                      <span className="learn__character-symbol">
+                        {character.character}
+                      </span>
+                    </span>
+                  </span>
+                  <span className="learn__character-level field__label">
+                    {FAMILIARITY_LABELS[character.level]}
+                    {character.needsReview ? " · review" : ""}
+                  </span>
+                </button>
+                {selectedFamiliarity?.character === character.character && (
+                  <section
+                    ref={detailRef}
+                    tabIndex={-1}
+                    className="learn__character-detail learn__character-detail--inline"
+                    aria-label={`Character detail ${selectedFamiliarity.character}`}
+                  >
+                    <div className="learn__intro">
+                      <p className="field__label">Character detail</p>
+                      <div className="send__target-char">
+                        {selectedFamiliarity.character}
+                      </div>
+                      <code className="learn__morse">
+                        {encodeCharacter(selectedFamiliarity.character) ?? ""}
+                      </code>
+                      <p className="field__label">
+                        Familiarity:{" "}
+                        {FAMILIARITY_LABELS[selectedFamiliarity.level]}
+                        {selectedFamiliarity.needsReview
+                          ? " · needs review"
+                          : ""}
+                      </p>
+                      <p className="field__label">
+                        Recent RX:{" "}
+                        {Math.round(selectedFamiliarity.recentAccuracy * 100)}%
+                        · observations: {selectedFamiliarity.observations}
+                      </p>
+                      <div className="practice__controls">
+                        <button
+                          type="button"
+                          className="tab"
+                          onClick={() =>
+                            void learn.actions.previewCharacter(
+                              selectedFamiliarity.character,
+                            )
+                          }
+                          disabled={learn.previewingCharacter !== undefined}
+                        >
+                          {learn.previewingCharacter ===
+                          selectedFamiliarity.character
+                            ? `Playing ${selectedFamiliarity.character}...`
+                            : `Hear ${selectedFamiliarity.character}`}
+                        </button>
+                        <button
+                          type="button"
+                          className="tab"
+                          onClick={() => setSelectedCharacter(undefined)}
+                        >
+                          Close detail
+                        </button>
+                      </div>
+                      <div className="practice__controls">
+                        <button type="button" onClick={() => void begin()}>
+                          Continue learning
+                        </button>
+                        {canStartLongCopy && (
+                          <button
+                            type="button"
+                            onClick={() => void practiceLongCopy()}
+                          >
+                            Practice long copy
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </section>
+                )}
+              </Fragment>
+            );
+          })}
+        </div>
+
         <p>
           Short lessons teach Morse by ear: each new character is introduced by
           sound, drilled on its own, then mixed with the ones you know. Just
           listen and type. One tap to begin, then let it flow.
         </p>
-        <button type="button" onClick={() => void begin()}>
-          Start learning
-        </button>
-        {canStartLongCopy && (
-          <button type="button" onClick={() => void practiceLongCopy()}>
-            Start long copy
-          </button>
-        )}
       </section>
     );
   }
