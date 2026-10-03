@@ -265,7 +265,7 @@ describe("buildContinuousCopyPlan", () => {
     }
 
     const prefixShare = prefixNewest / prefixTotal;
-    expect(prefixShare).toBeLessThan(0.7);
+    expect(prefixShare).toBeLessThan(0.64);
   });
 
   it("prevents excessive identical runs", () => {
