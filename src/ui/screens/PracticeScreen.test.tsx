@@ -207,9 +207,13 @@ describe("CopyPractice persistence", () => {
 
   it("shows a safe unavailable state when no unlocked words are eligible", async () => {
     const session = persistence();
-    renderPractice(<CopyPractice />, session, {
-      curriculum: sendCurriculum(["K", "M"]),
-    });
+    const { startPracticeSessionPersistence } = renderPractice(
+      <CopyPractice />,
+      session,
+      {
+        curriculum: sendCurriculum(["K", "M"]),
+      },
+    );
 
     fireEvent.change(screen.getByLabelText("Content"), {
       target: { value: "words" },
@@ -220,14 +224,21 @@ describe("CopyPractice persistence", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(
       "No eligible words are available for the unlocked character set yet.",
     );
+    expect(startPracticeSessionPersistence).not.toHaveBeenCalled();
+    expect(session.recordAttempt).not.toHaveBeenCalled();
+    expect(session.finish).not.toHaveBeenCalled();
     expect(audio.playText).not.toHaveBeenCalled();
   });
 
   it("shows a safe unavailable state for callsigns without unlocked digits", async () => {
     const session = persistence();
-    renderPractice(<CopyPractice />, session, {
-      curriculum: sendCurriculum(["K", "M", "U"]),
-    });
+    const { startPracticeSessionPersistence } = renderPractice(
+      <CopyPractice />,
+      session,
+      {
+        curriculum: sendCurriculum(["K", "M", "U"]),
+      },
+    );
 
     fireEvent.change(screen.getByLabelText("Content"), {
       target: { value: "callsigns" },
@@ -238,7 +249,37 @@ describe("CopyPractice persistence", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Callsign practice in Unlocked scope needs at least one unlocked letter and one unlocked digit.",
     );
+    expect(startPracticeSessionPersistence).not.toHaveBeenCalled();
+    expect(session.recordAttempt).not.toHaveBeenCalled();
+    expect(session.finish).not.toHaveBeenCalled();
     expect(audio.playText).not.toHaveBeenCalled();
+  });
+
+  it("starts persistence exactly once after switching from unavailable to available content", async () => {
+    const session = persistence();
+    const { startPracticeSessionPersistence } = renderPractice(
+      <CopyPractice />,
+      session,
+      {
+        curriculum: sendCurriculum(["K", "M"]),
+      },
+    );
+
+    fireEvent.change(screen.getByLabelText("Content"), {
+      target: { value: "words" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+
+    await screen.findByRole("alert");
+    expect(startPracticeSessionPersistence).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("Content"), {
+      target: { value: "letters" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+
+    await waitFor(() => expect(audio.playText).toHaveBeenCalled());
+    expect(startPracticeSessionPersistence).toHaveBeenCalledTimes(1);
   });
 
   it("preserves broad prompt pool in all-characters scope", async () => {

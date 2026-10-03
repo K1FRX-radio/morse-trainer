@@ -79,12 +79,6 @@ export function CopyPractice() {
   }
 
   async function nextPrompt(): Promise<void> {
-    try {
-      await practice.start();
-    } catch {
-      return;
-    }
-    engine.cancel();
     const unlocked = unlockedCharacters(loadCurriculum());
     const next =
       scope === "all-characters"
@@ -98,6 +92,12 @@ export function CopyPractice() {
       setUnavailable(unavailableMessage(mode));
       return;
     }
+    try {
+      await practice.start();
+    } catch {
+      return;
+    }
+    engine.cancel();
     setUnavailable(undefined);
     setPrompt(next);
     setAnswer("");
