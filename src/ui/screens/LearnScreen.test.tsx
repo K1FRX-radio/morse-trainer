@@ -455,6 +455,36 @@ afterEach(() => {
 });
 
 describe("LearnScreen input gating", () => {
+  it("keeps Start learning above the character map with a large unlocked set", () => {
+    seedUnlockedCharacters(24);
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+
+    const start = screen.getByRole("button", { name: "Start learning" });
+    const map = screen.getByLabelText("Discovered characters");
+    expect(
+      Boolean(
+        start.compareDocumentPosition(map) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
+    ).toBe(true);
+  });
+
+  it("focuses selected detail with a large unlocked set", async () => {
+    const unlocked = seedUnlockedCharacters(24);
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+
+    const target = unlocked[0];
+    fireEvent.click(
+      screen.getByRole("button", { name: `Character ${target}` }),
+    );
+    await flush();
+
+    expect(
+      screen.getByRole("region", { name: `Character detail ${target}` }),
+    ).toHaveFocus();
+  });
+
   it("shows curriculum progress and only unlocked character tiles on onboarding", () => {
     const unlocked = seedUnlockedCharacters(4);
     const fake = makeFakeAudio();
