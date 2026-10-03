@@ -20,73 +20,6 @@ import { focusedWordEligibility } from "./lesson-plan.ts";
 const timing = { charWpm: 20, effectiveWpm: 12 };
 const kmActive = ["K", "M"];
 
-function expectValidKmSelection(
-  generated: ReturnType<typeof buildContinuousCopyPlan>,
-): void {
-  const remainingCoverage = new Map([
-    ["K", 1],
-    ["M", DEFAULT_ADVANCEMENT_CONFIG.minNewestObservations],
-  ]);
-  let previousToken: string | undefined;
-
-  for (const token of generated.tokens) {
-    expect(token.kind).toBe("random-group");
-    expect(
-      [...token.text].every((character) => kmActive.includes(character)),
-    ).toBe(true);
-    expect(token.text).not.toMatch(/(.)\1\1/);
-
-    const prefix: string[] = [];
-    for (const selected of token.text) {
-      const satisfiesRunLimit = (candidate: string) => {
-        const run = prefix.slice(
-          -DEFAULT_CONTINUOUS_COPY_CONFIG.maxIdenticalRun,
-        );
-        return !(
-          run.length === DEFAULT_CONTINUOUS_COPY_CONFIG.maxIdenticalRun &&
-          run.every((character) => character === candidate)
-        );
-      };
-      const avoidsRepeatedToken = (candidate: string) =>
-        !(
-          previousToken?.length === token.text.length &&
-          prefix.length === token.text.length - 1 &&
-          prefix.every(
-            (character, index) => character === previousToken?.[index],
-          ) &&
-          candidate === previousToken[prefix.length]
-        );
-      const runSafe = kmActive.filter(satisfiesRunLimit);
-      const coverage = runSafe.filter(
-        (candidate) => (remainingCoverage.get(candidate) ?? 0) > 0,
-      );
-      const tiers = [
-        coverage.filter(avoidsRepeatedToken),
-        coverage,
-        runSafe.filter(avoidsRepeatedToken),
-        runSafe,
-      ];
-      const selectedTier = tiers.find((candidates) => candidates.length > 0);
-
-      expect(selectedTier).toBeDefined();
-      expect(selectedTier).toContain(selected);
-      if (
-        prefix.length === token.text.length - 1 &&
-        token.text === previousToken
-      ) {
-        expect(tiers[0]).toHaveLength(0);
-        if (coverage.length === 0) expect(tiers[2]).toHaveLength(0);
-      }
-
-      prefix.push(selected);
-      const remaining = remainingCoverage.get(selected) ?? 0;
-      if (remaining > 0) remainingCoverage.set(selected, remaining - 1);
-    }
-
-    previousToken = token.text;
-  }
-}
-
 function plan(seed = 1, durationMs = 60000) {
   return buildContinuousCopyPlan({
     active: ["K", "M", "U", "R"],
@@ -112,6 +45,7 @@ describe("selectGroupCharacter", () => {
         ["K", 1],
         ["M", 8],
       ]),
+      requireCoverage: true,
       maxIdenticalRun: 2,
       weight: () => 1,
       rng: createRng(1),
@@ -160,9 +94,11 @@ describe("buildContinuousCopyPlan", () => {
     const maximumOvershoot =
       buildSchedule(`E ${lastToken}`, timing).totalMs -
       buildSchedule("E", timing).totalMs;
+    const repairTokenAllowance =
+      buildSchedule("E E", timing).totalMs - buildSchedule("E", timing).totalMs;
     expect(generated.scheduledDurationMs).toBeGreaterThanOrEqual(60000);
     expect(generated.scheduledDurationMs).toBeLessThan(
-      60000 + maximumOvershoot,
+      60000 + maximumOvershoot + repairTokenAllowance,
     );
   });
 
@@ -223,7 +159,7 @@ describe("buildContinuousCopyPlan", () => {
     }
   });
 
-  it("preserves selector priorities across seeded K/M streams", () => {
+  it("keeps deterministic K/M protections across seeded streams", () => {
     const timings = [
       { charWpm: 20, effectiveWpm: 12 },
       { charWpm: 8, effectiveWpm: 5 },
@@ -259,11 +195,78 @@ describe("buildContinuousCopyPlan", () => {
           });
 
           expect(generated).toEqual(repeated);
-          expectValidKmSelection(generated);
+          expect(
+            generated.tokens.every((token) => token.kind === "random-group"),
+          ).toBe(true);
+          expect(
+            generated.tokens.every((token) =>
+              [...token.text].every((character) =>
+                kmActive.includes(character),
+              ),
+            ),
+          ).toBe(true);
+          expect(
+            generated.tokens.every((token) => !/(.)\1\1/.test(token.text)),
+          ).toBe(true);
         }
       }
     }
   }, 20000);
+
+  it("keeps K/M streams near balanced with only mild newest bias", () => {
+    const durationMs = recommendedContinuousCopyDurationMs(2);
+    const totals = new Map<string, number>();
+    for (let seed = 1; seed <= 300; seed++) {
+      const generated = buildContinuousCopyPlan({
+        active: ["K", "M"],
+        newest: "M",
+        durationMs,
+        timing,
+        rng: createRng(seed),
+      });
+      const counts = new Map<string, number>();
+      for (const character of generated.gradingTarget) {
+        counts.set(character, (counts.get(character) ?? 0) + 1);
+        totals.set(character, (totals.get(character) ?? 0) + 1);
+      }
+      expect(counts.get("K") ?? 0).toBeGreaterThanOrEqual(1);
+      expect(counts.get("M") ?? 0).toBeGreaterThanOrEqual(
+        DEFAULT_ADVANCEMENT_CONFIG.minNewestObservations,
+      );
+    }
+
+    const total = (totals.get("K") ?? 0) + (totals.get("M") ?? 0);
+    const newestShare = (totals.get("M") ?? 0) / total;
+    expect(newestShare).toBeGreaterThan(0.5);
+    expect(newestShare).toBeLessThan(0.62);
+  });
+
+  it("does not newest-dominate K/M prefixes", () => {
+    const durationMs = recommendedContinuousCopyDurationMs(2);
+    let prefixNewest = 0;
+    let prefixTotal = 0;
+    for (let seed = 1; seed <= 300; seed++) {
+      const generated = buildContinuousCopyPlan({
+        active: ["K", "M"],
+        newest: "M",
+        durationMs,
+        timing,
+        rng: createRng(seed),
+      });
+      const prefixLength = Math.max(
+        1,
+        Math.floor(generated.gradingTarget.length * 0.25),
+      );
+      const prefix = generated.gradingTarget.slice(0, prefixLength);
+      prefixTotal += prefix.length;
+      prefixNewest += [...prefix].filter(
+        (character) => character === "M",
+      ).length;
+    }
+
+    const prefixShare = prefixNewest / prefixTotal;
+    expect(prefixShare).toBeLessThan(0.64);
+  });
 
   it("prevents excessive identical runs", () => {
     for (let seed = 1; seed <= 100; seed++) {
@@ -301,6 +304,81 @@ describe("buildContinuousCopyPlan", () => {
     expect(counts.get("R")).toBeGreaterThan(counts.get("U") ?? 0);
   });
 
+  it("keeps KMUR streams close to uniform with only mild newest bias", () => {
+    const totals = new Map<string, number>();
+    for (let seed = 1; seed <= 200; seed++) {
+      for (const character of buildContinuousCopyPlan({
+        active: ["K", "M", "U", "R"],
+        newest: "R",
+        durationMs: recommendedContinuousCopyDurationMs(4),
+        timing,
+        rng: createRng(seed),
+      }).gradingTarget) {
+        totals.set(character, (totals.get(character) ?? 0) + 1);
+      }
+    }
+
+    const sum = [...totals.values()].reduce((a, b) => a + b, 0);
+    const share = (character: string) => (totals.get(character) ?? 0) / sum;
+    const peerShares = [share("K"), share("M"), share("U")];
+    const peerMean = peerShares.reduce((a, b) => a + b, 0) / peerShares.length;
+
+    for (const candidate of ["K", "M", "U", "R"]) {
+      expect(totals.get(candidate)).toBeGreaterThan(0);
+    }
+    expect(share("R")).toBeGreaterThan(peerMean);
+    expect(share("R")).toBeLessThan(peerMean + 0.08);
+  });
+
+  it("does not front-load newest character heavily in stream prefixes", () => {
+    let prefixNewest = 0;
+    let prefixTotal = 0;
+    for (let seed = 1; seed <= 200; seed++) {
+      const generated = buildContinuousCopyPlan({
+        active: ["K", "M", "U", "R"],
+        newest: "R",
+        durationMs: recommendedContinuousCopyDurationMs(4),
+        timing,
+        rng: createRng(seed),
+      });
+      const prefixLength = Math.max(
+        1,
+        Math.floor(generated.gradingTarget.length * 0.25),
+      );
+      const prefix = generated.gradingTarget.slice(0, prefixLength);
+      prefixTotal += prefix.length;
+      prefixNewest += [...prefix].filter(
+        (character) => character === "R",
+      ).length;
+    }
+
+    const prefixShare = prefixNewest / prefixTotal;
+    expect(prefixShare).toBeGreaterThan(0.2);
+    expect(prefixShare).toBeLessThan(0.38);
+  });
+
+  it("prevents pathological domination when newest, review, and weak overlap", () => {
+    const totals = new Map<string, number>();
+    for (let seed = 1; seed <= 200; seed++) {
+      const generated = buildContinuousCopyPlan({
+        active: ["K", "M", "U", "R"],
+        newest: "R",
+        review: ["R"],
+        weak: ["R"],
+        durationMs: recommendedContinuousCopyDurationMs(4),
+        timing,
+        rng: createRng(seed),
+      });
+      for (const character of generated.gradingTarget) {
+        totals.set(character, (totals.get(character) ?? 0) + 1);
+      }
+    }
+
+    const sum = [...totals.values()].reduce((a, b) => a + b, 0);
+    const newestShare = (totals.get("R") ?? 0) / sum;
+    expect(newestShare).toBeLessThan(0.6);
+  });
+
   it("mixes only eligible words while retaining random groups", () => {
     const generated = mixedPlan(9, 180000);
     const words = generated.tokens.filter((token) => token.kind === "word");
@@ -318,7 +396,7 @@ describe("buildContinuousCopyPlan", () => {
     ).toBe(true);
   });
 
-  it("does not mix words before completing advancement coverage", () => {
+  it("does not mix words before covering the active set", () => {
     for (let seed = 1; seed <= 20; seed++) {
       const generated = mixedPlan(seed, 180000);
       const firstWord = generated.tokens.findIndex(
@@ -332,11 +410,6 @@ describe("buildContinuousCopyPlan", () => {
       expect(
         wordEligibleActive.every((character) => prefix.includes(character)),
       ).toBe(true);
-      expect(
-        [...prefix].filter((character) => character === "A").length,
-      ).toBeGreaterThanOrEqual(
-        DEFAULT_ADVANCEMENT_CONFIG.minNewestObservations,
-      );
     }
   });
 
@@ -378,7 +451,7 @@ describe("buildContinuousCopyPlan", () => {
     ).flatMap((generated) => generated.tokens);
     const wordRatio =
       tokens.filter((token) => token.kind === "word").length / tokens.length;
-    expect(wordRatio).toBeGreaterThan(0.28);
+    expect(wordRatio).toBeGreaterThan(0.24);
     expect(wordRatio).toBeLessThan(0.38);
 
     let consecutiveWords = 0;

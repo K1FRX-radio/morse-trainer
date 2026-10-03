@@ -7,6 +7,7 @@ export type GroupCharacterSelectionOptions = {
   tokenLength: number;
   previousToken: string | undefined;
   remainingCoverage: ReadonlyMap<string, number>;
+  requireCoverage: boolean;
   maxIdenticalRun: number;
   weight: (character: string) => number;
   rng: Rng;
@@ -34,12 +35,17 @@ export function selectGroupCharacter(
       candidate === options.previousToken[options.prefix.length]
     );
 
-  const tiers = [
-    { requireCoverage: true, requireUniqueToken: true },
-    { requireCoverage: true, requireUniqueToken: false },
-    { requireCoverage: false, requireUniqueToken: true },
-    { requireCoverage: false, requireUniqueToken: false },
-  ];
+  const tiers = options.requireCoverage
+    ? [
+        { requireCoverage: true, requireUniqueToken: true },
+        { requireCoverage: true, requireUniqueToken: false },
+        { requireCoverage: false, requireUniqueToken: true },
+        { requireCoverage: false, requireUniqueToken: false },
+      ]
+    : [
+        { requireCoverage: false, requireUniqueToken: true },
+        { requireCoverage: false, requireUniqueToken: false },
+      ];
 
   for (const tier of tiers) {
     const candidates = options.active
