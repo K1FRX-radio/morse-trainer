@@ -699,7 +699,6 @@ describe("LearnSession transitions", () => {
       title: "Now copying 3-character groups",
       destinationPhase: "groups-3",
       actionLabel: "Go",
-      delayMs: 1800,
     });
     expect(session.next()).toBe(event);
     expect(() => session.submit("")).toThrow(

@@ -83,7 +83,6 @@ export type LessonNotification = {
   title: "Now copying 3-character groups";
   destinationPhase: "groups-3";
   actionLabel: "Go";
-  delayMs: number;
 };
 
 export type ContinuousCopyEvent = {
@@ -205,7 +204,6 @@ export class LearnSession {
   private readonly activeTime: ActiveTimeTracker;
   private readonly plan: LessonPlan;
   private readonly rng: Rng;
-  private readonly groupLengthNoticeMs: number;
   private readonly continuousCopyDurationMs: number;
   private readonly continuousCopyTiming: TimingOptions;
   private readonly activeCharacters: string[];
@@ -260,7 +258,6 @@ export class LearnSession {
     });
     this.rng = options.rng;
     const lessonConfig = options.lessonConfig ?? DEFAULT_LESSON_CONFIG;
-    this.groupLengthNoticeMs = lessonConfig.groupLengthNoticeMs;
     this.continuousCopyDurationMs =
       options.continuousCopyDurationMs ?? DEFAULT_CONTINUOUS_COPY_DURATION_MS;
     this.continuousCopyTiming =
@@ -351,7 +348,6 @@ export class LearnSession {
         title: "Now copying 3-character groups",
         destinationPhase: "groups-3",
         actionLabel: "Go",
-        delayMs: this.groupLengthNoticeMs,
       };
       return this.current;
     }
