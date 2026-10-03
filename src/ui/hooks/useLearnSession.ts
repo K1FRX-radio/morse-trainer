@@ -222,14 +222,11 @@ export function useLearnSession() {
     (operation: PersistenceOperationCategory, cause: unknown) => {
       failedOperationRef.current = operation;
       const retryCount = retryCountsRef.current[operation];
-      setPersistenceDiagnostic(
-        toPersistenceDiagnostic(operation, retryCount, cause),
-      );
+      const diagnostic = toPersistenceDiagnostic(operation, retryCount, cause);
+      setPersistenceDiagnostic(diagnostic);
       setPersistenceStatus("error");
       setPersistenceRetrying(false);
-      setPersistenceError(
-        "Your session could not be saved. Check storage access and try again.",
-      );
+      setPersistenceError(diagnostic.userMessage);
     },
     [],
   );

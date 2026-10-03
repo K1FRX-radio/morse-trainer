@@ -75,6 +75,15 @@ export interface LearnSessionPersistence {
   retry(): Promise<void>;
 }
 
+class LearnPersistencePreflightError extends Error {
+  readonly retryable = false;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "LearnPersistencePreflightError";
+  }
+}
+
 function activeBucketSum(snapshot: LearnPersistenceSnapshot): number {
   return snapshot.activeDateBuckets.reduce(
     (total, bucket) => total + bucket.activeMs,
@@ -89,7 +98,7 @@ function assertConsistentActiveSnapshot(
   if (Math.abs(bucketTotal - snapshot.activeMs) <= ACTIVE_TIME_TOLERANCE_MS) {
     return;
   }
-  throw new Error(
+  throw new LearnPersistencePreflightError(
     `invalid Learn persistence snapshot: activeDateBuckets sum ${bucketTotal} does not match activeMs ${snapshot.activeMs}`,
   );
 }

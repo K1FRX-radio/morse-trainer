@@ -4,6 +4,8 @@ export type PersistenceOperationCategory =
 export type PersistenceDiagnostic = {
   operation: PersistenceOperationCategory;
   retryCount: number;
+  retryable: boolean;
+  userMessage: string;
   name?: string;
   message?: string;
   summary: string;
@@ -12,7 +14,13 @@ export type PersistenceDiagnostic = {
 type ErrorLike = {
   name?: unknown;
   message?: unknown;
+  retryable?: unknown;
 };
+
+const RETRYABLE_MESSAGE =
+  "Your session could not be saved. Check storage access and try again.";
+const NON_RETRYABLE_MESSAGE =
+  "This lesson could not be saved because of an internal save error. End this lesson and start a new one.";
 
 function stringField(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -44,17 +52,26 @@ function errorFields(cause: unknown): {
   return {};
 }
 
+function isRetryable(cause: unknown): boolean {
+  if (!cause || typeof cause !== "object") return true;
+  const maybeError = cause as ErrorLike;
+  return maybeError.retryable !== false;
+}
+
 export function toPersistenceDiagnostic(
   operation: PersistenceOperationCategory,
   retryCount: number,
   cause: unknown,
 ): PersistenceDiagnostic {
   const { name, message } = errorFields(cause);
+  const retryable = isRetryable(cause);
   const errorName = name ?? "UnknownError";
   const errorMessage = message ? ` - ${message}` : "";
   return {
     operation,
     retryCount,
+    retryable,
+    userMessage: retryable ? RETRYABLE_MESSAGE : NON_RETRYABLE_MESSAGE,
     ...(name ? { name } : {}),
     ...(message ? { message } : {}),
     summary: `Save failed (${operation}): ${errorName}${errorMessage} | retries: ${retryCount}`,

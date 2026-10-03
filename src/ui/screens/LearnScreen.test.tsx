@@ -100,6 +100,13 @@ function decodeSchedule(schedule: Schedule): string {
   return characters.join("");
 }
 
+function preflightError(message = "invalid Learn persistence snapshot") {
+  return Object.assign(new Error(message), {
+    name: "LearnPersistencePreflightError",
+    retryable: false,
+  });
+}
+
 function testCurriculum() {
   const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
   const raw = localStorage.getItem("k1frx.curriculum.v2");
@@ -1044,6 +1051,9 @@ describe("LearnScreen input gating", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Your session could not be saved",
     );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Check storage access and try again",
+    );
     expect(screen.getByText("Save details")).toBeInTheDocument();
     fireEvent.click(screen.getByText("Save details"));
     expect(
@@ -1057,6 +1067,38 @@ describe("LearnScreen input gating", () => {
 
     expect(retry).toHaveBeenCalledOnce();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("does not show Retry for non-retryable malformed attempt failures", async () => {
+    const fake = makeFakeAudio();
+    const persistence: LearnSessionPersistence = {
+      recordAttempt: () => Promise.reject(preflightError()),
+      finish: () => Promise.resolve(),
+      interrupt: () => Promise.resolve(),
+      acceptAdvancement: () => Promise.resolve(testCurriculum()),
+      retry: () => Promise.reject(preflightError()),
+    };
+    renderLearn(
+      fake.audio,
+      {},
+      {
+        startLearnSessionPersistence: () => Promise.resolve(persistence),
+      },
+    );
+    await toFirstCopy(fake);
+
+    fireEvent.change(screen.getByLabelText("Your copy"), {
+      target: { value: "K" },
+    });
+    await flush();
+
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("internal save error");
+    expect(alert).toHaveTextContent("End this lesson and start a new one");
+    expect(alert).not.toHaveTextContent("Check storage access and try again");
+    expect(
+      screen.queryByRole("button", { name: "Retry saving" }),
+    ).not.toBeInTheDocument();
   });
 
   it("shows retry progress while retrying an ordinary persistence failure", async () => {
@@ -2398,6 +2440,39 @@ describe("LearnScreen advancement", () => {
     expect(getRetryClassification).toHaveBeenCalledOnce();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Learn U" })).toBeEnabled();
+  });
+
+  it("does not show Retry for non-retryable malformed finalization failures", async () => {
+    const fake = makeFakeAudio();
+    const finish = vi.fn<LearnSessionPersistence["finish"]>(() =>
+      Promise.reject(preflightError()),
+    );
+    const persistence: LearnSessionPersistence = {
+      recordAttempt: () => Promise.resolve(),
+      finish,
+      interrupt: () => Promise.resolve(),
+      acceptAdvancement: () => Promise.resolve(testCurriculum()),
+      retry: () => Promise.reject(preflightError()),
+    };
+    renderLearn(
+      fake.audio,
+      {},
+      {
+        startLearnSessionPersistence: () => Promise.resolve(persistence),
+      },
+    );
+
+    await completeContinuousCopy(fake);
+    await flush();
+
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("internal save error");
+    expect(alert).toHaveTextContent("End this lesson and start a new one");
+    expect(alert).not.toHaveTextContent("Check storage access and try again");
+    expect(
+      screen.queryByRole("button", { name: "Retry saving" }),
+    ).not.toBeInTheDocument();
+    expect(finish).toHaveBeenCalled();
   });
 
   it("retries session-start failure from summary using the same start mode", async () => {

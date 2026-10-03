@@ -86,6 +86,7 @@ export function LearnScreen() {
       ),
     [learn.dashboard.characters, selectedCharacter],
   );
+  const canRetryPersistence = learn.persistenceDiagnostic?.retryable ?? true;
   const persistenceNotice =
     learn.persistenceStatus === "error" ? (
       <div className="feedback feedback--neutral" role="alert">
@@ -96,9 +97,11 @@ export function LearnScreen() {
             <p>{learn.persistenceDiagnostic.summary}</p>
           </details>
         )}
-        <button type="button" onClick={retryPersistence}>
-          Retry saving
-        </button>
+        {canRetryPersistence && (
+          <button type="button" onClick={retryPersistence}>
+            Retry saving
+          </button>
+        )}
       </div>
     ) : learn.persistenceStatus === "pending" &&
       (learn.phase === "summary" || learn.persistenceRetrying) ? (
