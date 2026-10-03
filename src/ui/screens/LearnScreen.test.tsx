@@ -126,6 +126,44 @@ function seedUnlockedCharacters(count: number): string[] {
   return state.characters.map((character) => character.character);
 }
 
+function seedDashboardEvidence() {
+  const state = createInitialState({
+    ...DEFAULT_CURRICULUM_CONFIG,
+    startCount: 4,
+  });
+  state.characters[0].character = "K";
+  state.characters[0].rx.recentResults = [true, true];
+  state.characters[1].character = "M";
+  state.characters[1].rx.recentResults = [
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    false,
+    true,
+  ];
+  state.characters[2].character = "U";
+  state.characters[2].rx.recentResults = [true, true, false, true, false];
+  state.characters[2].needsReview = true;
+  state.characters[3].character = "R";
+  state.characters[3].rx.recentResults = [true, false, true, true, true];
+  localStorage.setItem("k1frx.curriculum.v2", JSON.stringify(state.characters));
+}
+
 function acceptedCurriculum(acceptance: AdvancementAcceptance) {
   const state = testCurriculum();
   const activeCharacters = state.characters.map(({ character }) => character);
@@ -417,6 +455,117 @@ afterEach(() => {
 });
 
 describe("LearnScreen input gating", () => {
+  it("shows curriculum progress and only unlocked character tiles on onboarding", () => {
+    const unlocked = seedUnlockedCharacters(4);
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+
+    expect(
+      screen.getByText(
+        `${unlocked.length} of ${DEFAULT_CURRICULUM_CONFIG.order.length} characters discovered`,
+      ),
+    ).toBeInTheDocument();
+    for (const character of unlocked) {
+      expect(
+        screen.getByRole("button", { name: `Character ${character}` }),
+      ).toBeInTheDocument();
+    }
+    const locked = DEFAULT_CURRICULUM_CONFIG.order[unlocked.length];
+    expect(
+      screen.queryByRole("button", { name: `Character ${locked}` }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("derives familiarity from evidence and sample size on onboarding", () => {
+    seedDashboardEvidence();
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+
+    expect(
+      screen.getByRole("button", { name: "Character K" }),
+    ).toHaveTextContent("New");
+    expect(
+      screen.getByRole("button", { name: "Character M" }),
+    ).toHaveTextContent("Solid");
+    expect(
+      screen.getByRole("button", { name: "Character U" }),
+    ).toHaveTextContent("review");
+  });
+
+  it("shows character detail and plays preview audio without starting a session", async () => {
+    seedUnlockedCharacters(3);
+    const fake = makeFakeAudio();
+    const persistence: LearnSessionPersistence = {
+      recordAttempt: () => Promise.resolve(),
+      finish: () => Promise.resolve(),
+      interrupt: () => Promise.resolve(),
+      acceptAdvancement: () => Promise.resolve(testCurriculum()),
+      retry: () => Promise.resolve(),
+    };
+    const startLearnSessionPersistence = vi.fn(() =>
+      Promise.resolve(persistence),
+    );
+    renderLearn(fake.audio, {}, { startLearnSessionPersistence });
+
+    fireEvent.click(screen.getByRole("button", { name: "Character K" }));
+    expect(
+      screen.getByRole("region", { name: "Character detail K" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("-.-")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Hear K" }));
+    await flush();
+
+    expect(fake.pending[0]?.text).toBe("K");
+    expect(startLearnSessionPersistence).not.toHaveBeenCalled();
+  });
+
+  it("does not create sessions or curriculum mutations when opening and closing detail", async () => {
+    seedUnlockedCharacters(3);
+    const fake = makeFakeAudio();
+    const onSaveCurriculum = vi.fn();
+    const startLearnSessionPersistence = vi.fn(() =>
+      Promise.reject(new Error("should not start")),
+    );
+    renderLearn(
+      fake.audio,
+      {},
+      { onSaveCurriculum, startLearnSessionPersistence },
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Character K" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close detail" }));
+    await flush();
+
+    expect(startLearnSessionPersistence).not.toHaveBeenCalled();
+    expect(onSaveCurriculum).not.toHaveBeenCalled();
+  });
+
+  it("opens detail actions to continue learning and long copy", async () => {
+    seedUnlockedCharacters(3);
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+
+    fireEvent.click(screen.getByRole("button", { name: "Character K" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue learning" }));
+    await flush();
+    expect(fake.pending[0]?.text).toBe("K");
+  });
+
+  it("starts long copy from detail action using the existing review flow", async () => {
+    seedUnlockedCharacters(3);
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+
+    fireEvent.click(screen.getByRole("button", { name: "Character K" }));
+    fireEvent.click(screen.getByRole("button", { name: "Practice long copy" }));
+    await flush();
+
+    expect(
+      screen.getByRole("textbox", { name: "Continuous copy" }),
+    ).toBeInTheDocument();
+  });
+
   it("hides Start long copy when fewer than two characters are unlocked", () => {
     seedUnlockedCharacters(1);
     const fake = makeFakeAudio();
