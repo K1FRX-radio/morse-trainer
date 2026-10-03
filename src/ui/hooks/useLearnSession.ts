@@ -937,6 +937,16 @@ export function useLearnSession() {
     advanceRef.current();
   }, [continuousCopy]);
 
+  const pauseContinuousCopy = useCallback(() => {
+    if (!continuousCopy.pause()) return;
+    sessionRef.current?.pause();
+  }, [continuousCopy]);
+
+  const resumeContinuousCopy = useCallback(() => {
+    if (!continuousCopy.resume()) return;
+    sessionRef.current?.resume();
+  }, [continuousCopy]);
+
   const persistAdvancement = useCallback(
     async (work: AdvancementWork, isRetry = false) => {
       const token = ++persistenceOperation.current;
@@ -1081,12 +1091,21 @@ export function useLearnSession() {
     const onVisibility = () => {
       const session = sessionRef.current;
       if (!session) return;
-      if (document.visibilityState === "hidden") session.pause();
-      else session.resume();
+      if (document.visibilityState === "hidden") {
+        if (continuousCopy.stage === "playing") {
+          pauseContinuousCopy();
+          return;
+        }
+        session.pause();
+        return;
+      }
+      if (continuousCopy.stage !== "paused") {
+        session.resume();
+      }
     };
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
-  }, []);
+  }, [continuousCopy.stage, pauseContinuousCopy]);
 
   // Invalidate pending async work, stop audio, and terminally interrupt storage.
   useEffect(
@@ -1126,6 +1145,7 @@ export function useLearnSession() {
       totalMs: continuousCopy.totalMs,
       result: continuousCopy.result,
       active: continuousCopy.active,
+      paused: continuousCopy.stage === "paused",
       selectedDurationMs: settings.continuousCopyDurationMs,
       recommendedDurationMs: recommendedContinuousCopyDurationMs(
         stateRef.current.characters.length,
@@ -1170,6 +1190,8 @@ export function useLearnSession() {
       updateContinuousCopy: continuousCopy.setText,
       finishContinuousCopy: continuousCopy.finish,
       continueContinuousCopy,
+      pauseContinuousCopy,
+      resumeContinuousCopy,
       endSession,
       physicalKeyDown,
       physicalKeyUp,

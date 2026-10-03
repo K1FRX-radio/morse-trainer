@@ -74,6 +74,15 @@ function makeFakeAudio() {
   };
 }
 
+function activeTimeSeconds(): number {
+  const item = screen.getByText(/Active time:/).textContent ?? "";
+  const matched = item.match(/Active time: (\d+) s/);
+  if (!matched) {
+    throw new Error(`could not parse active time: ${item}`);
+  }
+  return Number(matched[1]);
+}
+
 function decodeSchedule(schedule: Schedule): string {
   const characters: string[] = [];
   let pattern = "";
@@ -786,6 +795,41 @@ describe("LearnScreen input gating", () => {
 
     view.unmount();
     await act(async () => resolvePersistence?.(persistence));
+    await flush();
+
+    expect(interrupt).toHaveBeenCalledOnce();
+  });
+
+  it("interrupts durable persistence when unmounted during paused continuous copy", async () => {
+    seedUnlockedCharacters(2);
+    const fake = makeFakeAudio();
+    const interrupt = vi.fn<LearnSessionPersistence["interrupt"]>(() =>
+      Promise.resolve(),
+    );
+    const persistence: LearnSessionPersistence = {
+      recordAttempt: () => Promise.resolve(),
+      finish: () => Promise.resolve(),
+      interrupt,
+      acceptAdvancement: () => Promise.resolve(testCurriculum()),
+      retry: () => Promise.resolve(),
+    };
+    const view = renderLearn(
+      fake.audio,
+      {},
+      {
+        startLearnSessionPersistence: () => Promise.resolve(persistence),
+      },
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Start long copy" }));
+    await flush();
+    fireEvent.change(screen.getByLabelText("Continuous copy"), {
+      target: { value: "KM" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Pause" }));
+    await flush();
+
+    view.unmount();
     await flush();
 
     expect(interrupt).toHaveBeenCalledOnce();
@@ -2343,6 +2387,127 @@ describe("LearnScreen advancement", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Continuous copy")).toHaveFocus();
     expect(fake.pending[0]?.schedule).toBeDefined();
+  });
+
+  it("pauses continuous copy, preserves typed text, and resumes same run", async () => {
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+    await toContinuousCopyTransition(fake);
+    fireEvent.click(screen.getByRole("button", { name: "Go" }));
+    await flush();
+
+    const input = screen.getByLabelText(
+      "Continuous copy",
+    ) as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: "KM" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Pause" }));
+    await flush();
+
+    expect(screen.getByRole("status")).toHaveTextContent("Paused");
+    expect(screen.getByText(/Paused with/)).toBeInTheDocument();
+    expect(input).toHaveValue("KM");
+    expect(fake.playCount()).toBe(0);
+    const pausedRemaining = screen.getByLabelText("Time remaining").textContent;
+    expect(pausedRemaining).not.toBeNull();
+    expect(pausedRemaining).not.toBe("0:00");
+
+    await tick(5000);
+    expect(screen.getByLabelText("Time remaining").textContent).toBe(
+      pausedRemaining,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+    await flush();
+
+    expect(screen.getByRole("status")).toHaveTextContent("Listening");
+    expect(input).toHaveValue("KM");
+    expect(fake.playCount()).toBe(1);
+  });
+
+  it("can end session while continuous copy is paused", async () => {
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+    await toContinuousCopyTransition(fake);
+    fireEvent.click(screen.getByRole("button", { name: "Go" }));
+    await flush();
+    fireEvent.change(screen.getByLabelText("Continuous copy"), {
+      target: { value: "KM" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Pause" }));
+    await flush();
+
+    fireEvent.click(screen.getByRole("button", { name: "End session" }));
+    await flush();
+
+    expect(
+      screen.getByRole("heading", { name: "Session complete" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/ended early and was not counted/),
+    ).toBeInTheDocument();
+  });
+
+  it("excludes paused wall time from active practice", async () => {
+    seedUnlockedCharacters(2);
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+
+    fireEvent.click(screen.getByRole("button", { name: "Start long copy" }));
+    await flush();
+    await tick(1500);
+    fireEvent.click(screen.getByRole("button", { name: "Pause" }));
+    await flush();
+
+    await tick(65000);
+    fireEvent.click(screen.getByRole("button", { name: "End session" }));
+    await flush();
+
+    expect(activeTimeSeconds()).toBeLessThan(10);
+  });
+
+  it("persists one continuous-copy attempt across pause and resume", async () => {
+    seedUnlockedCharacters(2);
+    const fake = makeFakeAudio();
+    const recordAttempt = vi
+      .fn<LearnSessionPersistence["recordAttempt"]>()
+      .mockResolvedValue(undefined);
+    const persistence: LearnSessionPersistence = {
+      recordAttempt,
+      finish: () => Promise.resolve(),
+      interrupt: () => Promise.resolve(),
+      acceptAdvancement: () => Promise.resolve(testCurriculum()),
+      retry: () => Promise.resolve(),
+    };
+    renderLearn(
+      fake.audio,
+      {},
+      {
+        startLearnSessionPersistence: () => Promise.resolve(persistence),
+      },
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Start long copy" }));
+    await flush();
+    fireEvent.change(screen.getByLabelText("Continuous copy"), {
+      target: { value: "KM" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Pause" }));
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+    await flush();
+
+    await resolvePlay(fake);
+    await tick(2000);
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await flush();
+
+    const continuousCalls = recordAttempt.mock.calls.filter(
+      ([evidence]) => evidence.exerciseType === "continuous-copy",
+    );
+    expect(continuousCalls).toHaveLength(1);
   });
 
   it("keeps session-start retry state through interrupt success until creation failure", async () => {

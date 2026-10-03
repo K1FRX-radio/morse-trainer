@@ -48,6 +48,8 @@ export function LearnScreen() {
     updateContinuousCopy,
     finishContinuousCopy,
     continueContinuousCopy,
+    pauseContinuousCopy,
+    resumeContinuousCopy,
   } = learn.actions;
 
   const [value, setValue] = useState("");
@@ -497,7 +499,7 @@ export function LearnScreen() {
     );
   }
 
-  if (learn.continuousCopy.active) {
+  if (learn.continuousCopy.active || learn.continuousCopy.paused) {
     const { remainingMs, totalMs, stage } = learn.continuousCopy;
     const remainingSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
     const minutes = Math.floor(remainingSeconds / 60);
@@ -521,8 +523,17 @@ export function LearnScreen() {
         </div>
         <div className="practice">
           <p className="field__label" role="status">
-            {stage === "playing" ? "Listening…" : "Finishing…"}
+            {stage === "playing"
+              ? "Listening…"
+              : stage === "paused"
+                ? "Paused"
+                : "Finishing…"}
           </p>
+          {stage === "paused" && (
+            <p className="field__label">
+              Paused with {minutes}:{seconds} remaining
+            </p>
+          )}
           <textarea
             ref={continuousInputRef}
             className="learn__continuous-answer"
@@ -535,13 +546,23 @@ export function LearnScreen() {
             onBlur={retainContinuousFocus}
             aria-label="Continuous copy"
           />
-          {stage === "finishing" && (
-            <div className="practice__controls">
+          <div className="practice__controls">
+            {stage === "playing" && (
+              <button type="button" onClick={() => pauseContinuousCopy()}>
+                Pause
+              </button>
+            )}
+            {stage === "paused" && (
+              <button type="button" onClick={() => resumeContinuousCopy()}>
+                Resume
+              </button>
+            )}
+            {stage === "finishing" && (
               <button type="button" onClick={() => finishContinuousCopy()}>
                 Finish
               </button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
         <div className="practice__controls learn__end">
           <button type="button" className="tab" onClick={endSession}>
