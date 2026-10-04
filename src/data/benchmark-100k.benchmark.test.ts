@@ -14,6 +14,7 @@ type BenchmarkSample = {
   backupBytes: number;
   rebuildMs: number;
   dailyQueryMs: number;
+  aggregateQueryMs: number;
   rxQueryMs: number;
   txQueryMs: number;
   confusionQueryMs: number;
@@ -67,6 +68,10 @@ async function runBenchmark(): Promise<BenchmarkSample> {
     });
     const dailyQueryMs = performance.now() - dailyStart;
 
+    const aggregateStart = performance.now();
+    await repository.getDashboardAggregate({ toLocalDate: "2027-03-31" });
+    const aggregateQueryMs = performance.now() - aggregateStart;
+
     const rxStart = performance.now();
     await repository.listCharacterProjections({ direction: "rx", limit: 200 });
     const rxQueryMs = performance.now() - rxStart;
@@ -97,6 +102,7 @@ async function runBenchmark(): Promise<BenchmarkSample> {
       backupBytes: encodeBytes(backup),
       rebuildMs,
       dailyQueryMs,
+      aggregateQueryMs,
       rxQueryMs,
       txQueryMs,
       confusionQueryMs,
@@ -119,6 +125,7 @@ describe("100k history benchmark", () => {
     };
 
     expect(sample.dailyQueryMs).toBeLessThanOrEqual(budget.queryMs);
+    expect(sample.aggregateQueryMs).toBeLessThanOrEqual(budget.queryMs);
     expect(sample.rxQueryMs).toBeLessThanOrEqual(budget.queryMs);
     expect(sample.txQueryMs).toBeLessThanOrEqual(budget.queryMs);
     expect(sample.confusionQueryMs).toBeLessThanOrEqual(budget.queryMs);

@@ -335,6 +335,70 @@ describe("DurableLearnSession", () => {
     }
   });
 
+  it("persists isolated responseMs and projects it into RX latency samples", async () => {
+    const { database, repository } = await setup();
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    const ids = ["owner-latency", "session-latency", "attempt-latency"];
+
+    try {
+      const session = await DurableLearnSession.create(
+        repository,
+        {
+          mode: "learn",
+          activeCharacters: ["K", "M"],
+          settings: {
+            charWpm: 20,
+            effectiveWpm: 12,
+            toneHz: 600,
+            noiseLevel: 0,
+          },
+        },
+        {
+          now: clock(
+            "2026-09-25T20:00:00.000Z",
+            "2026-09-25T20:00:10.000Z",
+            "2026-09-25T20:00:20.000Z",
+          ),
+          createId: () => ids.shift()!,
+          scheduleLeaseRenewal: () => () => undefined,
+        },
+      );
+
+      await session.recordAttempt(
+        {
+          exerciseType: "copy-character",
+          target: "K",
+          response: "K",
+          assisted: false,
+          replayed: false,
+          abandoned: false,
+          responseMs: 137,
+        },
+        {
+          activeMs: 40_000,
+          activeDateBuckets: activeDateBuckets(40_000),
+          completedCards: 1,
+          curriculum: state,
+          introductions: ["K", "M"],
+        },
+      );
+
+      const storedAttempt = await database.attempts.get("attempt-latency");
+      expect(storedAttempt?.responseMs).toBe(137);
+
+      await repository.rebuildProjections();
+      const rows = await repository.listCharacterProjections({
+        direction: "rx",
+        character: "K",
+        limit: 1,
+      });
+      expect(rows[0]?.recentIsolatedRxResponseMs).toEqual([137]);
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
   it("retains an abandoned stream without making the session valid", async () => {
     const { database, repository } = await setup();
     const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);

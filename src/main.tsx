@@ -66,11 +66,17 @@ async function start(): Promise<void> {
             listDailyProjections={(query) =>
               bootstrap.repository.listDailyProjections(query)
             }
+            getDashboardAggregate={(query) =>
+              bootstrap.repository.getDashboardAggregate(query)
+            }
             listCharacterProjections={(query) =>
               bootstrap.repository.listCharacterProjections(query)
             }
             listConfusionProjections={(query) =>
               bootstrap.repository.listConfusionProjections(query)
+            }
+            listMilestones={(query) =>
+              bootstrap.repository.listMilestones(query)
             }
             exportPortableBackup={(appVersion) =>
               bootstrap.repository.exportPortableBackup(appVersion)

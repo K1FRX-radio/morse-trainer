@@ -111,6 +111,30 @@ export type DailyProjectionQuery = {
   limit: number;
 };
 
+export type DashboardAggregateQuery = {
+  toLocalDate: string;
+};
+
+export type DashboardAggregateRecord = {
+  totalActiveMs: number;
+  totalSessions: number;
+  totalAttempts: number;
+  rxCorrect: number;
+  rxTotal: number;
+  txCorrect: number;
+  txTotal: number;
+  effectiveWpmTotal: number;
+  effectiveWpmSamples: number;
+  activeDayCount: number;
+  todayActiveMs: number;
+  todaySessionCount: number;
+  thisWeekActiveMs: number;
+  thisWeekSessionCount: number;
+  practiceDayCount: number;
+  currentStreakDays: number;
+  longestStreakDays: number;
+};
+
 export type CharacterProjectionQuery = {
   direction: AttemptDirection;
   character?: string;
@@ -118,6 +142,10 @@ export type CharacterProjectionQuery = {
 };
 
 export type ConfusionProjectionQuery = {
+  limit: number;
+};
+
+export type MilestoneQuery = {
   limit: number;
 };
 
@@ -179,12 +207,16 @@ export interface TrainingDataRepository extends LegacyMigrationRepository {
   listDailyProjections(
     query: DailyProjectionQuery,
   ): Promise<DailyProjectionRecord[]>;
+  getDashboardAggregate(
+    query: DashboardAggregateQuery,
+  ): Promise<DashboardAggregateRecord>;
   listCharacterProjections(
     query: CharacterProjectionQuery,
   ): Promise<CharacterProjectionRecord[]>;
   listConfusionProjections(
     query: ConfusionProjectionQuery,
   ): Promise<ConfusionProjectionRecord[]>;
+  listMilestones(query: MilestoneQuery): Promise<MilestoneRecord[]>;
   rebuildProjections(): Promise<void>;
   exportPortableBackup(appVersion: string): Promise<PortableBackupDocument>;
   previewPortableBackup(rawJson: string): Promise<PortableBackupPreview>;
@@ -230,6 +262,40 @@ function assertLocalDate(value: string, label: string): void {
   if (!LOCAL_DATE_PATTERN.test(value)) {
     throw new RangeError(`${label} must be in YYYY-MM-DD format`);
   }
+}
+
+function dateFromLocalDate(localDate: string): Date {
+  const [year, month, day] = localDate.split("-").map((value) => Number(value));
+  if (
+    !Number.isFinite(year) ||
+    !Number.isFinite(month) ||
+    !Number.isFinite(day)
+  ) {
+    throw new RangeError(`invalid local date ${localDate}`);
+  }
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+function toLocalDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function previousLocalDate(localDate: string): string {
+  const date = dateFromLocalDate(localDate);
+  date.setUTCDate(date.getUTCDate() - 1);
+  return toLocalDate(date);
+}
+
+function startOfWeekLocalDate(localDate: string): string {
+  const date = dateFromLocalDate(localDate);
+  const dayOfWeek = date.getUTCDay();
+  const daysFromMonday = (dayOfWeek + 6) % 7;
+  date.setUTCDate(date.getUTCDate() - daysFromMonday);
+  return toLocalDate(date);
+}
+
+function isPracticeDay(row: DailyProjectionRecord): boolean {
+  return row.activeMs >= 30_000 && row.attemptCount > 0;
 }
 
 function assertBoundedLimit(limit: number, label = "limit"): void {
@@ -328,37 +394,63 @@ export class DexieTrainingRepository implements TrainingDataRepository {
 
   async open(): Promise<SchemaMetadataRecord> {
     await this.database.open();
-    return this.database.transaction("rw", this.database.metadata, async () => {
-      const existing = await this.database.metadata.get("schema-metadata");
-      const updatedAt = this.now().toISOString();
-      if (existing !== undefined) {
-        const metadata = parseSchemaMetadata(existing);
-        if (metadata.databaseVersion > DATABASE_VERSION) {
-          throw new Error(
-            `database metadata version ${metadata.databaseVersion} is newer than supported version ${DATABASE_VERSION}`,
-          );
-        }
-        if (metadata.databaseVersion === DATABASE_VERSION) return metadata;
+    const metadata = await this.database.transaction(
+      "rw",
+      this.database.metadata,
+      async () => {
+        const existing = await this.database.metadata.get("schema-metadata");
+        const updatedAt = this.now().toISOString();
+        if (existing !== undefined) {
+          const metadata = parseSchemaMetadata(existing);
+          if (metadata.databaseVersion > DATABASE_VERSION) {
+            throw new Error(
+              `database metadata version ${metadata.databaseVersion} is newer than supported version ${DATABASE_VERSION}`,
+            );
+          }
+          if (metadata.databaseVersion === DATABASE_VERSION) return metadata;
 
-        const reconciled: SchemaMetadataRecord = {
-          ...metadata,
+          const reconciled: SchemaMetadataRecord = {
+            ...metadata,
+            updatedAt,
+            databaseVersion: DATABASE_VERSION,
+          };
+          await this.database.metadata.put(reconciled);
+          return reconciled;
+        }
+
+        const metadata: SchemaMetadataRecord = {
+          id: "schema-metadata",
+          schemaVersion: RECORD_SCHEMA_VERSION,
           updatedAt,
           databaseVersion: DATABASE_VERSION,
+          datasetGeneration: this.createId(),
         };
-        await this.database.metadata.put(reconciled);
-        return reconciled;
-      }
+        await this.database.metadata.put(metadata);
+        return metadata;
+      },
+    );
 
-      const metadata: SchemaMetadataRecord = {
-        id: "schema-metadata",
-        schemaVersion: RECORD_SCHEMA_VERSION,
-        updatedAt,
-        databaseVersion: DATABASE_VERSION,
-        datasetGeneration: this.createId(),
-      };
-      await this.database.metadata.put(metadata);
-      return metadata;
-    });
+    await this.rebuildStaleCharacterProjections();
+    return metadata;
+  }
+
+  private async rebuildStaleCharacterProjections(): Promise<void> {
+    const rxRows = await this.database.characterProjections
+      .where("direction")
+      .equals("rx")
+      .toArray();
+
+    if (rxRows.length === 0) return;
+
+    const stale = rxRows.some(
+      (row) =>
+        parseCharacterProjectionRecord(structuredClone(row))
+          .recentIsolatedRxResponseMs === undefined,
+    );
+
+    if (stale) {
+      await this.rebuildProjections();
+    }
   }
 
   close(): void {
@@ -1029,6 +1121,115 @@ export class DexieTrainingRepository implements TrainingDataRepository {
     );
   }
 
+  async getDashboardAggregate(
+    query: DashboardAggregateQuery,
+  ): Promise<DashboardAggregateRecord> {
+    assertLocalDate(query.toLocalDate, "toLocalDate");
+
+    const rows = await this.database.dailyProjections
+      .where("localDate")
+      .belowOrEqual(query.toLocalDate)
+      .toArray();
+
+    const parsedRows = rows
+      .map((row) => parseDailyProjectionRecord(structuredClone(row)))
+      .sort((left, right) => left.localDate.localeCompare(right.localDate));
+
+    const weekStart = startOfWeekLocalDate(query.toLocalDate);
+    const practiceDays = new Set<string>();
+
+    let totalActiveMs = 0;
+    let totalSessions = 0;
+    let totalAttempts = 0;
+    let rxCorrect = 0;
+    let rxTotal = 0;
+    let txCorrect = 0;
+    let txTotal = 0;
+    let effectiveWpmTotal = 0;
+    let effectiveWpmSamples = 0;
+    let activeDayCount = 0;
+    let todayActiveMs = 0;
+    let todaySessionCount = 0;
+    let thisWeekActiveMs = 0;
+    let thisWeekSessionCount = 0;
+
+    for (const row of parsedRows) {
+      totalActiveMs += row.activeMs;
+      totalSessions += row.sessionCount;
+      totalAttempts += row.attemptCount;
+      rxCorrect += row.rxCorrect;
+      rxTotal += row.rxTotal;
+      txCorrect += row.txCorrect;
+      txTotal += row.txTotal;
+      effectiveWpmTotal += row.effectiveWpmTotal;
+      effectiveWpmSamples += row.effectiveWpmSamples;
+
+      if (row.activeMs > 0) activeDayCount += 1;
+      if (isPracticeDay(row)) practiceDays.add(row.localDate);
+
+      if (row.localDate === query.toLocalDate) {
+        todayActiveMs += row.activeMs;
+        todaySessionCount += row.sessionCount;
+      }
+      if (row.localDate >= weekStart && row.localDate <= query.toLocalDate) {
+        thisWeekActiveMs += row.activeMs;
+        thisWeekSessionCount += row.sessionCount;
+      }
+    }
+
+    const orderedPracticeDays = [...practiceDays].sort((left, right) =>
+      left.localeCompare(right),
+    );
+    let longestStreakDays = 0;
+    let running = 0;
+    let previous: string | undefined;
+    for (const localDate of orderedPracticeDays) {
+      if (previous !== undefined && previousLocalDate(localDate) === previous) {
+        running += 1;
+      } else {
+        running = 1;
+      }
+      if (running > longestStreakDays) longestStreakDays = running;
+      previous = localDate;
+    }
+
+    let currentStreakDays = 0;
+    let anchor = query.toLocalDate;
+    if (!practiceDays.has(anchor)) {
+      const yesterday = previousLocalDate(query.toLocalDate);
+      if (practiceDays.has(yesterday)) {
+        anchor = yesterday;
+      }
+    }
+    if (practiceDays.has(anchor)) {
+      let cursor = anchor;
+      while (practiceDays.has(cursor)) {
+        currentStreakDays += 1;
+        cursor = previousLocalDate(cursor);
+      }
+    }
+
+    return {
+      totalActiveMs,
+      totalSessions,
+      totalAttempts,
+      rxCorrect,
+      rxTotal,
+      txCorrect,
+      txTotal,
+      effectiveWpmTotal,
+      effectiveWpmSamples,
+      activeDayCount,
+      todayActiveMs,
+      todaySessionCount,
+      thisWeekActiveMs,
+      thisWeekSessionCount,
+      practiceDayCount: practiceDays.size,
+      currentStreakDays,
+      longestStreakDays,
+    };
+  }
+
   async listCharacterProjections(
     query: CharacterProjectionQuery,
   ): Promise<CharacterProjectionRecord[]> {
@@ -1081,6 +1282,26 @@ export class DexieTrainingRepository implements TrainingDataRepository {
 
     return ordered.map((row) =>
       structuredClone(parseConfusionProjectionRecord(structuredClone(row))),
+    );
+  }
+
+  async listMilestones(query: MilestoneQuery): Promise<MilestoneRecord[]> {
+    assertBoundedLimit(query.limit);
+
+    const rows = await this.database.milestones
+      .orderBy("occurredAt.utc")
+      .reverse()
+      .limit(query.limit)
+      .toArray();
+
+    const ordered = rows.sort(
+      (left, right) =>
+        right.occurredAt.utc.localeCompare(left.occurredAt.utc) ||
+        right.id.localeCompare(left.id),
+    );
+
+    return ordered.map((row) =>
+      structuredClone(parseMilestoneRecord(structuredClone(row))),
     );
   }
 

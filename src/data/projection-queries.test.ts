@@ -34,6 +34,58 @@ describe("DexieTrainingRepository projection queries", () => {
     }
   });
 
+  it("computes dashboard aggregate with all-time totals and long streaks", async () => {
+    const { database, repository } = makeRepository();
+
+    try {
+      await repository.open();
+      const rows = Array.from({ length: 40 }, (_, index) => {
+        const date = new Date(Date.UTC(2026, 8, 1 + index));
+        const localDate = date.toISOString().slice(0, 10);
+        return {
+          id: `daily:${localDate}`,
+          schemaVersion: 1 as const,
+          updatedAt: "2026-10-04T18:00:00.000Z",
+          projectionVersion: 1 as const,
+          localDate,
+          activeMs: 60_000,
+          sessionCount: 1,
+          attemptCount: 2,
+          rxCorrect: 1,
+          rxTotal: 1,
+          txCorrect: 1,
+          txTotal: 1,
+          effectiveWpmTotal: 12,
+          effectiveWpmSamples: 1,
+        };
+      });
+
+      await database.dailyProjections.bulkPut(rows);
+
+      const trendRows = await repository.listDailyProjections({
+        fromLocalDate: "2026-09-11",
+        toLocalDate: "2026-10-10",
+        limit: 30,
+      });
+      expect(trendRows).toHaveLength(30);
+
+      const aggregate = await repository.getDashboardAggregate({
+        toLocalDate: "2026-10-04",
+      });
+
+      expect(aggregate.totalSessions).toBe(34);
+      expect(aggregate.totalAttempts).toBe(68);
+      expect(aggregate.practiceDayCount).toBe(34);
+      expect(aggregate.currentStreakDays).toBe(34);
+      expect(aggregate.longestStreakDays).toBe(34);
+      expect(aggregate.todaySessionCount).toBe(1);
+      expect(aggregate.todayActiveMs).toBe(60_000);
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
   it("enforces daily limits and rejects invalid date ranges", async () => {
     const { database, repository } = makeRepository();
 
@@ -122,6 +174,25 @@ describe("DexieTrainingRepository projection queries", () => {
     }
   });
 
+  it("orders milestones by most recent occurrence and applies limits", async () => {
+    const { database, repository } = makeRepository();
+
+    try {
+      await repository.open();
+      await database.milestones.bulkPut([
+        milestone("m1", "character-unlocked", "2026-09-24T10:00:00.000Z", "M"),
+        milestone("m2", "character-mastered", "2026-09-24T11:00:00.000Z", "K"),
+        milestone("m3", "curriculum-completed", "2026-09-24T11:00:00.000Z"),
+      ]);
+
+      const rows = await repository.listMilestones({ limit: 2 });
+      expect(rows.map((row) => row.id)).toEqual(["m3", "m2"]);
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
   it("rejects non-positive and oversized query limits", async () => {
     const { database, repository } = makeRepository();
 
@@ -132,8 +203,18 @@ describe("DexieTrainingRepository projection queries", () => {
         repository.listConfusionProjections({ limit: 0 }),
       ).rejects.toThrow(/positive integer/);
 
+      await expect(repository.listMilestones({ limit: 0 })).rejects.toThrow(
+        /positive integer/,
+      );
+
       await expect(
         repository.listConfusionProjections({
+          limit: MAX_PROJECTION_QUERY_LIMIT + 1,
+        }),
+      ).rejects.toThrow(new RegExp(String(MAX_PROJECTION_QUERY_LIMIT)));
+
+      await expect(
+        repository.listMilestones({
           limit: MAX_PROJECTION_QUERY_LIMIT + 1,
         }),
       ).rejects.toThrow(new RegExp(String(MAX_PROJECTION_QUERY_LIMIT)));
@@ -273,5 +354,29 @@ function confusion(target: string, answer: string, count: number) {
     target,
     answer,
     count,
+  };
+}
+
+function milestone(
+  id: string,
+  type: "character-mastered" | "character-unlocked" | "curriculum-completed",
+  occurredAtUtc: string,
+  character?: string,
+) {
+  return {
+    id,
+    schemaVersion: 1 as const,
+    updatedAt: occurredAtUtc,
+    idempotencyKey: `key:${id}`,
+    eventId: `event:${id}`,
+    type,
+    occurredAt: {
+      utc: occurredAtUtc,
+      localDate: "2026-09-24",
+      utcOffsetMinutes: 0,
+      timeZone: "UTC",
+    },
+    ...(character === undefined ? {} : { character }),
+    migrationDerived: false,
   };
 }

@@ -241,6 +241,7 @@ export type CharacterProjectionRecord = PersistedRecord & {
   character: string;
   direction: AttemptDirection;
   recent: RecentCharacterObservation[];
+  recentIsolatedRxResponseMs?: number[];
 };
 
 export type ConfusionProjectionRecord = PersistedRecord & {

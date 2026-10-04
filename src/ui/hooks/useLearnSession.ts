@@ -107,6 +107,13 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+function monotonicNowMs(): number {
+  if (typeof globalThis.performance?.now === "function") {
+    return globalThis.performance.now();
+  }
+  return Date.now();
+}
+
 export function useLearnSession() {
   const { settings, update: updateSettings } = useSettings();
   const {
@@ -144,6 +151,7 @@ export function useLearnSession() {
   const introDoneToken = useRef<number | null>(null);
   const introStageRef = useRef<IntroStage | undefined>(undefined);
   const queuedSubmissionRef = useRef<QueuedSubmission | null>(null);
+  const isolatedPromptReadyAtMsRef = useRef<number | undefined>(undefined);
   const currentAnswerRef = useRef("");
   const flushQueuedSubmissionRef = useRef<
     (token: number, playbackGeneration: number) => void
@@ -403,11 +411,15 @@ export function useLearnSession() {
   // against grading until its audio completes.
   const presentPrompt = useCallback(
     async (target: string, token: number, allowTyping = false) => {
+      isolatedPromptReadyAtMsRef.current = undefined;
       lockedRef.current = true;
       setInputReady(false);
       setTypingReady(allowTyping);
       const generation = await play(target);
       if (token !== flowToken.current) return;
+      if (exerciseRef.current?.type === "copy-character") {
+        isolatedPromptReadyAtMsRef.current = monotonicNowMs();
+      }
       lockedRef.current = false;
       setInputReady(true);
       flushQueuedSubmissionRef.current(token, generation);
@@ -739,7 +751,7 @@ export function useLearnSession() {
   // Records the answer, replays on a miss, and advances only after any
   // corrective playback finishes and while this prompt is still current.
   const afterAnswer = useCallback(
-    async (input: string, token: number) => {
+    async (input: string, token: number, isolatedResponseMs?: number) => {
       const session = sessionRef.current;
       const ex = exerciseRef.current;
       if (!session || !ex) return;
@@ -749,6 +761,16 @@ export function useLearnSession() {
         outcome.exercise.type === "copy-group" ||
         outcome.exercise.type === "copy-word"
       ) {
+        const measuredResponseMs =
+          outcome.exercise.type === "copy-character"
+            ? (isolatedResponseMs ??
+              (() => {
+                const readyAt = isolatedPromptReadyAtMsRef.current;
+                if (readyAt === undefined) return undefined;
+                return Math.max(0, Math.round(monotonicNowMs() - readyAt));
+              })())
+            : undefined;
+        isolatedPromptReadyAtMsRef.current = undefined;
         const persistence = persistenceRef.current;
         if (persistence) {
           trackPersistence(
@@ -761,6 +783,9 @@ export function useLearnSession() {
                 assisted: outcome.assisted,
                 replayed: outcome.replayed,
                 abandoned: false,
+                ...(measuredResponseMs === undefined
+                  ? {}
+                  : { responseMs: measuredResponseMs }),
               },
               persistenceSnapshot(session),
             ),
@@ -899,6 +924,7 @@ export function useLearnSession() {
         void afterAnswer(
           queued.kind === "isolated" ? queued.value : currentAnswerRef.current,
           claimedToken,
+          queued.kind === "isolated" ? 0 : undefined,
         );
       }
     },
@@ -921,6 +947,7 @@ export function useLearnSession() {
     }
     if (playingRef.current) return;
     const token = flowToken.current;
+    isolatedPromptReadyAtMsRef.current = undefined;
     lockedRef.current = true;
     setInputReady(false);
     setTypingReady(
@@ -931,6 +958,9 @@ export function useLearnSession() {
     sessionRef.current?.markReplayed();
     void play(ex.target).then((generation) => {
       if (token !== flowToken.current) return;
+      if (ex.type === "copy-character") {
+        isolatedPromptReadyAtMsRef.current = monotonicNowMs();
+      }
       lockedRef.current = false;
       setInputReady(true);
       flushQueuedSubmissionRef.current(token, generation);

@@ -9,7 +9,9 @@ import type {
   CharacterProjectionRecord,
   ConfusionProjectionRecord,
   DailyProjectionRecord,
+  MilestoneRecord,
 } from "../../data/models.ts";
+import type { DashboardAggregateRecord } from "../../data/repository.ts";
 import { SettingsContext } from "../settings-context.ts";
 import { TrainingDataContext } from "../training-data-context.ts";
 import { StatsHistoryScreen } from "./StatsHistoryScreen.tsx";
@@ -20,6 +22,9 @@ function trainingDataStub(
     rx?: CharacterProjectionRecord[];
     tx?: CharacterProjectionRecord[];
     confusions?: ConfusionProjectionRecord[];
+    milestones?: MilestoneRecord[];
+    aggregate?: DashboardAggregateRecord;
+    statsRevision?: number;
   } = {},
 ) {
   const curriculum = createInitialState(DEFAULT_CURRICULUM_CONFIG);
@@ -27,8 +32,16 @@ function trainingDataStub(
   const rx = overrides.rx ?? [];
   const tx = overrides.tx ?? [];
   const confusions = overrides.confusions ?? [];
+  const milestones = overrides.milestones ?? [];
+  const aggregate =
+    overrides.aggregate ??
+    dashboardAggregate({
+      totalSessions: daily.reduce((sum, row) => sum + row.sessionCount, 0),
+      totalAttempts: daily.reduce((sum, row) => sum + row.attemptCount, 0),
+    });
 
   return {
+    statsRevision: overrides.statsRevision ?? 0,
     loadCurriculum: vi.fn(() => structuredClone(curriculum)),
     saveCurriculum: vi.fn(),
     reconcileCurriculum: vi.fn(async () => structuredClone(curriculum)),
@@ -45,26 +58,37 @@ function trainingDataStub(
       shouldSuggestSpacing: false,
     })),
     listDailyProjections: vi.fn(async () => daily),
+    getDashboardAggregate: vi.fn(async () => aggregate),
     listCharacterProjections: vi.fn(
       async (query: { direction: "rx" | "tx" }) =>
         query.direction === "rx" ? rx : tx,
     ),
     listConfusionProjections: vi.fn(async () => confusions),
+    listMilestones: vi.fn(async () => milestones),
   };
 }
 
 function renderStats(overrides: Parameters<typeof trainingDataStub>[0] = {}) {
   const context = trainingDataStub(overrides);
   render(
-    <TrainingDataContext.Provider value={context}>
-      <StatsHistoryScreen />
-    </TrainingDataContext.Provider>,
+    <SettingsContext.Provider
+      value={{
+        settings: DEFAULT_SETTINGS,
+        update: vi.fn(),
+        outputDeviceId: "",
+        setOutputDeviceId: vi.fn(),
+      }}
+    >
+      <TrainingDataContext.Provider value={context}>
+        <StatsHistoryScreen />
+      </TrainingDataContext.Provider>
+    </SettingsContext.Provider>,
   );
   return context;
 }
 
 describe("StatsHistoryScreen", () => {
-  it("renders summary values, daily ordering, difficult characters, and confusions", async () => {
+  it("renders dashboard windows, trends, character metrics, confusions, and milestones", async () => {
     renderStats({
       daily: [
         daily("2026-09-24", {
@@ -88,44 +112,48 @@ describe("StatsHistoryScreen", () => {
       ],
       rx: [
         character("K", "rx", [
-          observation("2026-09-25T10:00:00.000Z", false, 300),
-          observation("2026-09-25T11:00:00.000Z", true),
+          observation("2026-09-25T10:00:00.000Z", false, 320),
+          observation("2026-09-25T11:00:00.000Z", true, 180),
         ]),
       ],
       tx: [
         character("M", "tx", [observation("2026-09-24T10:00:00.000Z", false)]),
       ],
       confusions: [confusion("M", "K", 3), confusion("A", "B", 3)],
+      milestones: [
+        milestone("m1", "character-unlocked", "2026-09-25T10:00:00.000Z", "M"),
+      ],
     });
 
     await screen.findByRole("heading", { name: "History" });
 
-    expect(screen.getByText("Sessions")).toBeInTheDocument();
-    expect(screen.getByText("3")).toBeInTheDocument();
-    expect(screen.getByText("Attempts")).toBeInTheDocument();
-    expect(screen.getByText("7")).toBeInTheDocument();
+    expect(screen.getByText("Current character")).toBeInTheDocument();
+    expect(screen.getByText("Current WPM")).toBeInTheDocument();
+    expect(screen.getByText("Eligible sessions")).toBeInTheDocument();
+    expect(screen.getByText("Practice days")).toBeInTheDocument();
 
-    const dailyList = await screen.findByRole("list", {
-      name: "Recent daily activity",
+    const trendList = await screen.findByRole("list", {
+      name: "30-day trends",
     });
-    const dailyRows = dailyList.querySelectorAll("li");
-    expect(dailyRows[0]).toHaveTextContent("2026-09-25");
+    expect(trendList).toHaveTextContent("2026-09-25");
 
-    expect(
-      screen.getByRole("list", { name: "Difficult characters" }),
-    ).toHaveTextContent("M (TX)");
-    expect(
-      screen.getByRole("list", { name: "Difficult characters" }),
-    ).toHaveTextContent("K (RX)");
-    expect(
-      screen.getByText("RX response 300ms avg (1 samples)"),
-    ).toBeInTheDocument();
+    const characterList = screen.getByRole("list", {
+      name: "Current character metrics",
+    });
+    expect(characterList).toHaveTextContent("K (RX)");
+    expect(characterList).toHaveTextContent(
+      "RX response median 250ms (2 samples)",
+    );
 
     const confusionList = screen.getByRole("list", {
       name: "Recent confusions",
     });
     expect(confusionList).toHaveTextContent("A -> B");
     expect(confusionList).toHaveTextContent("M -> K");
+
+    const milestones = screen.getByRole("list", { name: "Latest milestones" });
+    expect(milestones).toHaveTextContent("character-unlocked");
+    expect(milestones).toHaveTextContent("Character M");
   });
 
   it("shows empty state and neutral placeholders for missing accuracies", async () => {
@@ -136,13 +164,87 @@ describe("StatsHistoryScreen", () => {
     expect(screen.getAllByText("N/A").length).toBeGreaterThan(0);
   });
 
-  it("preserves key labels on narrow layout", async () => {
-    renderStats({ daily: [daily("2026-09-25", { activeMs: 60000 })] });
+  it("refreshes dashboard data when stats revision changes", async () => {
+    const first = trainingDataStub({
+      statsRevision: 0,
+      daily: [daily("2026-09-25", { attemptCount: 1 })],
+      aggregate: dashboardAggregate({ totalAttempts: 1 }),
+    });
+    const second = trainingDataStub({
+      statsRevision: 1,
+      daily: [daily("2026-09-25", { attemptCount: 4 })],
+      aggregate: dashboardAggregate({ totalAttempts: 4 }),
+    });
 
-    await screen.findByRole("list", { name: "Recent daily activity" });
-    expect(screen.getByText("Recent daily activity")).toBeInTheDocument();
-    expect(screen.getByText("Difficult characters")).toBeInTheDocument();
-    expect(screen.getByText("Recent confusions")).toBeInTheDocument();
+    const { rerender } = render(
+      <SettingsContext.Provider
+        value={{
+          settings: DEFAULT_SETTINGS,
+          update: vi.fn(),
+          outputDeviceId: "",
+          setOutputDeviceId: vi.fn(),
+        }}
+      >
+        <TrainingDataContext.Provider value={first}>
+          <StatsHistoryScreen />
+        </TrainingDataContext.Provider>
+      </SettingsContext.Provider>,
+    );
+
+    await screen.findByText("1");
+
+    rerender(
+      <SettingsContext.Provider
+        value={{
+          settings: DEFAULT_SETTINGS,
+          update: vi.fn(),
+          outputDeviceId: "",
+          setOutputDeviceId: vi.fn(),
+        }}
+      >
+        <TrainingDataContext.Provider value={second}>
+          <StatsHistoryScreen />
+        </TrainingDataContext.Provider>
+      </SettingsContext.Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("4")).toBeInTheDocument();
+    });
+  });
+
+  it("uses aggregate all-time and streak metrics independently of 30-day trend rows", async () => {
+    renderStats({
+      daily: [
+        daily("2026-10-04", {
+          activeMs: 60000,
+          sessionCount: 1,
+          attemptCount: 2,
+        }),
+      ],
+      aggregate: dashboardAggregate({
+        totalActiveMs: 7_200_000,
+        totalSessions: 45,
+        totalAttempts: 300,
+        todayActiveMs: 60_000,
+        todaySessionCount: 1,
+        thisWeekActiveMs: 420_000,
+        thisWeekSessionCount: 7,
+        practiceDayCount: 61,
+        currentStreakDays: 35,
+        longestStreakDays: 35,
+      }),
+    });
+
+    await screen.findByRole("heading", { name: "History" });
+
+    expect(screen.getByText("All-time active time")).toBeInTheDocument();
+    expect(screen.getByText("2h 0m")).toBeInTheDocument();
+    expect(screen.getByText("45")).toBeInTheDocument();
+    expect(screen.getAllByText("35")).toHaveLength(2);
+
+    const trendList = screen.getByRole("list", { name: "30-day trends" });
+    expect(trendList).toHaveTextContent("2026-10-04");
   });
 
   it("is reachable from app navigation without direct Dexie access", async () => {
@@ -246,5 +348,54 @@ function confusion(
     target,
     answer,
     count,
+  };
+}
+
+function milestone(
+  id: string,
+  type: MilestoneRecord["type"],
+  utc: string,
+  character?: string,
+): MilestoneRecord {
+  return {
+    id,
+    schemaVersion: 1,
+    updatedAt: utc,
+    idempotencyKey: `key:${id}`,
+    eventId: `event:${id}`,
+    type,
+    occurredAt: {
+      utc,
+      localDate: "2026-09-25",
+      utcOffsetMinutes: 0,
+      timeZone: "UTC",
+    },
+    migrationDerived: false,
+    ...(character === undefined ? {} : { character }),
+  };
+}
+
+function dashboardAggregate(
+  overrides: Partial<DashboardAggregateRecord> = {},
+): DashboardAggregateRecord {
+  return {
+    totalActiveMs: 0,
+    totalSessions: 0,
+    totalAttempts: 0,
+    rxCorrect: 0,
+    rxTotal: 0,
+    txCorrect: 0,
+    txTotal: 0,
+    effectiveWpmTotal: 0,
+    effectiveWpmSamples: 0,
+    activeDayCount: 0,
+    todayActiveMs: 0,
+    todaySessionCount: 0,
+    thisWeekActiveMs: 0,
+    thisWeekSessionCount: 0,
+    practiceDayCount: 0,
+    currentStreakDays: 0,
+    longestStreakDays: 0,
+    ...overrides,
   };
 }

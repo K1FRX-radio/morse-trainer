@@ -2,8 +2,12 @@ import type {
   CharacterProjectionRecord,
   ConfusionProjectionRecord,
   DailyProjectionRecord,
+  MilestoneRecord,
   RecentCharacterObservation,
 } from "./models.ts";
+
+export const RECURRING_CONFUSION_MINIMUM = 3;
+const RX_MEDIAN_RESPONSE_WINDOW = 20;
 
 export type AccuracyValue = {
   correct: number;
@@ -33,9 +37,7 @@ export type DailyTrendRow = {
 
 export type ResponseTimeSummary = {
   samples: number;
-  averageMs: number;
-  minimumMs: number;
-  maximumMs: number;
+  medianMs: number;
 };
 
 export type CharacterSummary = {
@@ -52,6 +54,13 @@ export type ConfusionSummary = {
   target: string;
   answer: string;
   count: number;
+};
+
+export type MilestoneSummary = {
+  id: string;
+  type: MilestoneRecord["type"];
+  occurredAtUtc: string;
+  character?: string;
 };
 
 export type SessionWindowTotals = {
@@ -163,19 +172,21 @@ function mostRecentObservationUtc(
 }
 
 function summarizeResponseTimes(
-  observations: readonly RecentCharacterObservation[],
+  values: readonly number[],
 ): ResponseTimeSummary | undefined {
-  const values = observations
-    .map((observation) => observation.responseMs)
-    .filter((value): value is number => value !== undefined);
   if (values.length === 0) return undefined;
 
-  const total = values.reduce((sum, value) => sum + value, 0);
+  const latest = values.slice(-RX_MEDIAN_RESPONSE_WINDOW);
+  const sorted = [...latest].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  const medianMs =
+    sorted.length % 2 === 1
+      ? sorted[middle]
+      : (sorted[middle - 1] + sorted[middle]) / 2;
+
   return {
-    samples: values.length,
-    averageMs: total / values.length,
-    minimumMs: Math.min(...values),
-    maximumMs: Math.max(...values),
+    samples: latest.length,
+    medianMs,
   };
 }
 
@@ -250,8 +261,15 @@ export function buildCharacterSummaries(
       (observation) => observation.correct,
     ).length;
     const latestObservationUtc = mostRecentObservationUtc(row.recent);
+    const rxResponseSamples =
+      row.recentIsolatedRxResponseMs ??
+      row.recent
+        .map((observation) => observation.responseMs)
+        .filter((value): value is number => value !== undefined);
     const responseTime =
-      row.direction === "rx" ? summarizeResponseTimes(row.recent) : undefined;
+      row.direction === "rx"
+        ? summarizeResponseTimes(rxResponseSamples)
+        : undefined;
 
     const summary: CharacterSummary = {
       character: row.character,
@@ -273,11 +291,31 @@ export function buildCharacterSummaries(
 
 export function buildConfusionSummaries(
   confusionRows: readonly ConfusionProjectionRecord[],
+  recurringMinimum = RECURRING_CONFUSION_MINIMUM,
 ): ConfusionSummary[] {
-  return [...confusionRows].sort(compareConfusions).map((row) => ({
-    target: row.target,
-    answer: row.answer,
-    count: row.count,
+  return [...confusionRows]
+    .filter((row) => row.count >= recurringMinimum)
+    .sort(compareConfusions)
+    .map((row) => ({
+      target: row.target,
+      answer: row.answer,
+      count: row.count,
+    }));
+}
+
+export function buildMilestoneSummaries(
+  rows: readonly MilestoneRecord[],
+): MilestoneSummary[] {
+  const ordered = [...rows].sort(
+    (left, right) =>
+      right.occurredAt.utc.localeCompare(left.occurredAt.utc) ||
+      right.id.localeCompare(left.id),
+  );
+  return ordered.map((row) => ({
+    id: row.id,
+    type: row.type,
+    occurredAtUtc: row.occurredAt.utc,
+    ...(row.character === undefined ? {} : { character: row.character }),
   }));
 }
 

@@ -301,9 +301,7 @@ describe("hand-calculated analytics fixtures", () => {
       recentAccuracy: 1,
       rxResponseTime: {
         samples: 2,
-        averageMs: 225,
-        minimumMs: 200,
-        maximumMs: 250,
+        medianMs: 225,
       },
     });
     expect(mRx).toMatchObject({
@@ -312,14 +310,12 @@ describe("hand-calculated analytics fixtures", () => {
       recentAccuracy: 0,
       rxResponseTime: {
         samples: 1,
-        averageMs: 300,
-        minimumMs: 300,
-        maximumMs: 300,
+        medianMs: 300,
       },
     });
 
     const confusions = buildConfusionSummaries(projections.confusions);
-    expect(confusions).toEqual([{ target: "M", answer: "K", count: 1 }]);
+    expect(confusions).toEqual([]);
   });
 
   it("rebuilds repository projections equivalently from authoritative records", async () => {

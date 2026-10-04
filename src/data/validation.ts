@@ -760,6 +760,9 @@ const characterProjectionRecordSchema = persistedRecordSchema
     character: z.string().min(1),
     direction: z.enum(["rx", "tx"]),
     recent: z.array(recentCharacterObservationSchema),
+    recentIsolatedRxResponseMs: z
+      .array(z.number().finite().nonnegative())
+      .optional(),
   })
   .strict();
 

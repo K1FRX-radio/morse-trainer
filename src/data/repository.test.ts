@@ -3,7 +3,7 @@ import { IDBKeyRange, indexedDB } from "fake-indexeddb";
 import { DEFAULT_SETTINGS } from "../core/settings.ts";
 import { DEFAULT_CURRICULUM_CONFIG } from "../content/curriculum-data.ts";
 import { createInitialState } from "../core/curriculum.ts";
-import { SCHEMA_V1, TrainerDatabase } from "./indexeddb.ts";
+import { SCHEMA_V1, SCHEMA_V2, TrainerDatabase } from "./indexeddb.ts";
 import { DexieTrainingRepository } from "./repository.ts";
 
 describe("DexieTrainingRepository", () => {
@@ -199,6 +199,138 @@ describe("DexieTrainingRepository", () => {
     }
   });
 
+  it("rebuilds stale v2 character projections on open", async () => {
+    const name = crypto.randomUUID();
+    const legacy = new Dexie(name, { indexedDB, IDBKeyRange });
+    legacy.version(1).stores(SCHEMA_V1);
+    legacy.version(2).stores(SCHEMA_V2);
+    await legacy.open();
+
+    const attempts = [
+      ...Array.from({ length: 20 }, (_, index) =>
+        learnAttempt({
+          id: `isolated-${index}`,
+          occurredAtUtc: `2026-09-24T${String(index).padStart(2, "0")}:00:00.000Z`,
+          exerciseType: "copy-character",
+          responseMs: 100 + index,
+          answer: "K",
+          correct: true,
+        }),
+      ),
+      ...Array.from({ length: 55 }, (_, index) =>
+        learnAttempt({
+          id: `group-${index}`,
+          occurredAtUtc: `2026-09-25T12:${String(index).padStart(2, "0")}:00.000Z`,
+          exerciseType: "copy-group",
+          answer: index % 4 === 0 ? "M" : "K",
+          correct: index % 4 !== 0,
+        }),
+      ),
+    ];
+
+    const sourceSession = {
+      id: "session-1",
+      schemaVersion: 1 as const,
+      updatedAt: "2026-09-25T13:00:00.000Z",
+      source: "learn" as const,
+      mode: "learn" as const,
+      status: "completed" as const,
+      startedAt: {
+        utc: "2026-09-24T00:00:00.000Z",
+        localDate: "2026-09-24",
+        utcOffsetMinutes: 0,
+        timeZone: "UTC",
+      },
+      endedAt: {
+        utc: "2026-09-25T13:00:00.000Z",
+        localDate: "2026-09-25",
+        utcOffsetMinutes: 0,
+        timeZone: "UTC",
+      },
+      activeMs: 90_000,
+      activeDateBuckets: [
+        {
+          localDate: "2026-09-24",
+          utcOffsetMinutes: 0,
+          timeZone: "UTC",
+          activeMs: 45_000,
+        },
+        {
+          localDate: "2026-09-25",
+          utcOffsetMinutes: 0,
+          timeZone: "UTC",
+          activeMs: 45_000,
+        },
+      ],
+      attemptCount: attempts.length,
+      completedCards: attempts.length,
+      valid: true,
+      charWpm: 20,
+      effectiveWpm: 12,
+      toneHz: 600,
+      noiseLevel: 0,
+      unlockedAtStart: ["K", "M"],
+      unlockedAtEnd: ["K", "M"],
+      appVersion: "0.0.0",
+      revision: 1,
+    };
+
+    await legacy.table("metadata").put({
+      id: "schema-metadata",
+      schemaVersion: 1,
+      updatedAt: "2026-09-25T13:00:00.000Z",
+      databaseVersion: 2,
+      datasetGeneration: "legacy-v2",
+    });
+    await legacy.table("sessions").put(sourceSession);
+    await legacy.table("attempts").bulkPut(attempts);
+    await legacy.table("characterProjections").put({
+      id: "character:rx:K",
+      schemaVersion: 1,
+      updatedAt: "2026-09-25T13:00:00.000Z",
+      projectionVersion: 1,
+      character: "K",
+      direction: "rx",
+      recent: Array.from({ length: 50 }, (_, index) => ({
+        attemptId: `group-${index}`,
+        occurredAt: {
+          utc: `2026-09-25T12:${String(index).padStart(2, "0")}:00.000Z`,
+          localDate: "2026-09-25",
+          utcOffsetMinutes: 0,
+          timeZone: "UTC",
+        },
+        correct: true,
+        kind: "match" as const,
+        answer: "K",
+      })),
+    });
+    legacy.close();
+
+    const database = new TrainerDatabase({ name, indexedDB, IDBKeyRange });
+    const repository = new DexieTrainingRepository(database, {
+      now: () => new Date("2026-09-26T00:00:00.000Z"),
+    });
+
+    try {
+      await repository.open();
+
+      expect(await database.sessions.get("session-1")).toEqual(sourceSession);
+      expect(await database.attempts.count()).toBe(attempts.length);
+
+      const rows = await repository.listCharacterProjections({
+        direction: "rx",
+        character: "K",
+        limit: 1,
+      });
+      expect(rows[0]?.recentIsolatedRxResponseMs).toEqual(
+        Array.from({ length: 20 }, (_, index) => 100 + index),
+      );
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
   it("rolls back a rebuild when session attemptCount disagrees with attempts", async () => {
     const database = new TrainerDatabase({
       name: crypto.randomUUID(),
@@ -279,3 +411,56 @@ describe("DexieTrainingRepository", () => {
     }
   });
 });
+
+function learnAttempt(overrides: {
+  id: string;
+  occurredAtUtc: string;
+  exerciseType: "copy-character" | "copy-group";
+  answer: string;
+  correct: boolean;
+  responseMs?: number;
+}) {
+  return {
+    id: overrides.id,
+    schemaVersion: 1 as const,
+    updatedAt: overrides.occurredAtUtc,
+    sessionId: "session-1",
+    occurredAt: {
+      utc: overrides.occurredAtUtc,
+      localDate: overrides.occurredAtUtc.slice(0, 10),
+      utcOffsetMinutes: 0,
+      timeZone: "UTC",
+    },
+    source: "learn" as const,
+    direction: "rx" as const,
+    exerciseType: overrides.exerciseType,
+    rawTarget: "K",
+    rawResponse: overrides.answer,
+    normalizedTarget: "K",
+    normalizedResponse: overrides.answer,
+    correct: overrides.correct,
+    assisted: false,
+    replayed: false,
+    abandoned: false,
+    scoringAlgorithmVersion: "alignment-v1",
+    observations: [
+      {
+        kind: overrides.correct
+          ? ("match" as const)
+          : ("substitution" as const),
+        correct: overrides.correct,
+        targetIndex: 0,
+        target: "K",
+        answerIndex: 0,
+        answer: overrides.answer,
+      },
+    ],
+    ...(overrides.responseMs === undefined
+      ? {}
+      : { responseMs: overrides.responseMs }),
+    charWpm: 20,
+    effectiveWpm: 12,
+    toneHz: 600,
+    noiseLevel: 0,
+  };
+}

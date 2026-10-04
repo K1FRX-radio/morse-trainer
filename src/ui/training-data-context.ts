@@ -4,7 +4,10 @@ import type { SpeedSuggestionAfterAttempts } from "../core/settings.ts";
 import type {
   CharacterProjectionQuery,
   ConfusionProjectionQuery,
+  DashboardAggregateQuery,
+  DashboardAggregateRecord,
   DailyProjectionQuery,
+  MilestoneQuery,
 } from "../data/repository.ts";
 import type {
   RetryClassification,
@@ -14,6 +17,7 @@ import type {
   CharacterProjectionRecord,
   ConfusionProjectionRecord,
   DailyProjectionRecord,
+  MilestoneRecord,
 } from "../data/models.ts";
 import type {
   PortableBackupDocument,
@@ -30,6 +34,7 @@ import type {
 } from "../data/practice-persistence.ts";
 
 export type TrainingDataContextValue = {
+  statsRevision?: number;
   loadCurriculum: () => CurriculumState;
   saveCurriculum: (state: CurriculumState) => void;
   reconcileCurriculum: () => Promise<CurriculumState>;
@@ -48,12 +53,16 @@ export type TrainingDataContextValue = {
   listDailyProjections: (
     query: DailyProjectionQuery,
   ) => Promise<DailyProjectionRecord[]>;
+  getDashboardAggregate?: (
+    query: DashboardAggregateQuery,
+  ) => Promise<DashboardAggregateRecord>;
   listCharacterProjections: (
     query: CharacterProjectionQuery,
   ) => Promise<CharacterProjectionRecord[]>;
   listConfusionProjections: (
     query: ConfusionProjectionQuery,
   ) => Promise<ConfusionProjectionRecord[]>;
+  listMilestones?: (query: MilestoneQuery) => Promise<MilestoneRecord[]>;
   exportPortableBackup?: (
     appVersion: string,
   ) => Promise<PortableBackupDocument>;
