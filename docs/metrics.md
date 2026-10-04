@@ -142,9 +142,9 @@ Local-date handling:
 
 Streak rules:
 
-- streak values are not currently displayed in History
-- the same session validity gate used for day/session metrics is the eligibility basis for future streak reporting
+- streaks are calculated only from qualifying practice days (`attemptCount > 0`)
 - non-qualifying sessions must not contribute to day-based streak/activity state
+- a streak resets when a calendar gap appears between qualifying days
 
 ## Deterministic analytics fixtures
 
@@ -153,6 +153,8 @@ Hand-calculated fixture coverage is in `src/data/metrics-fixtures.test.ts`.
 It validates exact outputs for:
 
 - daily/overall active time and counts
+- today/week/all-time session windows and average session duration
+- current/best practice-day streak boundaries
 - RX/TX accuracy with assisted/replayed exclusions
 - per-character accuracy/latency summaries
 - directional confusion pairs
@@ -164,13 +166,15 @@ It validates exact outputs for:
 
 Benchmark implementation:
 
-- `src/data/benchmark-100k.test.ts`
+- fixture correctness in `src/data/benchmark-100k-fixture.test.ts` (default `npm test` path)
+- timing benchmark in `src/data/benchmark-100k.benchmark.test.ts` (dedicated command: `npm run benchmark:data`)
 - deterministic synthetic history:
   - 500 sessions
   - 100,000 attempts total
   - mixed RX/TX sources (`copy-practice` RX and `send-practice` TX)
+  - TX workload includes short sends, longer sends, near-cap keying payloads, and explicit truncation cases
 - rebuild projections from authoritative records
-- run bounded dashboard-style queries
+- run bounded dashboard-style queries and portable export generation
 
 Environment for recorded sample:
 
@@ -181,18 +185,21 @@ Environment for recorded sample:
 
 Recorded sample (from benchmark test log):
 
-- source-record serialized size: 67,221,266 bytes
-- projection serialized size: 183,180 bytes
-- projection rebuild time: 1,449.21 ms
-- daily query time (30 rows): 3.00 ms
-- RX character query time (limit 200): 6.17 ms
-- TX character query time (limit 200): 3.93 ms
-- confusion query time (limit 50): 1.29 ms
+- source-record serialized record size: 115,615,766 bytes
+- projection serialized record size: 222,422 bytes
+- projection rebuild time: 1,921.19 ms
+- daily query time (limit 500): 6.28 ms
+- RX character query time (limit 200): 7.74 ms
+- TX character query time (limit 200): 6.09 ms
+- confusion query time (limit 50): 1.20 ms
+- portable export time: 3,809.73 ms
+- portable export serialized record size: 115,617,557 bytes
 
 Usability/performance budget:
 
 - projection rebuild <= 12,000 ms
-- each bounded dashboard query <= 300 ms
+- each bounded dashboard query <= 500 ms
+- portable export generation <= 5,000 ms
 
 Result: pass.
 

@@ -4,9 +4,15 @@ import {
   buildCharacterSummaries,
   buildConfusionSummaries,
   buildDailyTrend,
+  buildPracticeStreakSummary,
+  buildSessionWindowSummary,
 } from "./analytics.ts";
 import { TrainerDatabase } from "./indexeddb.ts";
-import type { TrainingAttemptRecord, TrainingSessionRecord } from "./models.ts";
+import type {
+  DailyProjectionRecord,
+  TrainingAttemptRecord,
+  TrainingSessionRecord,
+} from "./models.ts";
 import { buildProjectionRows } from "./projections.ts";
 import { DexieTrainingRepository } from "./repository.ts";
 
@@ -23,13 +29,14 @@ function session(
   activeDateBuckets: TrainingSessionRecord["activeDateBuckets"],
   attemptCount: number,
   effectiveWpm: number,
+  source: "copy-practice" | "send-practice" = "copy-practice",
 ): TrainingSessionRecord {
   return {
     id,
     schemaVersion: 1,
     updatedAt: date.utc,
-    source: "copy-practice",
-    mode: "copy",
+    source,
+    mode: source === "copy-practice" ? "copy" : "send",
     status: "completed",
     startedAt: date,
     endedAt: date,
@@ -56,6 +63,7 @@ function session(
 function attempt(
   id: string,
   sessionId: string,
+  source: "copy-practice" | "send-practice",
   direction: "rx" | "tx",
   occurredAt: DateContext,
   options: {
@@ -75,7 +83,7 @@ function attempt(
     updatedAt: occurredAt.utc,
     sessionId,
     occurredAt,
-    source: "copy-practice",
+    source,
     direction,
     exerciseType: direction === "rx" ? "copy-character" : "send-character",
     rawTarget: options.target,
@@ -140,8 +148,9 @@ describe("hand-calculated analytics fixtures", () => {
             activeMs: 15000,
           },
         ],
-        4,
+        2,
         12,
+        "copy-practice",
       ),
       session(
         "session-2",
@@ -154,46 +163,77 @@ describe("hand-calculated analytics fixtures", () => {
             activeMs: 60000,
           },
         ],
-        4,
+        2,
         18,
+        "copy-practice",
+      ),
+      session(
+        "session-3",
+        day1,
+        [
+          {
+            localDate: "2026-10-01",
+            utcOffsetMinutes: 0,
+            timeZone: "UTC",
+            activeMs: 40000,
+          },
+        ],
+        2,
+        12,
+        "send-practice",
+      ),
+      session(
+        "session-4",
+        day2,
+        [
+          {
+            localDate: "2026-10-02",
+            utcOffsetMinutes: 0,
+            timeZone: "UTC",
+            activeMs: 30000,
+          },
+        ],
+        2,
+        18,
+        "send-practice",
       ),
     ];
 
     const attempts = [
-      attempt("a1", "session-1", "rx", day1, {
+      attempt("a1", "session-1", "copy-practice", "rx", day1, {
         target: "K",
         answer: "K",
         responseMs: 200,
       }),
-      attempt("a2", "session-1", "rx", day1, {
+      attempt("a2", "session-1", "copy-practice", "rx", day1, {
         target: "M",
         answer: "K",
         responseMs: 300,
       }),
-      attempt("a3", "session-1", "tx", day1, {
+      attempt("a3", "session-3", "send-practice", "tx", day1, {
         target: "K",
         answer: "K",
       }),
-      attempt("a4", "session-1", "tx", day1, {
+      attempt("a4", "session-3", "send-practice", "tx", day1, {
         target: "M",
         answer: "K",
       }),
-      attempt("a5", "session-2", "rx", day2, {
+      attempt("a5", "session-2", "copy-practice", "rx", day2, {
         target: "K",
         answer: "K",
         responseMs: 250,
       }),
-      attempt("a6", "session-2", "rx", day2, {
+      attempt("a6", "session-2", "copy-practice", "rx", day2, {
         target: "M",
         answer: "M",
         assisted: true,
         responseMs: 220,
       }),
-      attempt("a7", "session-2", "tx", day2, {
+      attempt("a7", "session-4", "send-practice", "tx", day2, {
         target: "K",
         answer: "K",
       }),
-      attempt("a8", "session-2", "tx", day2, {
+      attempt("a8", "session-4", "send-practice", "tx", day2, {
         target: "M",
         answer: "M",
         replayed: true,
@@ -206,34 +246,34 @@ describe("hand-calculated analytics fixtures", () => {
     expect(projections.daily).toMatchObject([
       {
         localDate: "2026-10-01",
-        activeMs: 45000,
-        sessionCount: 1,
+        activeMs: 85000,
+        sessionCount: 2,
         attemptCount: 4,
         rxCorrect: 1,
         rxTotal: 2,
         txCorrect: 1,
         txTotal: 2,
-        effectiveWpmTotal: 12,
-        effectiveWpmSamples: 1,
+        effectiveWpmTotal: 24,
+        effectiveWpmSamples: 2,
       },
       {
         localDate: "2026-10-02",
-        activeMs: 75000,
-        sessionCount: 1,
+        activeMs: 105000,
+        sessionCount: 2,
         attemptCount: 4,
         rxCorrect: 1,
         rxTotal: 1,
         txCorrect: 1,
         txTotal: 1,
-        effectiveWpmTotal: 18,
-        effectiveWpmSamples: 1,
+        effectiveWpmTotal: 36,
+        effectiveWpmSamples: 2,
       },
     ]);
 
     const summary = buildAnalyticsSummary(projections.daily);
     expect(summary).toMatchObject({
-      totalActiveMs: 120000,
-      totalSessions: 2,
+      totalActiveMs: 190000,
+      totalSessions: 4,
       totalAttempts: 8,
       activeDayCount: 2,
       averageEffectiveWpm: 15,
@@ -315,16 +355,30 @@ describe("hand-calculated analytics fixtures", () => {
       ),
     ];
     const attempts = [
-      attempt("fixture-attempt-1", "fixture-session", "rx", when, {
-        target: "K",
-        answer: "K",
-        responseMs: 210,
-      }),
-      attempt("fixture-attempt-2", "fixture-session", "rx", when, {
-        target: "M",
-        answer: "K",
-        responseMs: 260,
-      }),
+      attempt(
+        "fixture-attempt-1",
+        "fixture-session",
+        "copy-practice",
+        "rx",
+        when,
+        {
+          target: "K",
+          answer: "K",
+          responseMs: 210,
+        },
+      ),
+      attempt(
+        "fixture-attempt-2",
+        "fixture-session",
+        "copy-practice",
+        "rx",
+        when,
+        {
+          target: "M",
+          answer: "K",
+          responseMs: 260,
+        },
+      ),
     ];
 
     try {
@@ -399,5 +453,146 @@ describe("hand-calculated analytics fixtures", () => {
     expect(rows.daily).toEqual([]);
     expect(summary.totalSessions).toBe(0);
     expect(summary.activeDayCount).toBe(0);
+  });
+
+  it("covers today/week/all-time active time, session duration, and streak boundaries", () => {
+    const rows: DailyProjectionRecord[] = [
+      {
+        id: "daily:2026-09-29",
+        schemaVersion: 1,
+        updatedAt: "2026-10-04T00:00:00.000Z",
+        projectionVersion: 1,
+        localDate: "2026-09-29",
+        activeMs: 45000,
+        sessionCount: 1,
+        attemptCount: 2,
+        rxCorrect: 2,
+        rxTotal: 2,
+        txCorrect: 0,
+        txTotal: 0,
+        effectiveWpmTotal: 12,
+        effectiveWpmSamples: 1,
+      },
+      {
+        id: "daily:2026-09-30",
+        schemaVersion: 1,
+        updatedAt: "2026-10-04T00:00:00.000Z",
+        projectionVersion: 1,
+        localDate: "2026-09-30",
+        activeMs: 30000,
+        sessionCount: 1,
+        attemptCount: 1,
+        rxCorrect: 1,
+        rxTotal: 1,
+        txCorrect: 0,
+        txTotal: 0,
+        effectiveWpmTotal: 12,
+        effectiveWpmSamples: 1,
+      },
+      {
+        id: "daily:2026-10-01",
+        schemaVersion: 1,
+        updatedAt: "2026-10-04T00:00:00.000Z",
+        projectionVersion: 1,
+        localDate: "2026-10-01",
+        activeMs: 60000,
+        sessionCount: 2,
+        attemptCount: 3,
+        rxCorrect: 3,
+        rxTotal: 3,
+        txCorrect: 0,
+        txTotal: 0,
+        effectiveWpmTotal: 24,
+        effectiveWpmSamples: 2,
+      },
+      {
+        id: "daily:2026-10-03",
+        schemaVersion: 1,
+        updatedAt: "2026-10-04T00:00:00.000Z",
+        projectionVersion: 1,
+        localDate: "2026-10-03",
+        activeMs: 30000,
+        sessionCount: 1,
+        attemptCount: 1,
+        rxCorrect: 1,
+        rxTotal: 1,
+        txCorrect: 0,
+        txTotal: 0,
+        effectiveWpmTotal: 12,
+        effectiveWpmSamples: 1,
+      },
+      {
+        id: "daily:2026-10-04",
+        schemaVersion: 1,
+        updatedAt: "2026-10-04T00:00:00.000Z",
+        projectionVersion: 1,
+        localDate: "2026-10-04",
+        activeMs: 0,
+        sessionCount: 0,
+        attemptCount: 0,
+        rxCorrect: 0,
+        rxTotal: 0,
+        txCorrect: 0,
+        txTotal: 0,
+        effectiveWpmTotal: 0,
+        effectiveWpmSamples: 0,
+      },
+      {
+        id: "daily:2026-10-05",
+        schemaVersion: 1,
+        updatedAt: "2026-10-05T00:00:00.000Z",
+        projectionVersion: 1,
+        localDate: "2026-10-05",
+        activeMs: 90000,
+        sessionCount: 3,
+        attemptCount: 4,
+        rxCorrect: 4,
+        rxTotal: 4,
+        txCorrect: 0,
+        txTotal: 0,
+        effectiveWpmTotal: 36,
+        effectiveWpmSamples: 3,
+      },
+      {
+        id: "daily:2026-10-06",
+        schemaVersion: 1,
+        updatedAt: "2026-10-06T00:00:00.000Z",
+        projectionVersion: 1,
+        localDate: "2026-10-06",
+        activeMs: 15000,
+        sessionCount: 1,
+        attemptCount: 2,
+        rxCorrect: 1,
+        rxTotal: 2,
+        txCorrect: 0,
+        txTotal: 0,
+        effectiveWpmTotal: 12,
+        effectiveWpmSamples: 1,
+      },
+    ];
+
+    const windows = buildSessionWindowSummary(rows, "2026-10-04");
+    expect(windows.today).toEqual({
+      activeMs: 0,
+      sessionCount: 0,
+      averageSessionDurationMs: null,
+    });
+    expect(windows.thisWeek).toEqual({
+      activeMs: 165000,
+      sessionCount: 5,
+      averageSessionDurationMs: 33000,
+    });
+    expect(windows.allTime).toEqual({
+      activeMs: 270000,
+      sessionCount: 9,
+      averageSessionDurationMs: 30000,
+    });
+
+    const streak = buildPracticeStreakSummary(rows, "2026-10-04");
+    expect(streak).toEqual({
+      practiceDayCount: 5,
+      currentStreakDays: 1,
+      longestStreakDays: 3,
+    });
   });
 });
