@@ -18,9 +18,9 @@ import {
 } from "../../core/settings.ts";
 import type { Schedule } from "../../core/timing.ts";
 import type { RetryClassification } from "../../data/retry-history.ts";
-import type {
-  LearnPersistenceStart,
-  LearnSessionPersistence,
+import {
+  type LearnPersistenceStart,
+  type LearnSessionPersistence,
 } from "../../data/learn-persistence.ts";
 import {
   applyAdvancementTransition,
@@ -715,6 +715,81 @@ describe("LearnScreen input gating", () => {
     expect(screen.getByLabelText("Your copy")).toBe(input);
     expect(input).toBeEnabled();
     expect(input).toHaveFocus();
+  });
+
+  it("measures isolated response latency from prompt audio completion", async () => {
+    const fake = makeFakeAudio();
+    const recordAttempt = vi.fn<LearnSessionPersistence["recordAttempt"]>(() =>
+      Promise.resolve(),
+    );
+    const persistence: LearnSessionPersistence = {
+      recordAttempt,
+      finish: () => Promise.resolve(),
+      interrupt: () => Promise.resolve(),
+      acceptAdvancement: () => Promise.resolve(testCurriculum()),
+      retry: () => Promise.resolve(),
+    };
+
+    renderLearn(
+      fake.audio,
+      {},
+      {
+        startLearnSessionPersistence: () => Promise.resolve(persistence),
+      },
+    );
+    await toFirstCopy(fake);
+
+    await tick(125);
+    fireEvent.change(screen.getByLabelText("Your copy"), {
+      target: { value: "K" },
+    });
+    await flush();
+
+    expect(recordAttempt).toHaveBeenCalled();
+    const evidence = recordAttempt.mock.calls[0]?.[0];
+    expect(evidence?.exerciseType).toBe("copy-character");
+    expect(evidence?.responseMs).toBeGreaterThanOrEqual(100);
+  });
+
+  it("records 0ms latency when isolated input is queued during playback", async () => {
+    const fake = makeFakeAudio();
+    const recordAttempt = vi.fn<LearnSessionPersistence["recordAttempt"]>(() =>
+      Promise.resolve(),
+    );
+    const persistence: LearnSessionPersistence = {
+      recordAttempt,
+      finish: () => Promise.resolve(),
+      interrupt: () => Promise.resolve(),
+      acceptAdvancement: () => Promise.resolve(testCurriculum()),
+      retry: () => Promise.resolve(),
+    };
+
+    renderLearn(
+      fake.audio,
+      {},
+      {
+        startLearnSessionPersistence: () => Promise.resolve(persistence),
+      },
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Start learning" }));
+    await flush();
+    await resolvePlay(fake);
+    fireEvent.click(screen.getByRole("button", { name: "Start practice" }));
+    await flush();
+
+    fireEvent.change(screen.getByLabelText("Your copy"), {
+      target: { value: "K" },
+    });
+    await flush();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+    await resolvePlay(fake);
+    await flush();
+
+    const evidence = recordAttempt.mock.calls[0]?.[0];
+    expect(evidence?.exerciseType).toBe("copy-character");
+    expect(evidence?.responseMs).toBe(0);
   });
 
   it("accepts only one answer despite repeated input events", async () => {

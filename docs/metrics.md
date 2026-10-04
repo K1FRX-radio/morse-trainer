@@ -10,12 +10,16 @@ Displayed metrics currently come from:
 - `src/data/analytics.ts`
 - projection query methods in `src/data/repository.ts`
 
-The current History screen window is the last 30 local dates.
+The History screen combines:
+
+- all-time/today/week/streak summary aggregates up to a target local date;
+- a separate bounded 30-day trend slice for daily trend rows.
 
 ## Data sources and bounded queries
 
-The History screen fetches bounded projection slices only:
+The History screen fetches bounded projection data only:
 
+- aggregate: `getDashboardAggregate(toLocalDate)`
 - daily: `listDailyProjections(fromLocalDate, toLocalDate, limit=30)`
 - character RX: `listCharacterProjections(direction=rx, limit=200)`
 - character TX: `listCharacterProjections(direction=tx, limit=200)`
@@ -61,58 +65,60 @@ RX/TX separation:
 
 ### Active time
 
-- formula: `sum(daily.activeMs)`
-- source: daily projections
+- today formula: `aggregate.todayActiveMs`
+- this-week formula: `aggregate.thisWeekActiveMs`
+- all-time formula: `aggregate.totalActiveMs`
+- source: `getDashboardAggregate(toLocalDate)`
 - unit: milliseconds, formatted to minutes/hours
 
 ### Sessions
 
-- formula: `sum(daily.sessionCount)`
-- source: daily projections
+- formula: `aggregate.totalSessions`
+- source: `getDashboardAggregate(toLocalDate)`
 
 ### Attempts
 
-- formula: `sum(daily.attemptCount)`
-- source: daily projections
+- formula: `aggregate.totalAttempts`
+- source: `getDashboardAggregate(toLocalDate)`
 
 ### Practice days
 
 - formula: count of qualifying local dates where `activeMs >= 30_000` and `attemptCount > 0`
-- source: daily projections
+- source: `getDashboardAggregate(toLocalDate)`
 
 ### Current streak
 
-- formula: consecutive qualifying practice days ending today or yesterday
-- source: daily projections
+- formula: `aggregate.currentStreakDays`
+- source: `getDashboardAggregate(toLocalDate)`
 
 ### Longest streak
 
-- formula: maximum consecutive qualifying practice-day run in the queried window
-- source: daily projections
+- formula: `aggregate.longestStreakDays`
+- source: `getDashboardAggregate(toLocalDate)`
 
 ### RX accuracy
 
-- formula: `sum(daily.rxCorrect) / sum(daily.rxTotal)`
+- formula: `aggregate.rxCorrect / aggregate.rxTotal`
 - null handling: `N/A` when denominator is 0
-- source: daily projections
+- source: `getDashboardAggregate(toLocalDate)`
 
 ### TX accuracy
 
-- formula: `sum(daily.txCorrect) / sum(daily.txTotal)`
+- formula: `aggregate.txCorrect / aggregate.txTotal`
 - null handling: `N/A` when denominator is 0
-- source: daily projections
+- source: `getDashboardAggregate(toLocalDate)`
 
 ### Avg effective WPM
 
-- formula: `sum(daily.effectiveWpmTotal) / sum(daily.effectiveWpmSamples)`
+- formula: `aggregate.effectiveWpmTotal / aggregate.effectiveWpmSamples`
 - null handling: `N/A` when sample count is 0
-- source: daily projections
+- source: `getDashboardAggregate(toLocalDate)`
 
 ### Avg session duration
 
-- formula: `sum(daily.activeMs) / sum(daily.sessionCount)`
+- formula: `activeMs / sessionCount` per window (today, this week, all-time)
 - null handling: `N/A` when session count is 0
-- source: daily projections
+- source: `getDashboardAggregate(toLocalDate)`
 
 ## 30-day trends
 
@@ -135,7 +141,7 @@ Per row:
 - correct count: count of `recent.correct === true`
 - recent accuracy: `recentCorrect / recentObservationCount` (`null` when 0)
 - most recent UTC: max `recent.occurredAt.utc`
-- RX response summary (RX only): median of the latest 20 available `responseMs`
+- RX response summary (RX only): median of the latest 20 isolated RX latency samples (`recentIsolatedRxResponseMs`)
 
 Ordering:
 
@@ -223,13 +229,14 @@ Environment for recorded sample:
 Recorded sample (from benchmark test log):
 
 - source-record serialized record size: 115,615,766 bytes
-- projection serialized record size: 222,422 bytes
-- projection rebuild time: 1,921.19 ms
-- daily query time (limit 500): 6.28 ms
-- RX character query time (limit 200): 7.74 ms
-- TX character query time (limit 200): 6.09 ms
-- confusion query time (limit 50): 1.20 ms
-- portable export time: 3,809.73 ms
+- projection serialized record size: 223,310 bytes
+- projection rebuild time: 2,803.46 ms
+- daily query time (limit 500): 6.91 ms
+- dashboard aggregate query time: 5.15 ms
+- RX character query time (limit 200): 10.76 ms
+- TX character query time (limit 200): 14.28 ms
+- confusion query time (limit 50): 2.26 ms
+- portable export time: 4,837.32 ms
 - portable export serialized record size: 115,617,557 bytes
 
 Usability/performance budget:

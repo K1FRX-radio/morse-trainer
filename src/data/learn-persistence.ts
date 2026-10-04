@@ -51,6 +51,7 @@ export type LearnAttemptEvidence = {
   assisted: boolean;
   replayed: boolean;
   abandoned: boolean;
+  responseMs?: number;
   durationMs?: number;
   readinessReason?: ContinuousCopyReadinessReason;
 };
@@ -271,6 +272,9 @@ export class DurableLearnSession implements LearnSessionPersistence {
         : {}),
       scoringAlgorithmVersion: SCORING_ALGORITHM_VERSION,
       observations,
+      ...(evidence.responseMs === undefined
+        ? {}
+        : { responseMs: evidence.responseMs }),
       ...(evidence.durationMs === undefined
         ? {}
         : { durationMs: evidence.durationMs }),

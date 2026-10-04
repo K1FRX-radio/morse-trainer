@@ -394,37 +394,63 @@ export class DexieTrainingRepository implements TrainingDataRepository {
 
   async open(): Promise<SchemaMetadataRecord> {
     await this.database.open();
-    return this.database.transaction("rw", this.database.metadata, async () => {
-      const existing = await this.database.metadata.get("schema-metadata");
-      const updatedAt = this.now().toISOString();
-      if (existing !== undefined) {
-        const metadata = parseSchemaMetadata(existing);
-        if (metadata.databaseVersion > DATABASE_VERSION) {
-          throw new Error(
-            `database metadata version ${metadata.databaseVersion} is newer than supported version ${DATABASE_VERSION}`,
-          );
-        }
-        if (metadata.databaseVersion === DATABASE_VERSION) return metadata;
+    const metadata = await this.database.transaction(
+      "rw",
+      this.database.metadata,
+      async () => {
+        const existing = await this.database.metadata.get("schema-metadata");
+        const updatedAt = this.now().toISOString();
+        if (existing !== undefined) {
+          const metadata = parseSchemaMetadata(existing);
+          if (metadata.databaseVersion > DATABASE_VERSION) {
+            throw new Error(
+              `database metadata version ${metadata.databaseVersion} is newer than supported version ${DATABASE_VERSION}`,
+            );
+          }
+          if (metadata.databaseVersion === DATABASE_VERSION) return metadata;
 
-        const reconciled: SchemaMetadataRecord = {
-          ...metadata,
+          const reconciled: SchemaMetadataRecord = {
+            ...metadata,
+            updatedAt,
+            databaseVersion: DATABASE_VERSION,
+          };
+          await this.database.metadata.put(reconciled);
+          return reconciled;
+        }
+
+        const metadata: SchemaMetadataRecord = {
+          id: "schema-metadata",
+          schemaVersion: RECORD_SCHEMA_VERSION,
           updatedAt,
           databaseVersion: DATABASE_VERSION,
+          datasetGeneration: this.createId(),
         };
-        await this.database.metadata.put(reconciled);
-        return reconciled;
-      }
+        await this.database.metadata.put(metadata);
+        return metadata;
+      },
+    );
 
-      const metadata: SchemaMetadataRecord = {
-        id: "schema-metadata",
-        schemaVersion: RECORD_SCHEMA_VERSION,
-        updatedAt,
-        databaseVersion: DATABASE_VERSION,
-        datasetGeneration: this.createId(),
-      };
-      await this.database.metadata.put(metadata);
-      return metadata;
-    });
+    await this.rebuildStaleCharacterProjections();
+    return metadata;
+  }
+
+  private async rebuildStaleCharacterProjections(): Promise<void> {
+    const rxRows = await this.database.characterProjections
+      .where("direction")
+      .equals("rx")
+      .toArray();
+
+    if (rxRows.length === 0) return;
+
+    const stale = rxRows.some(
+      (row) =>
+        parseCharacterProjectionRecord(structuredClone(row))
+          .recentIsolatedRxResponseMs === undefined,
+    );
+
+    if (stale) {
+      await this.rebuildProjections();
+    }
   }
 
   close(): void {
