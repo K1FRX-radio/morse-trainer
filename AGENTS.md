@@ -34,6 +34,17 @@ Update `STATUS.md` only when the completed work materially changes that state.
 
 Do not self-merge implementation PRs unless explicitly instructed.
 
+## PR hygiene
+
+When creating or editing a PR, verify the rendered PR description formatting
+before asking for review:
+
+- Ensure headings, lists, links, and issue references render correctly.
+- Ensure the body does not contain literal escaped newline sequences (for
+  example, `\\n` shown as text).
+- After `gh pr create` or `gh pr edit`, read the PR body back (for example via
+  `gh pr view --json title,body`) and fix formatting immediately if needed.
+
 ## Architecture
 
 This is a React + TypeScript + Vite application.
