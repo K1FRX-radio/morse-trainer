@@ -3,6 +3,9 @@ import {
   buildCharacterSummaries,
   buildConfusionSummaries,
   buildDailyTrend,
+  buildPracticeStreakSummary,
+  buildSessionWindowSummary,
+  isPracticeDay,
 } from "./analytics.ts";
 import type {
   CharacterProjectionRecord,
@@ -180,6 +183,56 @@ describe("analytics presentation models", () => {
     buildConfusionSummaries(confusions);
 
     expect({ dailyRows, characters, confusions }).toEqual(before);
+  });
+
+  it("builds today/week/all-time session and duration windows", () => {
+    const rows = [
+      daily({ localDate: "2026-09-29", activeMs: 45000, sessionCount: 1 }),
+      daily({ localDate: "2026-09-30", activeMs: 30000, sessionCount: 1 }),
+      daily({ localDate: "2026-10-01", activeMs: 60000, sessionCount: 2 }),
+      daily({ localDate: "2026-10-03", activeMs: 30000, sessionCount: 1 }),
+      daily({ localDate: "2026-10-04", activeMs: 0, sessionCount: 0 }),
+      daily({ localDate: "2026-10-05", activeMs: 90000, sessionCount: 3 }),
+    ];
+
+    const windows = buildSessionWindowSummary(rows, "2026-10-04");
+
+    expect(windows.today).toEqual({
+      activeMs: 0,
+      sessionCount: 0,
+      averageSessionDurationMs: null,
+    });
+    expect(windows.thisWeek).toEqual({
+      activeMs: 165000,
+      sessionCount: 5,
+      averageSessionDurationMs: 33000,
+    });
+    expect(windows.allTime).toEqual({
+      activeMs: 255000,
+      sessionCount: 8,
+      averageSessionDurationMs: 31875,
+    });
+  });
+
+  it("builds current and longest practice streaks with yesterday carry", () => {
+    const rows = [
+      daily({ localDate: "2026-09-29", activeMs: 45000, attemptCount: 2 }),
+      daily({ localDate: "2026-09-30", activeMs: 30000, attemptCount: 1 }),
+      daily({ localDate: "2026-10-01", activeMs: 60000, attemptCount: 3 }),
+      daily({ localDate: "2026-10-03", activeMs: 30000, attemptCount: 1 }),
+      daily({ localDate: "2026-10-04", activeMs: 0, attemptCount: 0 }),
+      daily({ localDate: "2026-10-05", activeMs: 90000, attemptCount: 4 }),
+      daily({ localDate: "2026-10-06", activeMs: 15000, attemptCount: 2 }),
+    ];
+
+    const streak = buildPracticeStreakSummary(rows, "2026-10-04");
+
+    expect(streak).toEqual({
+      practiceDayCount: 5,
+      currentStreakDays: 1,
+      longestStreakDays: 3,
+    });
+    expect(isPracticeDay(rows[6])).toBe(false);
   });
 });
 

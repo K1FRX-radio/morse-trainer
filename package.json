@@ -15,8 +15,9 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "test": "vitest run --exclude \"src/**/*.benchmark.test.ts\"",
+    "test:watch": "vitest",
+    "benchmark:data": "vitest run src/data/benchmark-100k.benchmark.test.ts"
   },
   "dependencies": {
     "dexie": "^4.4.6",

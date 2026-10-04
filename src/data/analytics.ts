@@ -54,8 +54,65 @@ export type ConfusionSummary = {
   count: number;
 };
 
+export type SessionWindowTotals = {
+  activeMs: number;
+  sessionCount: number;
+  averageSessionDurationMs: number | null;
+};
+
+export type SessionWindowSummary = {
+  today: SessionWindowTotals;
+  thisWeek: SessionWindowTotals;
+  allTime: SessionWindowTotals;
+};
+
+export type StreakSummary = {
+  practiceDayCount: number;
+  currentStreakDays: number;
+  longestStreakDays: number;
+};
+
 function ratio(correct: number, total: number): number | null {
   return total === 0 ? null : correct / total;
+}
+
+function localDateParts(localDate: string): {
+  year: number;
+  month: number;
+  day: number;
+} {
+  const [year, month, day] = localDate.split("-").map((value) => Number(value));
+  if (
+    !Number.isFinite(year) ||
+    !Number.isFinite(month) ||
+    !Number.isFinite(day)
+  ) {
+    throw new RangeError(`invalid local date ${localDate}`);
+  }
+  return { year, month, day };
+}
+
+function dateFromLocalDate(localDate: string): Date {
+  const { year, month, day } = localDateParts(localDate);
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+function toLocalDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function previousLocalDate(localDate: string): string {
+  const date = dateFromLocalDate(localDate);
+  date.setUTCDate(date.getUTCDate() - 1);
+  return toLocalDate(date);
+}
+
+function startOfWeekLocalDate(localDate: string): string {
+  const date = dateFromLocalDate(localDate);
+  const dayOfWeek = date.getUTCDay();
+  const daysFromMonday = (dayOfWeek + 6) % 7;
+  date.setUTCDate(date.getUTCDate() - daysFromMonday);
+  return toLocalDate(date);
 }
 
 function toAccuracy(correct: number, total: number): AccuracyValue {
@@ -222,4 +279,97 @@ export function buildConfusionSummaries(
     answer: row.answer,
     count: row.count,
   }));
+}
+
+/** Practice-day rule shared by window and streak summaries. */
+export function isPracticeDay(row: DailyProjectionRecord): boolean {
+  return row.activeMs >= 30_000 && row.attemptCount > 0;
+}
+
+function summarizeWindow(
+  rows: readonly DailyProjectionRecord[],
+): SessionWindowTotals {
+  const totals = rows.reduce(
+    (accumulator, row) => {
+      accumulator.activeMs += row.activeMs;
+      accumulator.sessionCount += row.sessionCount;
+      return accumulator;
+    },
+    { activeMs: 0, sessionCount: 0 },
+  );
+  return {
+    activeMs: totals.activeMs,
+    sessionCount: totals.sessionCount,
+    averageSessionDurationMs:
+      totals.sessionCount === 0 ? null : totals.activeMs / totals.sessionCount,
+  };
+}
+
+export function buildSessionWindowSummary(
+  dailyRows: readonly DailyProjectionRecord[],
+  toLocalDate: string,
+): SessionWindowSummary {
+  const weekStart = startOfWeekLocalDate(toLocalDate);
+  const todayRows = dailyRows.filter((row) => row.localDate === toLocalDate);
+  const weekRows = dailyRows.filter(
+    (row) => row.localDate >= weekStart && row.localDate <= toLocalDate,
+  );
+
+  return {
+    today: summarizeWindow(todayRows),
+    thisWeek: summarizeWindow(weekRows),
+    allTime: summarizeWindow(dailyRows),
+  };
+}
+
+export function buildPracticeStreakSummary(
+  dailyRows: readonly DailyProjectionRecord[],
+  toLocalDate: string,
+): StreakSummary {
+  const practiceDays = new Set(
+    dailyRows.filter(isPracticeDay).map((row) => row.localDate),
+  );
+
+  const ordered = [...practiceDays].sort((left, right) =>
+    left.localeCompare(right),
+  );
+
+  let longestStreakDays = 0;
+  let running = 0;
+  let previous: string | undefined;
+  for (const localDate of ordered) {
+    if (previous !== undefined && previousLocalDate(localDate) === previous) {
+      running += 1;
+    } else {
+      running = 1;
+    }
+    if (running > longestStreakDays) longestStreakDays = running;
+    previous = localDate;
+  }
+
+  let currentAnchor = toLocalDate;
+  if (!practiceDays.has(currentAnchor)) {
+    const yesterday = previousLocalDate(toLocalDate);
+    if (!practiceDays.has(yesterday)) {
+      return {
+        practiceDayCount: practiceDays.size,
+        currentStreakDays: 0,
+        longestStreakDays,
+      };
+    }
+    currentAnchor = yesterday;
+  }
+
+  let currentStreakDays = 0;
+  let cursor = currentAnchor;
+  while (practiceDays.has(cursor)) {
+    currentStreakDays += 1;
+    cursor = previousLocalDate(cursor);
+  }
+
+  return {
+    practiceDayCount: practiceDays.size,
+    currentStreakDays,
+    longestStreakDays,
+  };
 }

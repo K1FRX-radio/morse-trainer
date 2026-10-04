@@ -7,12 +7,11 @@ only which issue should be implemented next and what follows it.
 
 ## Next
 
-- #50 — Milestone 4: publish data/metrics docs and 100k-history benchmark
+- #51 — Checkpoint 4: audit and close Persistence & Analytics milestone
 
 ## Queue
 
-1. #51 — Checkpoint 4: audit and close Persistence & Analytics milestone
-2. #52 — Phase 5 kickoff: installable PWA foundation, offline shell, and safe updates
+1. #52 — Phase 5 kickoff: installable PWA foundation, offline shell, and safe updates
 
 ## Later / stretch
 
@@ -24,6 +23,7 @@ None.
 
 ## Recently completed
 
+- #50 — Milestone 4: publish data/metrics docs and 100k-history benchmark
 - #49 — Milestone 4: finish versioned backup, replace-import, and reset
 - #28 — Cleanup: remove dead 3-char notice delay configuration
 - #29 — Add regression: Send Practice does not mutate Learn progression
