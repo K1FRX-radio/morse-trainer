@@ -16,6 +16,11 @@ import type {
   DailyProjectionRecord,
 } from "../data/models.ts";
 import type {
+  PortableBackupDocument,
+  PortableBackupReplaceConfirmation,
+  PortableBackupPreview,
+} from "../data/backup.ts";
+import type {
   LearnPersistenceStart,
   LearnSessionPersistence,
 } from "../data/learn-persistence.ts";
@@ -51,6 +56,15 @@ type TrainingDataProviderProps = {
   listConfusionProjections: (
     query: ConfusionProjectionQuery,
   ) => Promise<ConfusionProjectionRecord[]>;
+  exportPortableBackup?: (
+    appVersion: string,
+  ) => Promise<PortableBackupDocument>;
+  previewPortableBackup?: (rawJson: string) => Promise<PortableBackupPreview>;
+  replacePortableBackup?: (
+    rawJson: string,
+    confirmation: PortableBackupReplaceConfirmation,
+  ) => Promise<"applied" | "already-applied">;
+  resetPortableData?: () => Promise<void>;
 };
 
 function persistBestEffort(operation: () => unknown): void {
@@ -74,6 +88,10 @@ export function TrainingDataProvider({
   listDailyProjections,
   listCharacterProjections,
   listConfusionProjections,
+  exportPortableBackup,
+  previewPortableBackup,
+  replacePortableBackup,
+  resetPortableData,
 }: TrainingDataProviderProps) {
   const curriculum = useRef(structuredClone(initialCurriculum));
   const introductions = useRef([...initialIntroductions]);
@@ -122,6 +140,10 @@ export function TrainingDataProvider({
       listDailyProjections,
       listCharacterProjections,
       listConfusionProjections,
+      ...(exportPortableBackup ? { exportPortableBackup } : {}),
+      ...(previewPortableBackup ? { previewPortableBackup } : {}),
+      ...(replacePortableBackup ? { replacePortableBackup } : {}),
+      ...(resetPortableData ? { resetPortableData } : {}),
     }),
     [
       loadCurriculum,
@@ -135,6 +157,10 @@ export function TrainingDataProvider({
       listDailyProjections,
       listCharacterProjections,
       listConfusionProjections,
+      exportPortableBackup,
+      previewPortableBackup,
+      replacePortableBackup,
+      resetPortableData,
     ],
   );
 

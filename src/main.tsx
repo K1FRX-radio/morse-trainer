@@ -72,6 +72,16 @@ async function start(): Promise<void> {
             listConfusionProjections={(query) =>
               bootstrap.repository.listConfusionProjections(query)
             }
+            exportPortableBackup={(appVersion) =>
+              bootstrap.repository.exportPortableBackup(appVersion)
+            }
+            previewPortableBackup={(rawJson) =>
+              bootstrap.repository.previewPortableBackup(rawJson)
+            }
+            replacePortableBackup={(rawJson, confirmation) =>
+              bootstrap.repository.replacePortableBackup(rawJson, confirmation)
+            }
+            resetPortableData={() => bootstrap.repository.resetPortableData()}
           >
             <LearnAudioProvider>
               <App />

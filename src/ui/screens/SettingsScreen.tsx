@@ -7,12 +7,14 @@ import {
   type PracticeSettings,
   type SpeedSuggestionAfterAttempts,
 } from "../../core/settings.ts";
+import type { PortableBackupReplaceConfirmation } from "../../data/backup.ts";
 import {
   getOutputSupport,
   listOutputDevices,
   requestOutputAccess,
   type OutputDevice,
 } from "../../audio/output-devices.ts";
+import { useTrainingData } from "../training-data-context.ts";
 import { useSettings } from "../settings-context.ts";
 
 type NumericField = "charWpm" | "effectiveWpm" | "toneHz";
@@ -49,8 +51,28 @@ function RangeField({
 
 export function SettingsScreen() {
   const { settings, update, outputDeviceId, setOutputDeviceId } = useSettings();
+  const {
+    exportPortableBackup,
+    previewPortableBackup,
+    replacePortableBackup,
+    resetPortableData,
+  } = useTrainingData();
   const [devices, setDevices] = useState<OutputDevice[]>([]);
   const [access, setAccess] = useState<"idle" | "denied" | "ready">("idle");
+  const [backupStatus, setBackupStatus] = useState<string | undefined>(
+    undefined,
+  );
+  const [pendingBackupJson, setPendingBackupJson] = useState<
+    string | undefined
+  >(undefined);
+  const [pendingReplaceConfirmation, setPendingReplaceConfirmation] = useState<
+    PortableBackupReplaceConfirmation | undefined
+  >(undefined);
+  const [importPreview, setImportPreview] = useState<string | undefined>(
+    undefined,
+  );
+  const [importError, setImportError] = useState<string | undefined>(undefined);
+  const [resetConfirmText, setResetConfirmText] = useState("");
   const outputSupport = getOutputSupport();
 
   async function enableOutputSelection(): Promise<void> {
@@ -61,6 +83,106 @@ export function SettingsScreen() {
     }
     setDevices(await listOutputDevices());
     setAccess("ready");
+  }
+
+  async function exportBackup(): Promise<void> {
+    if (!exportPortableBackup) {
+      setBackupStatus("Backup export is unavailable in this build.");
+      return;
+    }
+    try {
+      const appVersion = import.meta.env.VITE_APP_VERSION ?? "0.0.0";
+      const backup = await exportPortableBackup(appVersion);
+      const text = JSON.stringify(backup, null, 2);
+      const blob = new Blob([text], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `k1frx-backup-${backup.exportedAt.replace(/[:.]/g, "-")}.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setBackupStatus("Backup exported.");
+    } catch (error) {
+      setBackupStatus(
+        error instanceof Error ? error.message : "Backup export failed.",
+      );
+    }
+  }
+
+  async function loadImport(file: File): Promise<void> {
+    const text = await file.text();
+    setPendingBackupJson(text);
+    setPendingReplaceConfirmation(undefined);
+    if (!previewPortableBackup) {
+      setImportPreview(undefined);
+      setImportError("Backup import is unavailable in this build.");
+      return;
+    }
+    try {
+      const preview = await previewPortableBackup(text);
+      const range = preview.sessionRange
+        ? `${preview.sessionRange.firstStartedAt} to ${preview.sessionRange.lastStartedAt}`
+        : "no sessions";
+      setImportError(undefined);
+      setPendingReplaceConfirmation(preview.replaceConfirmation);
+      setImportPreview(
+        `Backup from ${preview.exportedAt} (${preview.appVersion}). Sessions: ${preview.counts.sessions}, attempts: ${preview.counts.attempts}, unlocked: ${preview.unlockedCharacters}, mastered: ${preview.masteredCharacters}, range: ${range}.`,
+      );
+    } catch (error) {
+      setPendingReplaceConfirmation(undefined);
+      setImportPreview(undefined);
+      setImportError(
+        error instanceof Error ? error.message : "Backup preview failed.",
+      );
+    }
+  }
+
+  async function confirmReplaceImport(): Promise<void> {
+    if (!replacePortableBackup || !pendingBackupJson) {
+      return;
+    }
+    if (!pendingReplaceConfirmation) {
+      setImportError("Preview the backup again before replacing data.");
+      return;
+    }
+    if (
+      !window.confirm("Replace all portable learner data with this backup?")
+    ) {
+      return;
+    }
+    try {
+      await replacePortableBackup(
+        pendingBackupJson,
+        pendingReplaceConfirmation,
+      );
+      window.location.reload();
+    } catch (error) {
+      setImportError(
+        error instanceof Error ? error.message : "Backup import failed.",
+      );
+    }
+  }
+
+  async function confirmReset(): Promise<void> {
+    if (!resetPortableData) {
+      setBackupStatus("Data reset is unavailable in this build.");
+      return;
+    }
+    if (resetConfirmText !== "RESET") {
+      setBackupStatus("Type RESET to confirm data reset.");
+      return;
+    }
+    if (
+      !window.confirm("Reset all portable learner data to first-run defaults?")
+    ) {
+      return;
+    }
+    try {
+      await resetPortableData();
+      window.location.reload();
+    } catch (error) {
+      setBackupStatus(error instanceof Error ? error.message : "Reset failed.");
+    }
   }
 
   const numberField = (
@@ -219,6 +341,61 @@ export function SettingsScreen() {
           </select>
         </label>
       )}
+
+      <h3>Data management</h3>
+      <div className="field">
+        <button type="button" onClick={() => void exportBackup()}>
+          Export backup
+        </button>
+      </div>
+
+      <label className="field">
+        <span className="field__label">Replace import</span>
+        <input
+          type="file"
+          accept="application/json,.json"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (!file) return;
+            void loadImport(file);
+          }}
+        />
+      </label>
+      {importPreview && <p role="status">{importPreview}</p>}
+      {importError && (
+        <p className="feedback feedback--bad" role="alert">
+          {importError}
+        </p>
+      )}
+      <div className="field">
+        <button
+          type="button"
+          onClick={() => void confirmReplaceImport()}
+          disabled={
+            !pendingBackupJson ||
+            !pendingReplaceConfirmation ||
+            Boolean(importError)
+          }
+        >
+          Replace with import
+        </button>
+      </div>
+
+      <label className="field">
+        <span className="field__label">Type RESET to confirm reset</span>
+        <input
+          aria-label="Reset confirmation"
+          type="text"
+          value={resetConfirmText}
+          onChange={(event) => setResetConfirmText(event.target.value)}
+        />
+      </label>
+      <div className="field">
+        <button type="button" onClick={() => void confirmReset()}>
+          Reset learner data
+        </button>
+      </div>
+      {backupStatus && <p role="status">{backupStatus}</p>}
     </section>
   );
 }
