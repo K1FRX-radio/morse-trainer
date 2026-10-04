@@ -1,10 +1,11 @@
-import { useCallback, useMemo, useRef, type ReactNode } from "react";
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import type { CurriculumState } from "../core/curriculum.ts";
 import type { SpeedSuggestionAfterAttempts } from "../core/settings.ts";
 import type {
   CharacterProjectionQuery,
   ConfusionProjectionQuery,
   DailyProjectionQuery,
+  MilestoneQuery,
 } from "../data/repository.ts";
 import type {
   RetryClassification,
@@ -14,6 +15,7 @@ import type {
   CharacterProjectionRecord,
   ConfusionProjectionRecord,
   DailyProjectionRecord,
+  MilestoneRecord,
 } from "../data/models.ts";
 import type {
   PortableBackupDocument,
@@ -56,6 +58,7 @@ type TrainingDataProviderProps = {
   listConfusionProjections: (
     query: ConfusionProjectionQuery,
   ) => Promise<ConfusionProjectionRecord[]>;
+  listMilestones?: (query: MilestoneQuery) => Promise<MilestoneRecord[]>;
   exportPortableBackup?: (
     appVersion: string,
   ) => Promise<PortableBackupDocument>;
@@ -88,6 +91,7 @@ export function TrainingDataProvider({
   listDailyProjections,
   listCharacterProjections,
   listConfusionProjections,
+  listMilestones,
   exportPortableBackup,
   previewPortableBackup,
   replacePortableBackup,
@@ -95,6 +99,87 @@ export function TrainingDataProvider({
 }: TrainingDataProviderProps) {
   const curriculum = useRef(structuredClone(initialCurriculum));
   const introductions = useRef([...initialIntroductions]);
+  const [statsRevision, setStatsRevision] = useState(0);
+
+  const bumpStatsRevision = useCallback(() => {
+    setStatsRevision((current) => current + 1);
+  }, []);
+
+  const startLearnSessionPersistenceWithRefresh = useCallback(
+    async (
+      options: LearnPersistenceStart,
+    ): Promise<LearnSessionPersistence> => {
+      const persistence = await startLearnSessionPersistence(options);
+      return {
+        ...persistence,
+        async recordAttempt(evidence, snapshot) {
+          await persistence.recordAttempt(evidence, snapshot);
+          bumpStatsRevision();
+        },
+        async finish(snapshot) {
+          await persistence.finish(snapshot);
+          bumpStatsRevision();
+        },
+        async interrupt(snapshot) {
+          await persistence.interrupt(snapshot);
+          bumpStatsRevision();
+        },
+        async acceptAdvancement(acceptance) {
+          const next = await persistence.acceptAdvancement(acceptance);
+          bumpStatsRevision();
+          return next;
+        },
+      };
+    },
+    [startLearnSessionPersistence, bumpStatsRevision],
+  );
+
+  const startPracticeSessionPersistenceWithRefresh = useCallback(
+    async (
+      options: PracticePersistenceStart,
+    ): Promise<PracticeSessionPersistence> => {
+      const persistence = await startPracticeSessionPersistence(options);
+      return {
+        ...persistence,
+        async recordAttempt(evidence, snapshot) {
+          await persistence.recordAttempt(evidence, snapshot);
+          bumpStatsRevision();
+        },
+        async finish(snapshot) {
+          await persistence.finish(snapshot);
+          bumpStatsRevision();
+        },
+        async interrupt(snapshot) {
+          await persistence.interrupt(snapshot);
+          bumpStatsRevision();
+        },
+      };
+    },
+    [startPracticeSessionPersistence, bumpStatsRevision],
+  );
+
+  const replacePortableBackupWithRefresh = useCallback(
+    async (
+      rawJson: string,
+      confirmation: PortableBackupReplaceConfirmation,
+    ): Promise<"applied" | "already-applied"> => {
+      if (!replacePortableBackup) {
+        throw new Error("replacePortableBackup is unavailable");
+      }
+      const result = await replacePortableBackup(rawJson, confirmation);
+      if (result === "applied") bumpStatsRevision();
+      return result;
+    },
+    [replacePortableBackup, bumpStatsRevision],
+  );
+
+  const resetPortableDataWithRefresh = useCallback(async (): Promise<void> => {
+    if (!resetPortableData) {
+      throw new Error("resetPortableData is unavailable");
+    }
+    await resetPortableData();
+    bumpStatsRevision();
+  }, [resetPortableData, bumpStatsRevision]);
 
   const loadCurriculum = useCallback(
     () => structuredClone(curriculum.current),
@@ -129,38 +214,49 @@ export function TrainingDataProvider({
 
   const value = useMemo(
     () => ({
+      statsRevision,
       loadCurriculum,
       saveCurriculum,
       reconcileCurriculum,
       loadIntroductions,
       saveIntroductions,
-      startLearnSessionPersistence,
-      startPracticeSessionPersistence,
+      startLearnSessionPersistence: startLearnSessionPersistenceWithRefresh,
+      startPracticeSessionPersistence:
+        startPracticeSessionPersistenceWithRefresh,
       getRetryClassification,
       listDailyProjections,
       listCharacterProjections,
       listConfusionProjections,
+      ...(listMilestones ? { listMilestones } : {}),
       ...(exportPortableBackup ? { exportPortableBackup } : {}),
       ...(previewPortableBackup ? { previewPortableBackup } : {}),
-      ...(replacePortableBackup ? { replacePortableBackup } : {}),
-      ...(resetPortableData ? { resetPortableData } : {}),
+      ...(replacePortableBackup
+        ? { replacePortableBackup: replacePortableBackupWithRefresh }
+        : {}),
+      ...(resetPortableData
+        ? { resetPortableData: resetPortableDataWithRefresh }
+        : {}),
     }),
     [
+      statsRevision,
       loadCurriculum,
       saveCurriculum,
       reconcileCurriculum,
       loadIntroductions,
       saveIntroductions,
-      startLearnSessionPersistence,
-      startPracticeSessionPersistence,
+      startLearnSessionPersistenceWithRefresh,
+      startPracticeSessionPersistenceWithRefresh,
       getRetryClassification,
       listDailyProjections,
       listCharacterProjections,
       listConfusionProjections,
+      listMilestones,
       exportPortableBackup,
       previewPortableBackup,
       replacePortableBackup,
+      replacePortableBackupWithRefresh,
       resetPortableData,
+      resetPortableDataWithRefresh,
     ],
   );
 

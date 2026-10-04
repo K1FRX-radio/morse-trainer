@@ -3,14 +3,17 @@ import {
   buildCharacterSummaries,
   buildConfusionSummaries,
   buildDailyTrend,
+  buildMilestoneSummaries,
   buildPracticeStreakSummary,
   buildSessionWindowSummary,
   isPracticeDay,
+  RECURRING_CONFUSION_MINIMUM,
 } from "./analytics.ts";
 import type {
   CharacterProjectionRecord,
   ConfusionProjectionRecord,
   DailyProjectionRecord,
+  MilestoneRecord,
 } from "./models.ts";
 
 describe("analytics presentation models", () => {
@@ -83,7 +86,7 @@ describe("analytics presentation models", () => {
     expect(trend[2].tx.accuracy).toBeNull();
   });
 
-  it("builds direction-aware character summaries with recent accuracy and timestamps", () => {
+  it("builds direction-aware character summaries with median latest-20 RX latency", () => {
     const summaries = buildCharacterSummaries([
       character({
         character: "M",
@@ -96,11 +99,13 @@ describe("analytics presentation models", () => {
       character({
         character: "K",
         direction: "rx",
-        recent: [
-          observation("2026-09-24T09:00:00.000Z", false, 300),
-          observation("2026-09-24T12:00:00.000Z", true),
-          observation("2026-09-24T13:00:00.000Z", true, 150),
-        ],
+        recent: Array.from({ length: 22 }, (_, index) =>
+          observation(
+            `2026-09-24T${String(index).padStart(2, "0")}:00:00.000Z`,
+            index % 3 !== 0,
+            index + 100,
+          ),
+        ),
       }),
     ]);
 
@@ -116,15 +121,13 @@ describe("analytics presentation models", () => {
     expect(tx.rxResponseTime).toBeUndefined();
 
     const rx = summaries[1];
-    expect(rx.recentObservationCount).toBe(3);
-    expect(rx.recentCorrectCount).toBe(2);
-    expect(rx.recentAccuracy).toBe(2 / 3);
-    expect(rx.mostRecentObservationUtc).toBe("2026-09-24T13:00:00.000Z");
+    expect(rx.recentObservationCount).toBe(22);
+    expect(rx.recentCorrectCount).toBe(14);
+    expect(rx.recentAccuracy).toBe(14 / 22);
+    expect(rx.mostRecentObservationUtc).toBe("2026-09-24T21:00:00.000Z");
     expect(rx.rxResponseTime).toEqual({
-      samples: 2,
-      averageMs: 225,
-      minimumMs: 150,
-      maximumMs: 300,
+      samples: 20,
+      medianMs: 111.5,
     });
   });
 
@@ -142,17 +145,44 @@ describe("analytics presentation models", () => {
     expect("rxResponseTime" in summaries[0]).toBe(false);
   });
 
-  it("builds confusion summaries with deterministic repository-aligned ordering", () => {
+  it("builds recurring confusion summaries with deterministic ordering", () => {
     const summaries = buildConfusionSummaries([
       confusion("M", "K", 5),
       confusion("A", "B", 5),
-      confusion("Z", "Y", 1),
+      confusion("Z", "Y", RECURRING_CONFUSION_MINIMUM - 1),
     ]);
 
     expect(summaries).toEqual([
       { target: "A", answer: "B", count: 5 },
       { target: "M", answer: "K", count: 5 },
-      { target: "Z", answer: "Y", count: 1 },
+    ]);
+  });
+
+  it("builds latest milestone summaries in reverse chronological order", () => {
+    const summaries = buildMilestoneSummaries([
+      milestone("m-1", "character-unlocked", "2026-09-24T10:00:00.000Z", "M"),
+      milestone("m-2", "character-mastered", "2026-09-24T11:00:00.000Z", "K"),
+      milestone("m-3", "curriculum-completed", "2026-09-24T11:00:00.000Z"),
+    ]);
+
+    expect(summaries).toEqual([
+      {
+        id: "m-3",
+        type: "curriculum-completed",
+        occurredAtUtc: "2026-09-24T11:00:00.000Z",
+      },
+      {
+        id: "m-2",
+        type: "character-mastered",
+        occurredAtUtc: "2026-09-24T11:00:00.000Z",
+        character: "K",
+      },
+      {
+        id: "m-1",
+        type: "character-unlocked",
+        occurredAtUtc: "2026-09-24T10:00:00.000Z",
+        character: "M",
+      },
     ]);
   });
 
@@ -173,7 +203,10 @@ describe("analytics presentation models", () => {
         recent: [observation("2026-09-24T09:00:00.000Z", false, 200)],
       }),
     ];
-    const confusions = [confusion("Z", "Y", 1), confusion("A", "B", 5)];
+    const confusions = [
+      confusion("Z", "Y", 1),
+      confusion("A", "B", RECURRING_CONFUSION_MINIMUM),
+    ];
 
     const before = structuredClone({ dailyRows, characters, confusions });
 
@@ -307,5 +340,29 @@ function confusion(
     target,
     answer,
     count,
+  };
+}
+
+function milestone(
+  id: string,
+  type: MilestoneRecord["type"],
+  utc: string,
+  character?: string,
+): MilestoneRecord {
+  return {
+    id,
+    schemaVersion: 1,
+    updatedAt: utc,
+    idempotencyKey: `key:${id}`,
+    eventId: `event:${id}`,
+    type,
+    occurredAt: {
+      utc,
+      localDate: "2026-09-24",
+      utcOffsetMinutes: 0,
+      timeZone: "UTC",
+    },
+    migrationDerived: false,
+    ...(character === undefined ? {} : { character }),
   };
 }

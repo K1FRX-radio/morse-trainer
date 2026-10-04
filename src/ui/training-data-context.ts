@@ -5,6 +5,7 @@ import type {
   CharacterProjectionQuery,
   ConfusionProjectionQuery,
   DailyProjectionQuery,
+  MilestoneQuery,
 } from "../data/repository.ts";
 import type {
   RetryClassification,
@@ -14,6 +15,7 @@ import type {
   CharacterProjectionRecord,
   ConfusionProjectionRecord,
   DailyProjectionRecord,
+  MilestoneRecord,
 } from "../data/models.ts";
 import type {
   PortableBackupDocument,
@@ -30,6 +32,7 @@ import type {
 } from "../data/practice-persistence.ts";
 
 export type TrainingDataContextValue = {
+  statsRevision?: number;
   loadCurriculum: () => CurriculumState;
   saveCurriculum: (state: CurriculumState) => void;
   reconcileCurriculum: () => Promise<CurriculumState>;
@@ -54,6 +57,7 @@ export type TrainingDataContextValue = {
   listConfusionProjections: (
     query: ConfusionProjectionQuery,
   ) => Promise<ConfusionProjectionRecord[]>;
+  listMilestones?: (query: MilestoneQuery) => Promise<MilestoneRecord[]>;
   exportPortableBackup?: (
     appVersion: string,
   ) => Promise<PortableBackupDocument>;

@@ -72,6 +72,9 @@ async function start(): Promise<void> {
             listConfusionProjections={(query) =>
               bootstrap.repository.listConfusionProjections(query)
             }
+            listMilestones={(query) =>
+              bootstrap.repository.listMilestones(query)
+            }
             exportPortableBackup={(appVersion) =>
               bootstrap.repository.exportPortableBackup(appVersion)
             }

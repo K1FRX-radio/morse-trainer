@@ -4,10 +4,16 @@ import {
   buildCharacterSummaries,
   buildConfusionSummaries,
   buildDailyTrend,
+  buildMilestoneSummaries,
+  buildPracticeStreakSummary,
+  buildSessionWindowSummary,
   type CharacterSummary,
   type ConfusionSummary,
   type DailyTrendRow,
+  type MilestoneSummary,
   type OverallAnalyticsSummary,
+  type SessionWindowSummary,
+  type StreakSummary,
 } from "../../data/analytics.ts";
 import { captureDateTime } from "../../data/time.ts";
 import { useTrainingData } from "../training-data-context.ts";
@@ -15,15 +21,24 @@ import { useTrainingData } from "../training-data-context.ts";
 const RECENT_DAY_WINDOW = 30;
 const CHARACTER_LIMIT_PER_DIRECTION = 200;
 const CONFUSION_LIMIT = 50;
-const DIFFICULT_CHARACTER_LIMIT = 12;
+const MILESTONE_LIMIT = 10;
+
+type CurrentCurriculumSummary = {
+  currentCharacter: string | null;
+  activeCharacters: string[];
+};
 
 export type StatsHistoryState = {
   loading: boolean;
   error?: string;
   summary: OverallAnalyticsSummary;
-  recentDailyRows: DailyTrendRow[];
-  difficultCharacters: CharacterSummary[];
+  windows: SessionWindowSummary;
+  streaks: StreakSummary;
+  trends: DailyTrendRow[];
+  currentCharacter: string | null;
+  activeCharacters: CharacterSummary[];
   recentConfusions: ConfusionSummary[];
+  milestones: MilestoneSummary[];
 };
 
 const EMPTY_SUMMARY: OverallAnalyticsSummary = {
@@ -34,6 +49,18 @@ const EMPTY_SUMMARY: OverallAnalyticsSummary = {
   tx: { correct: 0, total: 0, accuracy: null },
   averageEffectiveWpm: null,
   activeDayCount: 0,
+};
+
+const EMPTY_WINDOWS: SessionWindowSummary = {
+  today: { activeMs: 0, sessionCount: 0, averageSessionDurationMs: null },
+  thisWeek: { activeMs: 0, sessionCount: 0, averageSessionDurationMs: null },
+  allTime: { activeMs: 0, sessionCount: 0, averageSessionDurationMs: null },
+};
+
+const EMPTY_STREAKS: StreakSummary = {
+  practiceDayCount: 0,
+  currentStreakDays: 0,
+  longestStreakDays: 0,
 };
 
 function localDateWindow(now: Date): {
@@ -47,14 +74,66 @@ function localDateWindow(now: Date): {
   return { fromLocalDate, toLocalDate };
 }
 
+function summarizeCurrentCurriculum(
+  trainingData: ReturnType<typeof useTrainingData>,
+): CurrentCurriculumSummary {
+  const curriculum = trainingData.loadCurriculum();
+  const activeCharacters = curriculum.characters.map(
+    (progress) => progress.character,
+  );
+
+  return {
+    currentCharacter:
+      activeCharacters.length === 0
+        ? null
+        : (activeCharacters[activeCharacters.length - 1] ?? null),
+    activeCharacters,
+  };
+}
+
+function buildActiveCharacterRows(
+  summaries: readonly CharacterSummary[],
+  activeCharacters: readonly string[],
+): CharacterSummary[] {
+  const byKey = new Map(
+    summaries.map((row) => [`${row.direction}:${row.character}`, row]),
+  );
+
+  const rows: CharacterSummary[] = [];
+  for (const character of activeCharacters) {
+    for (const direction of ["rx", "tx"] as const) {
+      const key = `${direction}:${character}`;
+      const existing = byKey.get(key);
+      if (existing) {
+        rows.push(existing);
+        continue;
+      }
+      rows.push({
+        character,
+        direction,
+        recentObservationCount: 0,
+        recentCorrectCount: 0,
+        recentAccuracy: null,
+      });
+    }
+  }
+
+  return rows;
+}
+
 export function useStatsHistory(): StatsHistoryState {
   const trainingData = useTrainingData();
+  const statsRevision = trainingData.statsRevision ?? 0;
   const [state, setState] = useState<StatsHistoryState>({
     loading: true,
     summary: EMPTY_SUMMARY,
-    recentDailyRows: [],
-    difficultCharacters: [],
+    windows: EMPTY_WINDOWS,
+    streaks: EMPTY_STREAKS,
+    trends: [],
+    currentCharacter: null,
+    activeCharacters: [],
     recentConfusions: [],
+    milestones: [],
   });
 
   useEffect(() => {
@@ -64,42 +143,62 @@ export function useStatsHistory(): StatsHistoryState {
       try {
         const now = new Date();
         const { fromLocalDate, toLocalDate } = localDateWindow(now);
-        const [dailyRows, rxCharacters, txCharacters, confusionRows] =
-          await Promise.all([
-            trainingData.listDailyProjections({
-              fromLocalDate,
-              toLocalDate,
-              limit: RECENT_DAY_WINDOW,
-            }),
-            trainingData.listCharacterProjections({
-              direction: "rx",
-              limit: CHARACTER_LIMIT_PER_DIRECTION,
-            }),
-            trainingData.listCharacterProjections({
-              direction: "tx",
-              limit: CHARACTER_LIMIT_PER_DIRECTION,
-            }),
-            trainingData.listConfusionProjections({
-              limit: CONFUSION_LIMIT,
-            }),
-          ]);
+        const [
+          dailyRows,
+          rxCharacters,
+          txCharacters,
+          confusionRows,
+          milestones,
+        ] = await Promise.all([
+          trainingData.listDailyProjections({
+            fromLocalDate,
+            toLocalDate,
+            limit: RECENT_DAY_WINDOW,
+          }),
+          trainingData.listCharacterProjections({
+            direction: "rx",
+            limit: CHARACTER_LIMIT_PER_DIRECTION,
+          }),
+          trainingData.listCharacterProjections({
+            direction: "tx",
+            limit: CHARACTER_LIMIT_PER_DIRECTION,
+          }),
+          trainingData.listConfusionProjections({
+            limit: CONFUSION_LIMIT,
+          }),
+          trainingData.listMilestones
+            ? trainingData.listMilestones({ limit: MILESTONE_LIMIT })
+            : Promise.resolve([]),
+        ]);
 
         if (canceled) return;
 
         const summary = buildAnalyticsSummary(dailyRows);
-        const recentDailyRows = [...buildDailyTrend(dailyRows)].reverse();
-        const difficultCharacters = buildCharacterSummaries([
+        const windows = buildSessionWindowSummary(dailyRows, toLocalDate);
+        const streaks = buildPracticeStreakSummary(dailyRows, toLocalDate);
+        const trends = buildDailyTrend(dailyRows);
+        const characterSummaries = buildCharacterSummaries([
           ...rxCharacters,
           ...txCharacters,
-        ]).slice(0, DIFFICULT_CHARACTER_LIMIT);
+        ]);
+        const curriculum = summarizeCurrentCurriculum(trainingData);
+        const activeCharacters = buildActiveCharacterRows(
+          characterSummaries,
+          curriculum.activeCharacters,
+        );
         const recentConfusions = buildConfusionSummaries(confusionRows);
+        const milestoneSummaries = buildMilestoneSummaries(milestones);
 
         setState({
           loading: false,
           summary,
-          recentDailyRows,
-          difficultCharacters,
+          windows,
+          streaks,
+          trends,
+          currentCharacter: curriculum.currentCharacter,
+          activeCharacters,
           recentConfusions,
+          milestones: milestoneSummaries,
         });
       } catch (error) {
         if (canceled) return;
@@ -117,7 +216,7 @@ export function useStatsHistory(): StatsHistoryState {
     return () => {
       canceled = true;
     };
-  }, [trainingData]);
+  }, [trainingData, statsRevision]);
 
   return useMemo(() => state, [state]);
 }

@@ -1,4 +1,5 @@
 import { useStatsHistory } from "../hooks/useStatsHistory.ts";
+import { useSettings } from "../settings-context.ts";
 
 function formatAccuracy(value: number | null): string {
   if (value === null) return "N/A";
@@ -19,13 +20,18 @@ function formatWpm(value: number | null): string {
 }
 
 export function StatsHistoryScreen() {
+  const { settings } = useSettings();
   const {
     loading,
     error,
     summary,
-    recentDailyRows,
-    difficultCharacters,
+    windows,
+    streaks,
+    trends,
+    currentCharacter,
+    activeCharacters,
     recentConfusions,
+    milestones,
   } = useStatsHistory();
 
   if (loading) {
@@ -51,12 +57,14 @@ export function StatsHistoryScreen() {
   const empty =
     summary.totalSessions === 0 &&
     summary.totalAttempts === 0 &&
-    recentDailyRows.length === 0;
+    trends.length === 0;
 
   return (
     <section>
       <h2>History</h2>
-      <p className="stats__note">Last 30 days of analytics data.</p>
+      <p className="stats__note">
+        Progress dashboard from bounded analytics projections.
+      </p>
 
       {empty && (
         <p className="stats__empty">
@@ -67,12 +75,50 @@ export function StatsHistoryScreen() {
 
       <div className="stats__summary-grid" aria-label="Overall summary">
         <article className="stats__card">
-          <h3>Active time</h3>
-          <p>{formatDuration(summary.totalActiveMs)}</p>
+          <h3>Current character</h3>
+          <p>{currentCharacter ?? "N/A"}</p>
         </article>
         <article className="stats__card">
-          <h3>Sessions</h3>
-          <p>{summary.totalSessions}</p>
+          <h3>Current WPM</h3>
+          <p>
+            {settings.charWpm} / {settings.effectiveWpm}
+          </p>
+        </article>
+        <article className="stats__card">
+          <h3>Today active time</h3>
+          <p>{formatDuration(windows.today.activeMs)}</p>
+        </article>
+        <article className="stats__card">
+          <h3>This week active time</h3>
+          <p>{formatDuration(windows.thisWeek.activeMs)}</p>
+        </article>
+        <article className="stats__card">
+          <h3>All-time active time</h3>
+          <p>{formatDuration(windows.allTime.activeMs)}</p>
+        </article>
+        <article className="stats__card">
+          <h3>Eligible sessions</h3>
+          <p>{windows.allTime.sessionCount}</p>
+        </article>
+        <article className="stats__card">
+          <h3>Avg session duration</h3>
+          <p>
+            {windows.allTime.averageSessionDurationMs === null
+              ? "N/A"
+              : formatDuration(windows.allTime.averageSessionDurationMs)}
+          </p>
+        </article>
+        <article className="stats__card">
+          <h3>Practice days</h3>
+          <p>{streaks.practiceDayCount}</p>
+        </article>
+        <article className="stats__card">
+          <h3>Current streak</h3>
+          <p>{streaks.currentStreakDays}</p>
+        </article>
+        <article className="stats__card">
+          <h3>Longest streak</h3>
+          <p>{streaks.longestStreakDays}</p>
         </article>
         <article className="stats__card">
           <h3>Attempts</h3>
@@ -90,37 +136,32 @@ export function StatsHistoryScreen() {
           <h3>Avg effective WPM</h3>
           <p>{formatWpm(summary.averageEffectiveWpm)}</p>
         </article>
-        <article className="stats__card">
-          <h3>Active days</h3>
-          <p>{summary.activeDayCount}</p>
-        </article>
       </div>
 
-      <h3>Recent daily activity</h3>
-      {recentDailyRows.length === 0 ? (
+      <h3>30-day trends</h3>
+      {trends.length === 0 ? (
         <p className="stats__note">No daily activity yet.</p>
       ) : (
-        <ul className="stats__list" aria-label="Recent daily activity">
-          {recentDailyRows.map((row) => (
+        <ul className="stats__list" aria-label="30-day trends">
+          {[...trends].reverse().map((row) => (
             <li key={row.localDate} className="stats__list-row">
               <strong>{row.localDate}</strong>
               <span>Active {formatDuration(row.activeMs)}</span>
               <span>Sessions {row.sessionCount}</span>
-              <span>Attempts {row.attemptCount}</span>
+              <span>Avg WPM {formatWpm(row.averageEffectiveWpm)}</span>
               <span>RX {formatAccuracy(row.rx.accuracy)}</span>
               <span>TX {formatAccuracy(row.tx.accuracy)}</span>
-              <span>WPM {formatWpm(row.averageEffectiveWpm)}</span>
             </li>
           ))}
         </ul>
       )}
 
-      <h3>Difficult characters</h3>
-      {difficultCharacters.length === 0 ? (
+      <h3>Current character metrics</h3>
+      {activeCharacters.length === 0 ? (
         <p className="stats__note">No character-level observations yet.</p>
       ) : (
-        <ul className="stats__list" aria-label="Difficult characters">
-          {difficultCharacters.map((row) => (
+        <ul className="stats__list" aria-label="Current character metrics">
+          {activeCharacters.map((row) => (
             <li
               key={`${row.direction}:${row.character}`}
               className="stats__list-row"
@@ -135,8 +176,8 @@ export function StatsHistoryScreen() {
               )}
               {row.rxResponseTime && (
                 <span>
-                  RX response {Math.round(row.rxResponseTime.averageMs)}ms avg (
-                  {row.rxResponseTime.samples} samples)
+                  RX response median {Math.round(row.rxResponseTime.medianMs)}ms
+                  ({row.rxResponseTime.samples} samples)
                 </span>
               )}
             </li>
@@ -146,7 +187,7 @@ export function StatsHistoryScreen() {
 
       <h3>Recent confusions</h3>
       {recentConfusions.length === 0 ? (
-        <p className="stats__note">No confusion pairs yet.</p>
+        <p className="stats__note">No recurring confusion pairs yet.</p>
       ) : (
         <ul className="stats__list" aria-label="Recent confusions">
           {recentConfusions.map((row) => (
@@ -155,6 +196,21 @@ export function StatsHistoryScreen() {
                 {row.target} -&gt; {row.answer}
               </strong>
               <span>Count {row.count}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <h3>Latest milestones</h3>
+      {milestones.length === 0 ? (
+        <p className="stats__note">No milestones yet.</p>
+      ) : (
+        <ul className="stats__list" aria-label="Latest milestones">
+          {milestones.map((row) => (
+            <li key={row.id} className="stats__list-row">
+              <strong>{row.type}</strong>
+              <span>{row.occurredAtUtc}</span>
+              {row.character && <span>Character {row.character}</span>}
             </li>
           ))}
         </ul>

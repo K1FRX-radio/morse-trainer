@@ -122,6 +122,25 @@ describe("DexieTrainingRepository projection queries", () => {
     }
   });
 
+  it("orders milestones by most recent occurrence and applies limits", async () => {
+    const { database, repository } = makeRepository();
+
+    try {
+      await repository.open();
+      await database.milestones.bulkPut([
+        milestone("m1", "character-unlocked", "2026-09-24T10:00:00.000Z", "M"),
+        milestone("m2", "character-mastered", "2026-09-24T11:00:00.000Z", "K"),
+        milestone("m3", "curriculum-completed", "2026-09-24T11:00:00.000Z"),
+      ]);
+
+      const rows = await repository.listMilestones({ limit: 2 });
+      expect(rows.map((row) => row.id)).toEqual(["m3", "m2"]);
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
   it("rejects non-positive and oversized query limits", async () => {
     const { database, repository } = makeRepository();
 
@@ -132,8 +151,18 @@ describe("DexieTrainingRepository projection queries", () => {
         repository.listConfusionProjections({ limit: 0 }),
       ).rejects.toThrow(/positive integer/);
 
+      await expect(repository.listMilestones({ limit: 0 })).rejects.toThrow(
+        /positive integer/,
+      );
+
       await expect(
         repository.listConfusionProjections({
+          limit: MAX_PROJECTION_QUERY_LIMIT + 1,
+        }),
+      ).rejects.toThrow(new RegExp(String(MAX_PROJECTION_QUERY_LIMIT)));
+
+      await expect(
+        repository.listMilestones({
           limit: MAX_PROJECTION_QUERY_LIMIT + 1,
         }),
       ).rejects.toThrow(new RegExp(String(MAX_PROJECTION_QUERY_LIMIT)));
@@ -273,5 +302,29 @@ function confusion(target: string, answer: string, count: number) {
     target,
     answer,
     count,
+  };
+}
+
+function milestone(
+  id: string,
+  type: "character-mastered" | "character-unlocked" | "curriculum-completed",
+  occurredAtUtc: string,
+  character?: string,
+) {
+  return {
+    id,
+    schemaVersion: 1 as const,
+    updatedAt: occurredAtUtc,
+    idempotencyKey: `key:${id}`,
+    eventId: `event:${id}`,
+    type,
+    occurredAt: {
+      utc: occurredAtUtc,
+      localDate: "2026-09-24",
+      utcOffsetMinutes: 0,
+      timeZone: "UTC",
+    },
+    ...(character === undefined ? {} : { character }),
+    migrationDerived: false,
   };
 }

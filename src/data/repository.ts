@@ -121,6 +121,10 @@ export type ConfusionProjectionQuery = {
   limit: number;
 };
 
+export type MilestoneQuery = {
+  limit: number;
+};
+
 type SharedAttemptCommit = BaseAttemptCommit & {
   curriculum?: CurriculumStateRecord;
   introductions?: IntroductionsRecord;
@@ -185,6 +189,7 @@ export interface TrainingDataRepository extends LegacyMigrationRepository {
   listConfusionProjections(
     query: ConfusionProjectionQuery,
   ): Promise<ConfusionProjectionRecord[]>;
+  listMilestones(query: MilestoneQuery): Promise<MilestoneRecord[]>;
   rebuildProjections(): Promise<void>;
   exportPortableBackup(appVersion: string): Promise<PortableBackupDocument>;
   previewPortableBackup(rawJson: string): Promise<PortableBackupPreview>;
@@ -1081,6 +1086,26 @@ export class DexieTrainingRepository implements TrainingDataRepository {
 
     return ordered.map((row) =>
       structuredClone(parseConfusionProjectionRecord(structuredClone(row))),
+    );
+  }
+
+  async listMilestones(query: MilestoneQuery): Promise<MilestoneRecord[]> {
+    assertBoundedLimit(query.limit);
+
+    const rows = await this.database.milestones
+      .orderBy("occurredAt.utc")
+      .reverse()
+      .limit(query.limit)
+      .toArray();
+
+    const ordered = rows.sort(
+      (left, right) =>
+        right.occurredAt.utc.localeCompare(left.occurredAt.utc) ||
+        right.id.localeCompare(left.id),
+    );
+
+    return ordered.map((row) =>
+      structuredClone(parseMilestoneRecord(structuredClone(row))),
     );
   }
 
