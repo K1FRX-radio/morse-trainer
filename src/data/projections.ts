@@ -10,6 +10,7 @@ import {
 import { isValidSessionRecord } from "./session-validity-policy.ts";
 
 export const CHARACTER_RECENT_WINDOW = 50;
+export const CHARACTER_RX_RESPONSE_WINDOW = 20;
 
 export type ProjectionRows = {
   daily: DailyProjectionRecord[];
@@ -128,6 +129,9 @@ export function buildProjectionRows(
           character: observation.target,
           direction: attempt.direction,
           recent: [],
+          ...(attempt.direction === "rx"
+            ? { recentIsolatedRxResponseMs: [] }
+            : {}),
         };
         characters.set(id, row);
       }
@@ -148,6 +152,19 @@ export function buildProjectionRows(
       row.recent.push(recent);
       if (row.recent.length > CHARACTER_RECENT_WINDOW) {
         row.recent.splice(0, row.recent.length - CHARACTER_RECENT_WINDOW);
+      }
+
+      if (
+        attempt.direction === "rx" &&
+        attempt.exerciseType === "copy-character" &&
+        attempt.responseMs !== undefined
+      ) {
+        const samples = row.recentIsolatedRxResponseMs ?? [];
+        samples.push(attempt.responseMs);
+        if (samples.length > CHARACTER_RX_RESPONSE_WINDOW) {
+          samples.splice(0, samples.length - CHARACTER_RX_RESPONSE_WINDOW);
+        }
+        row.recentIsolatedRxResponseMs = samples;
       }
     }
   }

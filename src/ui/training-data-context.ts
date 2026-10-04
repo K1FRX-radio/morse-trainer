@@ -4,6 +4,8 @@ import type { SpeedSuggestionAfterAttempts } from "../core/settings.ts";
 import type {
   CharacterProjectionQuery,
   ConfusionProjectionQuery,
+  DashboardAggregateQuery,
+  DashboardAggregateRecord,
   DailyProjectionQuery,
   MilestoneQuery,
 } from "../data/repository.ts";
@@ -51,6 +53,9 @@ export type TrainingDataContextValue = {
   listDailyProjections: (
     query: DailyProjectionQuery,
   ) => Promise<DailyProjectionRecord[]>;
+  getDashboardAggregate?: (
+    query: DashboardAggregateQuery,
+  ) => Promise<DashboardAggregateRecord>;
   listCharacterProjections: (
     query: CharacterProjectionQuery,
   ) => Promise<CharacterProjectionRecord[]>;

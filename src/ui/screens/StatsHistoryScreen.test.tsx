@@ -11,6 +11,7 @@ import type {
   DailyProjectionRecord,
   MilestoneRecord,
 } from "../../data/models.ts";
+import type { DashboardAggregateRecord } from "../../data/repository.ts";
 import { SettingsContext } from "../settings-context.ts";
 import { TrainingDataContext } from "../training-data-context.ts";
 import { StatsHistoryScreen } from "./StatsHistoryScreen.tsx";
@@ -22,6 +23,7 @@ function trainingDataStub(
     tx?: CharacterProjectionRecord[];
     confusions?: ConfusionProjectionRecord[];
     milestones?: MilestoneRecord[];
+    aggregate?: DashboardAggregateRecord;
     statsRevision?: number;
   } = {},
 ) {
@@ -31,6 +33,12 @@ function trainingDataStub(
   const tx = overrides.tx ?? [];
   const confusions = overrides.confusions ?? [];
   const milestones = overrides.milestones ?? [];
+  const aggregate =
+    overrides.aggregate ??
+    dashboardAggregate({
+      totalSessions: daily.reduce((sum, row) => sum + row.sessionCount, 0),
+      totalAttempts: daily.reduce((sum, row) => sum + row.attemptCount, 0),
+    });
 
   return {
     statsRevision: overrides.statsRevision ?? 0,
@@ -50,6 +58,7 @@ function trainingDataStub(
       shouldSuggestSpacing: false,
     })),
     listDailyProjections: vi.fn(async () => daily),
+    getDashboardAggregate: vi.fn(async () => aggregate),
     listCharacterProjections: vi.fn(
       async (query: { direction: "rx" | "tx" }) =>
         query.direction === "rx" ? rx : tx,
@@ -159,10 +168,12 @@ describe("StatsHistoryScreen", () => {
     const first = trainingDataStub({
       statsRevision: 0,
       daily: [daily("2026-09-25", { attemptCount: 1 })],
+      aggregate: dashboardAggregate({ totalAttempts: 1 }),
     });
     const second = trainingDataStub({
       statsRevision: 1,
       daily: [daily("2026-09-25", { attemptCount: 4 })],
+      aggregate: dashboardAggregate({ totalAttempts: 4 }),
     });
 
     const { rerender } = render(
@@ -200,6 +211,40 @@ describe("StatsHistoryScreen", () => {
     await waitFor(() => {
       expect(screen.getByText("4")).toBeInTheDocument();
     });
+  });
+
+  it("uses aggregate all-time and streak metrics independently of 30-day trend rows", async () => {
+    renderStats({
+      daily: [
+        daily("2026-10-04", {
+          activeMs: 60000,
+          sessionCount: 1,
+          attemptCount: 2,
+        }),
+      ],
+      aggregate: dashboardAggregate({
+        totalActiveMs: 7_200_000,
+        totalSessions: 45,
+        totalAttempts: 300,
+        todayActiveMs: 60_000,
+        todaySessionCount: 1,
+        thisWeekActiveMs: 420_000,
+        thisWeekSessionCount: 7,
+        practiceDayCount: 61,
+        currentStreakDays: 35,
+        longestStreakDays: 35,
+      }),
+    });
+
+    await screen.findByRole("heading", { name: "History" });
+
+    expect(screen.getByText("All-time active time")).toBeInTheDocument();
+    expect(screen.getByText("2h 0m")).toBeInTheDocument();
+    expect(screen.getByText("45")).toBeInTheDocument();
+    expect(screen.getAllByText("35")).toHaveLength(2);
+
+    const trendList = screen.getByRole("list", { name: "30-day trends" });
+    expect(trendList).toHaveTextContent("2026-10-04");
   });
 
   it("is reachable from app navigation without direct Dexie access", async () => {
@@ -327,5 +372,30 @@ function milestone(
     },
     migrationDerived: false,
     ...(character === undefined ? {} : { character }),
+  };
+}
+
+function dashboardAggregate(
+  overrides: Partial<DashboardAggregateRecord> = {},
+): DashboardAggregateRecord {
+  return {
+    totalActiveMs: 0,
+    totalSessions: 0,
+    totalAttempts: 0,
+    rxCorrect: 0,
+    rxTotal: 0,
+    txCorrect: 0,
+    txTotal: 0,
+    effectiveWpmTotal: 0,
+    effectiveWpmSamples: 0,
+    activeDayCount: 0,
+    todayActiveMs: 0,
+    todaySessionCount: 0,
+    thisWeekActiveMs: 0,
+    thisWeekSessionCount: 0,
+    practiceDayCount: 0,
+    currentStreakDays: 0,
+    longestStreakDays: 0,
+    ...overrides,
   };
 }

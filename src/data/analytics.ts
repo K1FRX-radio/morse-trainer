@@ -172,11 +172,8 @@ function mostRecentObservationUtc(
 }
 
 function summarizeResponseTimes(
-  observations: readonly RecentCharacterObservation[],
+  values: readonly number[],
 ): ResponseTimeSummary | undefined {
-  const values = observations
-    .map((observation) => observation.responseMs)
-    .filter((value): value is number => value !== undefined);
   if (values.length === 0) return undefined;
 
   const latest = values.slice(-RX_MEDIAN_RESPONSE_WINDOW);
@@ -264,8 +261,15 @@ export function buildCharacterSummaries(
       (observation) => observation.correct,
     ).length;
     const latestObservationUtc = mostRecentObservationUtc(row.recent);
+    const rxResponseSamples =
+      row.recentIsolatedRxResponseMs ??
+      row.recent
+        .map((observation) => observation.responseMs)
+        .filter((value): value is number => value !== undefined);
     const responseTime =
-      row.direction === "rx" ? summarizeResponseTimes(row.recent) : undefined;
+      row.direction === "rx"
+        ? summarizeResponseTimes(rxResponseSamples)
+        : undefined;
 
     const summary: CharacterSummary = {
       character: row.character,

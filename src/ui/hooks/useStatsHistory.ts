@@ -15,6 +15,7 @@ import {
   type SessionWindowSummary,
   type StreakSummary,
 } from "../../data/analytics.ts";
+import type { DashboardAggregateRecord } from "../../data/repository.ts";
 import { captureDateTime } from "../../data/time.ts";
 import { useTrainingData } from "../training-data-context.ts";
 
@@ -121,6 +122,83 @@ function buildActiveCharacterRows(
   return rows;
 }
 
+function aggregateAccuracy(correct: number, total: number): number | null {
+  return total === 0 ? null : correct / total;
+}
+
+function averageDuration(
+  activeMs: number,
+  sessionCount: number,
+): number | null {
+  return sessionCount === 0 ? null : activeMs / sessionCount;
+}
+
+function dashboardSummaryFromAggregate(
+  aggregate: DashboardAggregateRecord,
+): OverallAnalyticsSummary {
+  return {
+    totalActiveMs: aggregate.totalActiveMs,
+    totalSessions: aggregate.totalSessions,
+    totalAttempts: aggregate.totalAttempts,
+    rx: {
+      correct: aggregate.rxCorrect,
+      total: aggregate.rxTotal,
+      accuracy: aggregateAccuracy(aggregate.rxCorrect, aggregate.rxTotal),
+    },
+    tx: {
+      correct: aggregate.txCorrect,
+      total: aggregate.txTotal,
+      accuracy: aggregateAccuracy(aggregate.txCorrect, aggregate.txTotal),
+    },
+    averageEffectiveWpm:
+      aggregate.effectiveWpmSamples === 0
+        ? null
+        : aggregate.effectiveWpmTotal / aggregate.effectiveWpmSamples,
+    activeDayCount: aggregate.activeDayCount,
+  };
+}
+
+function dashboardWindowsFromAggregate(
+  aggregate: DashboardAggregateRecord,
+): SessionWindowSummary {
+  return {
+    today: {
+      activeMs: aggregate.todayActiveMs,
+      sessionCount: aggregate.todaySessionCount,
+      averageSessionDurationMs: averageDuration(
+        aggregate.todayActiveMs,
+        aggregate.todaySessionCount,
+      ),
+    },
+    thisWeek: {
+      activeMs: aggregate.thisWeekActiveMs,
+      sessionCount: aggregate.thisWeekSessionCount,
+      averageSessionDurationMs: averageDuration(
+        aggregate.thisWeekActiveMs,
+        aggregate.thisWeekSessionCount,
+      ),
+    },
+    allTime: {
+      activeMs: aggregate.totalActiveMs,
+      sessionCount: aggregate.totalSessions,
+      averageSessionDurationMs: averageDuration(
+        aggregate.totalActiveMs,
+        aggregate.totalSessions,
+      ),
+    },
+  };
+}
+
+function dashboardStreaksFromAggregate(
+  aggregate: DashboardAggregateRecord,
+): StreakSummary {
+  return {
+    practiceDayCount: aggregate.practiceDayCount,
+    currentStreakDays: aggregate.currentStreakDays,
+    longestStreakDays: aggregate.longestStreakDays,
+  };
+}
+
 export function useStatsHistory(): StatsHistoryState {
   const trainingData = useTrainingData();
   const statsRevision = trainingData.statsRevision ?? 0;
@@ -143,8 +221,12 @@ export function useStatsHistory(): StatsHistoryState {
       try {
         const now = new Date();
         const { fromLocalDate, toLocalDate } = localDateWindow(now);
+        const dashboardAggregatePromise = trainingData.getDashboardAggregate
+          ? trainingData.getDashboardAggregate({ toLocalDate })
+          : Promise.resolve<DashboardAggregateRecord | undefined>(undefined);
         const [
           dailyRows,
+          dashboardAggregate,
           rxCharacters,
           txCharacters,
           confusionRows,
@@ -155,6 +237,7 @@ export function useStatsHistory(): StatsHistoryState {
             toLocalDate,
             limit: RECENT_DAY_WINDOW,
           }),
+          dashboardAggregatePromise,
           trainingData.listCharacterProjections({
             direction: "rx",
             limit: CHARACTER_LIMIT_PER_DIRECTION,
@@ -173,9 +256,15 @@ export function useStatsHistory(): StatsHistoryState {
 
         if (canceled) return;
 
-        const summary = buildAnalyticsSummary(dailyRows);
-        const windows = buildSessionWindowSummary(dailyRows, toLocalDate);
-        const streaks = buildPracticeStreakSummary(dailyRows, toLocalDate);
+        const summary = dashboardAggregate
+          ? dashboardSummaryFromAggregate(dashboardAggregate)
+          : buildAnalyticsSummary(dailyRows);
+        const windows = dashboardAggregate
+          ? dashboardWindowsFromAggregate(dashboardAggregate)
+          : buildSessionWindowSummary(dailyRows, toLocalDate);
+        const streaks = dashboardAggregate
+          ? dashboardStreaksFromAggregate(dashboardAggregate)
+          : buildPracticeStreakSummary(dailyRows, toLocalDate);
         const trends = buildDailyTrend(dailyRows);
         const characterSummaries = buildCharacterSummaries([
           ...rxCharacters,

@@ -34,6 +34,58 @@ describe("DexieTrainingRepository projection queries", () => {
     }
   });
 
+  it("computes dashboard aggregate with all-time totals and long streaks", async () => {
+    const { database, repository } = makeRepository();
+
+    try {
+      await repository.open();
+      const rows = Array.from({ length: 40 }, (_, index) => {
+        const date = new Date(Date.UTC(2026, 8, 1 + index));
+        const localDate = date.toISOString().slice(0, 10);
+        return {
+          id: `daily:${localDate}`,
+          schemaVersion: 1 as const,
+          updatedAt: "2026-10-04T18:00:00.000Z",
+          projectionVersion: 1 as const,
+          localDate,
+          activeMs: 60_000,
+          sessionCount: 1,
+          attemptCount: 2,
+          rxCorrect: 1,
+          rxTotal: 1,
+          txCorrect: 1,
+          txTotal: 1,
+          effectiveWpmTotal: 12,
+          effectiveWpmSamples: 1,
+        };
+      });
+
+      await database.dailyProjections.bulkPut(rows);
+
+      const trendRows = await repository.listDailyProjections({
+        fromLocalDate: "2026-09-11",
+        toLocalDate: "2026-10-10",
+        limit: 30,
+      });
+      expect(trendRows).toHaveLength(30);
+
+      const aggregate = await repository.getDashboardAggregate({
+        toLocalDate: "2026-10-04",
+      });
+
+      expect(aggregate.totalSessions).toBe(34);
+      expect(aggregate.totalAttempts).toBe(68);
+      expect(aggregate.practiceDayCount).toBe(34);
+      expect(aggregate.currentStreakDays).toBe(34);
+      expect(aggregate.longestStreakDays).toBe(34);
+      expect(aggregate.todaySessionCount).toBe(1);
+      expect(aggregate.todayActiveMs).toBe(60_000);
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
   it("enforces daily limits and rejects invalid date ranges", async () => {
     const { database, repository } = makeRepository();
 

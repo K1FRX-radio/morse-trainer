@@ -4,6 +4,8 @@ import type { SpeedSuggestionAfterAttempts } from "../core/settings.ts";
 import type {
   CharacterProjectionQuery,
   ConfusionProjectionQuery,
+  DashboardAggregateQuery,
+  DashboardAggregateRecord,
   DailyProjectionQuery,
   MilestoneQuery,
 } from "../data/repository.ts";
@@ -52,6 +54,9 @@ type TrainingDataProviderProps = {
   listDailyProjections: (
     query: DailyProjectionQuery,
   ) => Promise<DailyProjectionRecord[]>;
+  getDashboardAggregate?: (
+    query: DashboardAggregateQuery,
+  ) => Promise<DashboardAggregateRecord>;
   listCharacterProjections: (
     query: CharacterProjectionQuery,
   ) => Promise<CharacterProjectionRecord[]>;
@@ -89,6 +94,7 @@ export function TrainingDataProvider({
   startPracticeSessionPersistence,
   getRetryClassification,
   listDailyProjections,
+  getDashboardAggregate,
   listCharacterProjections,
   listConfusionProjections,
   listMilestones,
@@ -124,6 +130,9 @@ export function TrainingDataProvider({
           await persistence.interrupt(snapshot);
           bumpStatsRevision();
         },
+        async retry() {
+          await persistence.retry();
+        },
         async acceptAdvancement(acceptance) {
           const next = await persistence.acceptAdvancement(acceptance);
           bumpStatsRevision();
@@ -152,6 +161,9 @@ export function TrainingDataProvider({
         async interrupt(snapshot) {
           await persistence.interrupt(snapshot);
           bumpStatsRevision();
+        },
+        async retry() {
+          await persistence.retry();
         },
       };
     },
@@ -225,6 +237,7 @@ export function TrainingDataProvider({
         startPracticeSessionPersistenceWithRefresh,
       getRetryClassification,
       listDailyProjections,
+      ...(getDashboardAggregate ? { getDashboardAggregate } : {}),
       listCharacterProjections,
       listConfusionProjections,
       ...(listMilestones ? { listMilestones } : {}),
@@ -248,6 +261,7 @@ export function TrainingDataProvider({
       startPracticeSessionPersistenceWithRefresh,
       getRetryClassification,
       listDailyProjections,
+      getDashboardAggregate,
       listCharacterProjections,
       listConfusionProjections,
       listMilestones,
