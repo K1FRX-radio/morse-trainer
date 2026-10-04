@@ -7,11 +7,11 @@ only which issue should be implemented next and what follows it.
 
 ## Next
 
-- #51 — Checkpoint 4: audit and close Persistence & Analytics milestone
+- #52 — Phase 5 kickoff: installable PWA foundation, offline shell, and safe updates
 
 ## Queue
 
-1. #52 — Phase 5 kickoff: installable PWA foundation, offline shell, and safe updates
+None.
 
 ## Later / stretch
 
@@ -23,6 +23,7 @@ None.
 
 ## Recently completed
 
+- #51 — Checkpoint 4: audit and close Persistence & Analytics milestone
 - #50 — Milestone 4: publish data/metrics docs and 100k-history benchmark
 - #49 — Milestone 4: finish versioned backup, replace-import, and reset
 - #28 — Cleanup: remove dead 3-char notice delay configuration
