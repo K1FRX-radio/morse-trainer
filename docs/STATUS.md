@@ -2,7 +2,7 @@
 
 ## Current milestone
 
-Milestone 4 (Persistence and analytics MVP) is active.
+Milestone 4 (Persistence and analytics MVP) is in progress.
 
 The app has moved from portable browser-only state to a versioned IndexedDB
 runtime data layer, exposes persisted analytics in the History screen, and now
@@ -52,20 +52,14 @@ Milestone 5 (PWA/install/release polish) has not started.
   - scheduled CW playback, anti-click handling, and replay safety;
   - output-device selection support where browser APIs permit it.
 
-## In progress
+## Checkpoint 4 audit status
 
-- Milestone 4 reliability, deployment, invariant-regression, and cleanup work.
-- Closure of the remaining Milestone 4 documentation/data-management gate.
+- Checkpoint 4 acceptance audit is in progress and currently blocked.
+- Audit findings are recorded in `docs/checkpoint-4-audit.md`.
+- Blockers are tracked in issues #57 and #58 and must be completed before #51
+  can close Milestone 4.
 
 Implementation order is tracked separately in `docs/ROADMAP.md`.
-
-## Remaining for Milestone 4 gate
-
-1. Ensure backup/import/reset scope and behavior match the master plan gate.
-2. Complete/update milestone documentation and hand-computed fixture coverage
-   where needed.
-3. Keep migration, interruption, and projection rebuild scenarios covered by
-   deterministic tests.
 
 ## Milestone 5 and later (not started)
 

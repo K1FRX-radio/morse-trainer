@@ -2,7 +2,7 @@
 
 ## Product Plan, Technical Roadmap, Migration Plan, and Agent Build Prompt
 
-**Status:** Living master plan; Milestone 4 persistence and analytics work is in progress  
+**Status:** Living master plan; Milestone 4 persistence and analytics work is in progress (checkpoint blockers #57 and #58 open)  
 **Owner:** K1FRX Radio  
 **Working product name:** K1FRX Morse Trainer  
 **Document purpose:** Give a development agent enough product, technical, and delivery context to build the application without relying on the original conversation.
