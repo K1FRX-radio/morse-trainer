@@ -7,11 +7,13 @@ only which issue should be implemented next and what follows it.
 
 ## Next
 
-- #52 — Phase 5 kickoff: installable PWA foundation, offline shell, and safe updates
+- #57 — Milestone 4 blocker: complete Progress dashboard contract and analytics semantics
 
 ## Queue
 
-None.
+1. #58 — Milestone 4 blocker: finish IndexedDB lifecycle hardening and browser acceptance checks
+2. #51 — Checkpoint 4: audit and close Persistence & Analytics milestone
+3. #52 — Phase 5 kickoff: installable PWA foundation, offline shell, and safe updates
 
 ## Later / stretch
 
@@ -23,7 +25,6 @@ None.
 
 ## Recently completed
 
-- #51 — Checkpoint 4: audit and close Persistence & Analytics milestone
 - #50 — Milestone 4: publish data/metrics docs and 100k-history benchmark
 - #49 — Milestone 4: finish versioned backup, replace-import, and reset
 - #28 — Cleanup: remove dead 3-char notice delay configuration

@@ -2,12 +2,12 @@
 
 ## Current milestone
 
-Milestone 4 (Persistence and analytics MVP) is complete.
+Milestone 4 (Persistence and analytics MVP) is in progress.
 
 The app has moved from portable browser-only state to a versioned IndexedDB
 runtime data layer, exposes persisted analytics in the History screen, and now
 has durable Learn and Practice workflows with explicit persistence recovery.
-Phase 5 is next, starting with issue #52 for installable PWA foundations.
+Milestone 5 (PWA/install/release polish) has not started.
 
 ## Completed in repository
 
@@ -52,14 +52,12 @@ Phase 5 is next, starting with issue #52 for installable PWA foundations.
   - scheduled CW playback, anti-click handling, and replay safety;
   - output-device selection support where browser APIs permit it.
 
-## Milestone 4 closure evidence
+## Checkpoint 4 audit status
 
-- Checkpoint 4 acceptance audit completed and recorded in
-  `docs/checkpoint-4-audit.md`.
-- `docs/data-model.md` and `docs/metrics.md` are current for the completed
-  persistence and analytics scope.
-- Full automated validation and dedicated 100k benchmark passed in the
-  checkpoint audit run.
+- Checkpoint 4 acceptance audit is in progress and currently blocked.
+- Audit findings are recorded in `docs/checkpoint-4-audit.md`.
+- Blockers are tracked in issues #57 and #58 and must be completed before #51
+  can close Milestone 4.
 
 Implementation order is tracked separately in `docs/ROADMAP.md`.
 

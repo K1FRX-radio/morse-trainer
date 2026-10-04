@@ -2,7 +2,9 @@
 
 Date: 2026-10-04
 
-This document records the acceptance audit for Milestone 4 (Persistence and analytics MVP) and confirms repository readiness to start Phase 5.
+This document records the acceptance audit for Milestone 4 (Persistence and analytics MVP).
+
+Checkpoint outcome: blockers found. Milestone 4 is not closed yet.
 
 ## Scope reviewed
 
@@ -20,6 +22,22 @@ The audit reviewed Phase 4 requirements in the master plan and milestone documen
 - Hand-calculated metrics fixtures.
 - Backup -> reset -> replace-import equivalence and import rejection safety.
 - 100k-attempt performance evidence.
+
+## Audit disposition
+
+The audit identified substantive remaining requirements that block Checkpoint 4 closure.
+
+Tracking issues:
+
+- #57 — Milestone 4 blocker: complete Progress dashboard contract and analytics semantics.
+- #58 — Milestone 4 blocker: finish IndexedDB lifecycle hardening and browser acceptance checks.
+
+Required execution order before checkpoint closure:
+
+1. #57
+2. #58
+3. #51 (re-run closeout audit)
+4. #52 (Phase 5 kickoff)
 
 ## Automated validation evidence
 
@@ -60,20 +78,18 @@ Budget check:
 
 ## Documentation currency checks
 
-Confirmed current for Milestone 4 closeout:
+Confirmed current for the completed subset:
 
 - `docs/data-model.md`
 - `docs/metrics.md`
 
-Milestone transition docs updated:
-
-- `docs/STATUS.md` marks Milestone 4 complete and Phase 5 next.
-- `docs/K1FRX_MORSE_TRAINER_PROJECT_PLAN_AND_BUILD_PROMPT.md` status line updated.
-- `docs/ROADMAP.md` advanced to issue #52 as Next.
+Repository-level milestone status documents must remain in "Milestone 4 in progress"
+state until #57 and #58 are complete and #51 is re-run.
 
 ## Defect handling outcome
 
-No new substantive defects or missing requirements were identified during this checkpoint audit. No follow-up blocker issue was required.
+Substantive blockers were identified and tracked as focused issues (#57, #58).
+Checkpoint closure is deferred until those blockers are resolved.
 
 ## Manual verification status and limitations
 
@@ -83,8 +99,11 @@ Still manual by nature and outside deterministic unit coverage:
 - cross-browser output-device routing behavior where APIs differ;
 - physical hardware input behavior on real devices.
 
-These remain accepted manual verification areas and do not block Milestone 4 closure.
+These manual areas still require explicit checkpoint evidence and remain part of
+the #58 acceptance work.
 
 ## Conclusion
 
-Checkpoint 4 acceptance criteria are satisfied. Milestone 4 is complete, and the repository is ready to begin Phase 5 work (PWA/installability, accessibility, and web release hardening).
+Checkpoint 4 acceptance criteria are not yet fully satisfied. Milestone 4
+remains in progress pending blocker completion (#57, #58), after which #51
+should be re-run for final acceptance closure.
