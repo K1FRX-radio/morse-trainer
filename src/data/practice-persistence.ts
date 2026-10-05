@@ -1,5 +1,11 @@
 import { gradeCopyDetailed, normalizeCopy } from "../core/scoring.ts";
 import {
+  type CharacterWpmBand,
+  type EffectiveWpmBand,
+  normalizeCharacterWpmBand,
+  normalizeEffectiveWpmBand,
+} from "../core/settings.ts";
+import {
   RECORD_SCHEMA_VERSION,
   SCORING_ALGORITHM_VERSION,
   type AttemptExerciseType,
@@ -132,6 +138,8 @@ export class DurablePracticeSession implements PracticeSessionPersistence {
   private terminal = false;
   private leaseRenewalCanceled = false;
   private readonly cancelLeaseRenewal: () => void;
+  private readonly charWpmBand: CharacterWpmBand;
+  private readonly effectiveWpmBand: EffectiveWpmBand;
 
   private constructor(
     private readonly repository: TrainingDataRepository,
@@ -143,6 +151,11 @@ export class DurablePracticeSession implements PracticeSessionPersistence {
     scheduleLeaseRenewal: (renew: () => void) => () => void,
   ) {
     this.record = record;
+    this.charWpmBand = normalizeCharacterWpmBand(settings.charWpm);
+    this.effectiveWpmBand = normalizeEffectiveWpmBand(
+      settings.effectiveWpm,
+      this.charWpmBand,
+    );
     this.cancelLeaseRenewal = scheduleLeaseRenewal(() => {
       if (this.closingStatus) return;
       void this.enqueue(async () => {
@@ -168,6 +181,7 @@ export class DurablePracticeSession implements PracticeSessionPersistence {
     const createId = dependencies.createId ?? defaultId;
     const startedAt = captureDateTime(now());
     const ownerTabId = createId();
+    const charWpmBand = normalizeCharacterWpmBand(options.settings.charWpm);
     const record: TrainingSessionRecord = {
       id: createId(),
       schemaVersion: RECORD_SCHEMA_VERSION,
@@ -183,6 +197,11 @@ export class DurablePracticeSession implements PracticeSessionPersistence {
       completedCards: 0,
       valid: false,
       ...options.settings,
+      charWpmBand,
+      effectiveWpmBand: normalizeEffectiveWpmBand(
+        options.settings.effectiveWpm,
+        charWpmBand,
+      ),
       unlockedAtStart: [...options.activeCharacters],
       appVersion: dependencies.appVersion ?? "0.0.0",
       revision: 0,
@@ -247,6 +266,8 @@ export class DurablePracticeSession implements PracticeSessionPersistence {
         ? {}
         : { schedulerReason: evidence.schedulerReason }),
       ...this.settings,
+      charWpmBand: this.charWpmBand,
+      effectiveWpmBand: this.effectiveWpmBand,
     };
     const frozenSnapshot = structuredClone(snapshot);
 

@@ -1,7 +1,16 @@
 import { z } from "zod";
 import { KOCH_ORDER } from "../content/curriculum-data.ts";
 import { normalizeCopy } from "../core/scoring.ts";
-import { PERSISTED_SETTING_RANGES, SETTING_RANGES } from "../core/settings.ts";
+import {
+  CHARACTER_WPM_BANDS,
+  EFFECTIVE_WPM_BANDS,
+  PERSISTED_SETTING_RANGES,
+  SETTING_RANGES,
+  normalizeCharacterWpmBand,
+  normalizeEffectiveWpmBand,
+  type CharacterWpmBand,
+  type EffectiveWpmBand,
+} from "../core/settings.ts";
 import type {
   MigrationLedgerRecord,
   MilestoneRecord,
@@ -59,6 +68,36 @@ const activeDateBucketSchema = z
   })
   .strict();
 
+const characterWpmBandSchema = z
+  .number()
+  .int()
+  .refine(
+    (value): value is CharacterWpmBand =>
+      CHARACTER_WPM_BANDS.includes(value as CharacterWpmBand),
+    "charWpmBand must be a canonical character speed band",
+  );
+
+const effectiveWpmBandSchema = z
+  .number()
+  .int()
+  .refine(
+    (value): value is EffectiveWpmBand =>
+      EFFECTIVE_WPM_BANDS.includes(value as EffectiveWpmBand),
+    "effectiveWpmBand must be a canonical effective speed band",
+  );
+
+function deriveSpeedBands(
+  charWpm: number,
+  effectiveWpm: number,
+): {
+  charWpmBand: CharacterWpmBand;
+  effectiveWpmBand: EffectiveWpmBand;
+} {
+  const charWpmBand = normalizeCharacterWpmBand(charWpm);
+  const effectiveWpmBand = normalizeEffectiveWpmBand(effectiveWpm, charWpmBand);
+  return { charWpmBand, effectiveWpmBand };
+}
+
 export const trainingSessionRecordSchema = persistedRecordSchema
   .extend({
     source: z.enum([
@@ -79,6 +118,8 @@ export const trainingSessionRecordSchema = persistedRecordSchema
     valid: z.boolean(),
     charWpm: z.number().finite().positive(),
     effectiveWpm: z.number().finite().positive(),
+    charWpmBand: characterWpmBandSchema.optional(),
+    effectiveWpmBand: effectiveWpmBandSchema.optional(),
     toneHz: z.number().finite().positive(),
     noiseLevel: z.number().finite().min(0).max(1),
     unlockedAtStart: z.array(z.string()),
@@ -109,6 +150,42 @@ export const trainingSessionRecordSchema = persistedRecordSchema
         code: "custom",
         path: ["effectiveWpm"],
         message: "effective WPM cannot exceed character WPM",
+      });
+    }
+    const expectedBands = deriveSpeedBands(
+      session.charWpm,
+      session.effectiveWpm,
+    );
+    if (
+      session.charWpmBand !== undefined &&
+      session.charWpmBand !== expectedBands.charWpmBand
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["charWpmBand"],
+        message: "charWpmBand must match normalized charWpm",
+      });
+    }
+    if (
+      session.effectiveWpmBand !== undefined &&
+      session.effectiveWpmBand !== expectedBands.effectiveWpmBand
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["effectiveWpmBand"],
+        message:
+          "effectiveWpmBand must match normalized effectiveWpm constrained by charWpm",
+      });
+    }
+    if (
+      session.charWpmBand !== undefined &&
+      session.effectiveWpmBand !== undefined &&
+      session.effectiveWpmBand > session.charWpmBand
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["effectiveWpmBand"],
+        message: "effectiveWpmBand cannot exceed charWpmBand",
       });
     }
     if (
@@ -168,6 +245,18 @@ export const trainingSessionRecordSchema = persistedRecordSchema
         message: "session end cannot precede its start",
       });
     }
+  })
+  .transform((session) => {
+    const expectedBands = deriveSpeedBands(
+      session.charWpm,
+      session.effectiveWpm,
+    );
+    return {
+      ...session,
+      charWpmBand: session.charWpmBand ?? expectedBands.charWpmBand,
+      effectiveWpmBand:
+        session.effectiveWpmBand ?? expectedBands.effectiveWpmBand,
+    };
   });
 
 const alignmentObservationSchema = z
@@ -316,6 +405,8 @@ export const trainingAttemptRecordSchema = persistedRecordSchema
     keying: encodedKeyingTimingSchema.optional(),
     charWpm: z.number().finite().positive(),
     effectiveWpm: z.number().finite().positive(),
+    charWpmBand: characterWpmBandSchema.optional(),
+    effectiveWpmBand: effectiveWpmBandSchema.optional(),
     toneHz: z.number().finite().positive(),
     noiseLevel: z.number().finite().min(0).max(1),
   })
@@ -336,6 +427,38 @@ export const trainingAttemptRecordSchema = persistedRecordSchema
       addIssue(
         ["exerciseType"],
         `${attempt.direction} attempts use ${attempt.direction === "tx" ? "send" : "copy"} exercises`,
+      );
+    }
+    if (attempt.effectiveWpm > attempt.charWpm) {
+      addIssue(["effectiveWpm"], "effective WPM cannot exceed character WPM");
+    }
+    const expectedBands = deriveSpeedBands(
+      attempt.charWpm,
+      attempt.effectiveWpm,
+    );
+    if (
+      attempt.charWpmBand !== undefined &&
+      attempt.charWpmBand !== expectedBands.charWpmBand
+    ) {
+      addIssue(["charWpmBand"], "charWpmBand must match normalized charWpm");
+    }
+    if (
+      attempt.effectiveWpmBand !== undefined &&
+      attempt.effectiveWpmBand !== expectedBands.effectiveWpmBand
+    ) {
+      addIssue(
+        ["effectiveWpmBand"],
+        "effectiveWpmBand must match normalized effectiveWpm constrained by charWpm",
+      );
+    }
+    if (
+      attempt.charWpmBand !== undefined &&
+      attempt.effectiveWpmBand !== undefined &&
+      attempt.effectiveWpmBand > attempt.charWpmBand
+    ) {
+      addIssue(
+        ["effectiveWpmBand"],
+        "effectiveWpmBand cannot exceed charWpmBand",
       );
     }
     if (
@@ -446,6 +569,18 @@ export const trainingAttemptRecordSchema = persistedRecordSchema
         "observations must cover every normalized response character",
       );
     }
+  })
+  .transform((attempt) => {
+    const expectedBands = deriveSpeedBands(
+      attempt.charWpm,
+      attempt.effectiveWpm,
+    );
+    return {
+      ...attempt,
+      charWpmBand: attempt.charWpmBand ?? expectedBands.charWpmBand,
+      effectiveWpmBand:
+        attempt.effectiveWpmBand ?? expectedBands.effectiveWpmBand,
+    };
   });
 
 export const schemaMetadataRecordSchema = persistedRecordSchema
