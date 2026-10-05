@@ -83,6 +83,28 @@ Global unlock/mastery stays in curriculum state exactly as today:
 Per-character RX proficiency is tracked by character-speed band using bounded,
 rolling evidence windows.
 
+Phase C evidence contract:
+
+- only RX attempts contribute (TX never contributes);
+- all clean RX exercise types contribute:
+  - `copy-character`
+  - `copy-group`
+  - `copy-word`
+  - `continuous-copy`
+- clean RX evidence may come from Learn, Copy Practice, or Imported Text RX
+  sources;
+- assisted, replayed, and abandoned attempts are excluded;
+- each non-insertion alignment observation contributes one proficiency
+  observation:
+  - `match`
+  - `substitution`
+  - `deletion`
+- insertion observations are excluded;
+- source evidence windows are bounded independently per `(character,
+charWpmBand)` to the latest 50 clean observations;
+- target-band weighted evidence is derived from retained source-band windows
+  using the transfer weights below.
+
 Conceptual shape:
 
 ```ts

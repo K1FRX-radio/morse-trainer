@@ -1,5 +1,8 @@
 import type { TrainingAttemptRecord, TrainingSessionRecord } from "./models.ts";
-import { buildProjectionRows } from "./projections.ts";
+import {
+  buildCharacterSpeedProficiency,
+  buildProjectionRows,
+} from "./projections.ts";
 
 function session(
   overrides: Partial<TrainingSessionRecord>,
@@ -165,11 +168,24 @@ function attempt(overrides: {
   occurredAtUtc: string;
   exerciseType: TrainingAttemptRecord["exerciseType"];
   direction: "rx" | "tx";
-  target: string;
-  answer: string;
-  correct: boolean;
+  target?: string;
+  answer?: string;
+  correct?: boolean;
+  observations?: TrainingAttemptRecord["observations"];
+  source?: TrainingAttemptRecord["source"];
+  assisted?: boolean;
+  replayed?: boolean;
+  abandoned?: boolean;
   responseMs?: number;
+  charWpm?: number;
+  effectiveWpm?: number;
+  charWpmBand?: TrainingAttemptRecord["charWpmBand"];
+  effectiveWpmBand?: TrainingAttemptRecord["effectiveWpmBand"];
 }): TrainingAttemptRecord {
+  const target = overrides.target ?? "K";
+  const answer = overrides.answer ?? target;
+  const correct = overrides.correct ?? true;
+
   return {
     id: overrides.id,
     schemaVersion: 1,
@@ -181,34 +197,457 @@ function attempt(overrides: {
       utcOffsetMinutes: 0,
       timeZone: "UTC",
     },
-    source: "learn",
+    source: overrides.source ?? "learn",
     direction: overrides.direction,
     exerciseType: overrides.exerciseType,
-    rawTarget: overrides.target,
-    rawResponse: overrides.answer,
-    normalizedTarget: overrides.target,
-    normalizedResponse: overrides.answer,
-    correct: overrides.correct,
-    assisted: false,
-    replayed: false,
-    abandoned: false,
+    rawTarget: target,
+    rawResponse: answer,
+    normalizedTarget: target,
+    normalizedResponse: answer,
+    correct,
+    assisted: overrides.assisted ?? false,
+    replayed: overrides.replayed ?? false,
+    abandoned: overrides.abandoned ?? false,
     scoringAlgorithmVersion: "alignment-v1",
-    observations: [
+    observations: overrides.observations ?? [
       {
-        kind: overrides.correct ? "match" : "substitution",
-        correct: overrides.correct,
+        kind: correct ? "match" : "substitution",
+        correct,
         targetIndex: 0,
-        target: overrides.target,
+        target,
         answerIndex: 0,
-        answer: overrides.answer,
+        answer,
       },
     ],
     ...(overrides.responseMs === undefined
       ? {}
       : { responseMs: overrides.responseMs }),
-    charWpm: 20,
-    effectiveWpm: 12,
+    charWpm: overrides.charWpm ?? 20,
+    effectiveWpm: overrides.effectiveWpm ?? 12,
+    ...(overrides.charWpmBand === undefined
+      ? {}
+      : { charWpmBand: overrides.charWpmBand }),
+    ...(overrides.effectiveWpmBand === undefined
+      ? {}
+      : { effectiveWpmBand: overrides.effectiveWpmBand }),
     toneHz: 600,
     noiseLevel: 0,
   };
 }
+
+describe("buildCharacterSpeedProficiency", () => {
+  it("computes same-band and transfer-weighted evidence per character band", () => {
+    const attempts = [
+      attempt({
+        id: "a1",
+        occurredAtUtc: "2026-09-24T10:00:00.000Z",
+        exerciseType: "copy-character",
+        direction: "rx",
+        target: "K",
+        answer: "K",
+        correct: true,
+        charWpmBand: 20,
+        effectiveWpmBand: 12,
+      }),
+      attempt({
+        id: "a2",
+        occurredAtUtc: "2026-09-24T10:01:00.000Z",
+        exerciseType: "copy-character",
+        direction: "rx",
+        target: "K",
+        answer: "M",
+        correct: false,
+        charWpmBand: 20,
+        effectiveWpmBand: 12,
+      }),
+      attempt({
+        id: "a3",
+        occurredAtUtc: "2026-09-24T10:02:00.000Z",
+        exerciseType: "copy-character",
+        direction: "rx",
+        target: "K",
+        answer: "K",
+        correct: true,
+        charWpmBand: 25,
+        effectiveWpmBand: 15,
+      }),
+      attempt({
+        id: "a4",
+        occurredAtUtc: "2026-09-24T10:03:00.000Z",
+        exerciseType: "copy-character",
+        direction: "rx",
+        target: "K",
+        answer: "M",
+        correct: false,
+        charWpmBand: 30,
+        effectiveWpmBand: 18,
+      }),
+      attempt({
+        id: "a5",
+        occurredAtUtc: "2026-09-24T10:04:00.000Z",
+        exerciseType: "copy-character",
+        direction: "rx",
+        target: "K",
+        answer: "K",
+        correct: true,
+        charWpmBand: 40,
+        effectiveWpmBand: 20,
+      }),
+    ];
+
+    const result = buildCharacterSpeedProficiency({ attempts });
+    const k = result.find((row) => row.character === "K");
+    expect(k).toBeDefined();
+
+    const band20 = k?.bands.find((entry) => entry.band === 20);
+    expect(band20).toMatchObject({
+      attempts: 2,
+      correct: 1,
+      weightedAttempts: 2.75,
+      weightedCorrect: 1.5,
+    });
+
+    const band40 = k?.bands.find((entry) => entry.band === 40);
+    expect(band40).toMatchObject({
+      attempts: 1,
+      correct: 1,
+      weightedAttempts: 1.25,
+      weightedCorrect: 1,
+    });
+  });
+
+  it("uses bounded per-character windows", () => {
+    const attempts = [
+      attempt({
+        id: "w1",
+        occurredAtUtc: "2026-09-24T10:00:00.000Z",
+        exerciseType: "copy-character",
+        direction: "rx",
+        target: "K",
+        answer: "K",
+        correct: true,
+        charWpmBand: 20,
+        effectiveWpmBand: 12,
+      }),
+      attempt({
+        id: "w2",
+        occurredAtUtc: "2026-09-24T10:01:00.000Z",
+        exerciseType: "copy-character",
+        direction: "rx",
+        target: "K",
+        answer: "M",
+        correct: false,
+        charWpmBand: 20,
+        effectiveWpmBand: 12,
+      }),
+      attempt({
+        id: "w3",
+        occurredAtUtc: "2026-09-24T10:02:00.000Z",
+        exerciseType: "copy-character",
+        direction: "rx",
+        target: "K",
+        answer: "K",
+        correct: true,
+        charWpmBand: 20,
+        effectiveWpmBand: 12,
+      }),
+    ];
+
+    const result = buildCharacterSpeedProficiency({
+      attempts,
+      perCharacterWindow: 2,
+    });
+    const band20 = result
+      .find((row) => row.character === "K")
+      ?.bands.find((entry) => entry.band === 20);
+    expect(band20).toMatchObject({
+      attempts: 2,
+      correct: 1,
+      weightedAttempts: 2,
+      weightedCorrect: 1,
+    });
+  });
+
+  it("keeps independent bounded windows per source speed band", () => {
+    const attempts: TrainingAttemptRecord[] = [];
+
+    attempts.push(
+      attempt({
+        id: "k20-old-1",
+        occurredAtUtc: "2026-09-24T10:00:00.000Z",
+        exerciseType: "copy-character",
+        direction: "rx",
+        target: "K",
+        answer: "K",
+        correct: true,
+        charWpmBand: 20,
+        effectiveWpmBand: 12,
+      }),
+    );
+    attempts.push(
+      attempt({
+        id: "k20-old-2",
+        occurredAtUtc: "2026-09-24T10:01:00.000Z",
+        exerciseType: "copy-character",
+        direction: "rx",
+        target: "K",
+        answer: "M",
+        correct: false,
+        charWpmBand: 20,
+        effectiveWpmBand: 12,
+      }),
+    );
+
+    for (let index = 0; index < 3; index += 1) {
+      attempts.push(
+        attempt({
+          id: `k40-${index}`,
+          occurredAtUtc: `2026-09-24T10:1${index}:00.000Z`,
+          exerciseType: "copy-character",
+          direction: "rx",
+          target: "K",
+          answer: "K",
+          correct: true,
+          charWpmBand: 40,
+          effectiveWpmBand: 20,
+        }),
+      );
+    }
+
+    for (let index = 0; index < 3; index += 1) {
+      attempts.push(
+        attempt({
+          id: `k20-new-${index}`,
+          occurredAtUtc: `2026-09-24T10:2${index}:00.000Z`,
+          exerciseType: "copy-character",
+          direction: "rx",
+          target: "K",
+          answer: "K",
+          correct: true,
+          charWpmBand: 20,
+          effectiveWpmBand: 12,
+        }),
+      );
+    }
+
+    const result = buildCharacterSpeedProficiency({
+      attempts,
+      perCharacterWindow: 2,
+    });
+
+    const k = result.find((row) => row.character === "K");
+    expect(k).toBeDefined();
+
+    const band20 = k?.bands.find((entry) => entry.band === 20);
+    expect(band20).toMatchObject({
+      attempts: 2,
+      correct: 2,
+      weightedAttempts: 2,
+      weightedCorrect: 2,
+    });
+
+    const band40 = k?.bands.find((entry) => entry.band === 40);
+    expect(band40).toMatchObject({
+      attempts: 2,
+      correct: 2,
+      weightedAttempts: 2,
+      weightedCorrect: 2,
+    });
+  });
+
+  it("includes only clean RX evidence and includes all intended RX exercise sources", () => {
+    const attempts: TrainingAttemptRecord[] = [
+      attempt({
+        id: "excluded-assisted",
+        occurredAtUtc: "2026-09-24T11:00:00.000Z",
+        exerciseType: "copy-character",
+        direction: "rx",
+        target: "K",
+        answer: "K",
+        correct: true,
+        assisted: true,
+        charWpmBand: 20,
+        effectiveWpmBand: 12,
+      }),
+      attempt({
+        id: "excluded-replayed",
+        occurredAtUtc: "2026-09-24T11:01:00.000Z",
+        exerciseType: "copy-group",
+        direction: "rx",
+        target: "K",
+        answer: "K",
+        correct: true,
+        replayed: true,
+        charWpmBand: 20,
+        effectiveWpmBand: 12,
+      }),
+      attempt({
+        id: "excluded-abandoned",
+        occurredAtUtc: "2026-09-24T11:02:00.000Z",
+        exerciseType: "copy-word",
+        direction: "rx",
+        target: "K",
+        answer: "K",
+        correct: true,
+        abandoned: true,
+        charWpmBand: 20,
+        effectiveWpmBand: 12,
+      }),
+      attempt({
+        id: "excluded-tx",
+        occurredAtUtc: "2026-09-24T11:03:00.000Z",
+        exerciseType: "send-character",
+        direction: "tx",
+        target: "K",
+        answer: "K",
+        correct: true,
+        charWpmBand: 20,
+        effectiveWpmBand: 12,
+      }),
+      attempt({
+        id: "included-copy-practice",
+        occurredAtUtc: "2026-09-24T11:04:00.000Z",
+        exerciseType: "copy-character",
+        direction: "rx",
+        source: "copy-practice",
+        target: "K",
+        answer: "K",
+        correct: true,
+        charWpmBand: 20,
+        effectiveWpmBand: 12,
+      }),
+      attempt({
+        id: "included-group",
+        occurredAtUtc: "2026-09-24T11:05:00.000Z",
+        exerciseType: "copy-group",
+        direction: "rx",
+        source: "learn",
+        target: "K",
+        answer: "K",
+        correct: true,
+        charWpmBand: 20,
+        effectiveWpmBand: 12,
+      }),
+      attempt({
+        id: "included-word",
+        occurredAtUtc: "2026-09-24T11:06:00.000Z",
+        exerciseType: "copy-word",
+        direction: "rx",
+        source: "learn",
+        target: "K",
+        answer: "K",
+        correct: true,
+        charWpmBand: 20,
+        effectiveWpmBand: 12,
+      }),
+      attempt({
+        id: "included-continuous",
+        occurredAtUtc: "2026-09-24T11:07:00.000Z",
+        exerciseType: "continuous-copy",
+        direction: "rx",
+        source: "imported-text-rx",
+        target: "K",
+        answer: "K",
+        correct: true,
+        charWpmBand: 20,
+        effectiveWpmBand: 12,
+      }),
+      attempt({
+        id: "included-substitution",
+        occurredAtUtc: "2026-09-24T11:08:00.000Z",
+        exerciseType: "copy-character",
+        direction: "rx",
+        source: "learn",
+        target: "K",
+        answer: "M",
+        correct: false,
+        charWpmBand: 20,
+        effectiveWpmBand: 12,
+      }),
+      attempt({
+        id: "included-deletion",
+        occurredAtUtc: "2026-09-24T11:09:00.000Z",
+        exerciseType: "copy-character",
+        direction: "rx",
+        source: "learn",
+        observations: [
+          {
+            kind: "deletion",
+            correct: false,
+            targetIndex: 0,
+            target: "K",
+          },
+        ],
+        charWpmBand: 20,
+        effectiveWpmBand: 12,
+      }),
+      attempt({
+        id: "ignored-insertion",
+        occurredAtUtc: "2026-09-24T11:10:00.000Z",
+        exerciseType: "copy-character",
+        direction: "rx",
+        source: "learn",
+        observations: [
+          {
+            kind: "insertion",
+            correct: false,
+            answerIndex: 0,
+            answer: "K",
+          },
+        ],
+        charWpmBand: 20,
+        effectiveWpmBand: 12,
+      }),
+    ];
+
+    const result = buildCharacterSpeedProficiency({ attempts });
+    const k20 = result
+      .find((row) => row.character === "K")
+      ?.bands.find((entry) => entry.band === 20);
+
+    expect(k20).toMatchObject({
+      attempts: 6,
+      correct: 4,
+      weightedAttempts: 6,
+      weightedCorrect: 4,
+    });
+  });
+
+  it("derives character bands for legacy attempts that omit band fields", () => {
+    const attempts = [
+      attempt({
+        id: "legacy-1",
+        occurredAtUtc: "2026-09-24T10:00:00.000Z",
+        exerciseType: "copy-character",
+        direction: "rx",
+        target: "K",
+        answer: "K",
+        correct: true,
+        charWpm: 21,
+        effectiveWpm: 12,
+      }),
+      attempt({
+        id: "legacy-2",
+        occurredAtUtc: "2026-09-24T10:01:00.000Z",
+        exerciseType: "copy-character",
+        direction: "rx",
+        target: "K",
+        answer: "K",
+        correct: true,
+        charWpm: 22,
+        effectiveWpm: 12,
+      }),
+    ];
+
+    attempts.forEach((entry) => {
+      delete entry.charWpmBand;
+      delete entry.effectiveWpmBand;
+    });
+
+    const result = buildCharacterSpeedProficiency({ attempts });
+    const band20 = result
+      .find((row) => row.character === "K")
+      ?.bands.find((entry) => entry.band === 20);
+    expect(band20).toMatchObject({ attempts: 2, correct: 2 });
+  });
+});

@@ -7,10 +7,29 @@ import {
   type TrainingAttemptRecord,
   type TrainingSessionRecord,
 } from "./models.ts";
+import {
+  CHARACTER_WPM_BANDS,
+  normalizeCharacterWpmBand,
+  type CharacterWpmBand,
+} from "../core/settings.ts";
 import { isValidSessionRecord } from "./session-validity-policy.ts";
 
 export const CHARACTER_RECENT_WINDOW = 50;
 export const CHARACTER_RX_RESPONSE_WINDOW = 20;
+export const SPEED_PROFICIENCY_WINDOW = 50;
+
+export type CharacterSpeedBandEvidence = {
+  band: CharacterWpmBand;
+  attempts: number;
+  correct: number;
+  weightedAttempts: number;
+  weightedCorrect: number;
+};
+
+export type CharacterSpeedProficiency = {
+  character: string;
+  bands: CharacterSpeedBandEvidence[];
+};
 
 export type ProjectionRows = {
   daily: DailyProjectionRecord[];
@@ -68,6 +87,106 @@ function compareAttempts(
     left.occurredAt.utc.localeCompare(right.occurredAt.utc) ||
     left.id.localeCompare(right.id)
   );
+}
+
+function transferWeight(
+  targetBand: CharacterWpmBand,
+  sourceBand: CharacterWpmBand,
+): number {
+  const delta = Math.abs(targetBand - sourceBand);
+  if (delta === 0) return 1;
+  if (delta === 5) return 0.5;
+  if (delta === 10) return 0.25;
+  return 0;
+}
+
+export function buildCharacterSpeedProficiency(options: {
+  attempts: readonly TrainingAttemptRecord[];
+  perCharacterWindow?: number;
+}): CharacterSpeedProficiency[] {
+  const perCharacterWindow =
+    options.perCharacterWindow ?? SPEED_PROFICIENCY_WINDOW;
+  if (!Number.isInteger(perCharacterWindow) || perCharacterWindow <= 0) {
+    throw new RangeError("perCharacterWindow must be a positive integer");
+  }
+
+  const observationsByCharacter = new Map<
+    string,
+    Map<CharacterWpmBand, boolean[]>
+  >();
+
+  for (const attempt of [...options.attempts].sort(compareAttempts)) {
+    if (!accuracyEligible(attempt) || attempt.direction !== "rx") continue;
+
+    const attemptBand =
+      attempt.charWpmBand ?? normalizeCharacterWpmBand(attempt.charWpm);
+
+    for (const observation of attempt.observations) {
+      if (
+        observation.target === undefined ||
+        observation.kind === "insertion"
+      ) {
+        continue;
+      }
+      const perBand =
+        observationsByCharacter.get(observation.target) ?? new Map();
+      const bucket = perBand.get(attemptBand) ?? [];
+      bucket.push(observation.correct);
+      if (bucket.length > perCharacterWindow) {
+        bucket.splice(0, bucket.length - perCharacterWindow);
+      }
+      perBand.set(attemptBand, bucket);
+      observationsByCharacter.set(observation.target, perBand);
+    }
+  }
+
+  return [...observationsByCharacter.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([character, sourceBands]) => {
+      const sourceBandStats = [...sourceBands.entries()].map(
+        ([sourceBand, observations]) => ({
+          sourceBand,
+          attempts: observations.length,
+          correct: observations.reduce(
+            (count, observationCorrect) => count + (observationCorrect ? 1 : 0),
+            0,
+          ),
+        }),
+      );
+
+      const bands = CHARACTER_WPM_BANDS.map((band) => {
+        let attempts = 0;
+        let correct = 0;
+        let weightedAttempts = 0;
+        let weightedCorrect = 0;
+
+        for (const {
+          sourceBand,
+          attempts: sourceAttempts,
+          correct: sourceCorrect,
+        } of sourceBandStats) {
+          if (sourceBand === band) {
+            attempts += sourceAttempts;
+            correct += sourceCorrect;
+          }
+
+          const weight = transferWeight(band, sourceBand);
+          if (weight === 0) continue;
+          weightedAttempts += sourceAttempts * weight;
+          weightedCorrect += sourceCorrect * weight;
+        }
+
+        return {
+          band,
+          attempts,
+          correct,
+          weightedAttempts,
+          weightedCorrect,
+        } satisfies CharacterSpeedBandEvidence;
+      });
+
+      return { character, bands } satisfies CharacterSpeedProficiency;
+    });
 }
 
 /** Rebuilds all derived rows from authoritative sessions and attempts. */
