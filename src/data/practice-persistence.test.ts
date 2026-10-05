@@ -167,6 +167,8 @@ describe("DurablePracticeSession", () => {
         finalizedAttemptCount: 1,
         completedCards: 1,
         valid: true,
+        charWpmBand: 20,
+        effectiveWpmBand: 12,
       });
       expect(await database.attempts.get("copy-attempt")).toMatchObject({
         source: "copy-practice",
@@ -178,6 +180,8 @@ describe("DurablePracticeSession", () => {
         assisted: true,
         replayed: true,
         responseMs: 2400,
+        charWpmBand: 20,
+        effectiveWpmBand: 12,
       });
       expect(await database.curriculum.count()).toBe(0);
       expect(await database.introductions.count()).toBe(0);
@@ -238,6 +242,8 @@ describe("DurablePracticeSession", () => {
         correct: true,
         schedulerReason: "WEAK_TX",
         keying,
+        charWpmBand: 20,
+        effectiveWpmBand: 12,
       });
     } finally {
       repository.close();

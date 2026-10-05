@@ -4,6 +4,12 @@ import { isValidTrainingSession } from "../core/session-validity.ts";
 import type { LearnSessionMode } from "../training/learn-session.ts";
 import type { AdvancementAcceptance } from "../training/advancement.ts";
 import {
+  type CharacterWpmBand,
+  type EffectiveWpmBand,
+  normalizeCharacterWpmBand,
+  normalizeEffectiveWpmBand,
+} from "../core/settings.ts";
+import {
   RECORD_SCHEMA_VERSION,
   SCORING_ALGORITHM_VERSION,
   type AttemptExerciseType,
@@ -156,6 +162,8 @@ export class DurableLearnSession implements LearnSessionPersistence {
   private continuousCopyAttemptId: string | undefined;
   private readonly cancelLeaseRenewal: () => void;
   private preflightFailure: Error | undefined;
+  private readonly charWpmBand: CharacterWpmBand;
+  private readonly effectiveWpmBand: EffectiveWpmBand;
 
   private constructor(
     private readonly repository: TrainingDataRepository,
@@ -166,6 +174,11 @@ export class DurableLearnSession implements LearnSessionPersistence {
     scheduleLeaseRenewal: (renew: () => void) => () => void,
   ) {
     this.record = record;
+    this.charWpmBand = normalizeCharacterWpmBand(settings.charWpm);
+    this.effectiveWpmBand = normalizeEffectiveWpmBand(
+      settings.effectiveWpm,
+      this.charWpmBand,
+    );
     this.cancelLeaseRenewal = scheduleLeaseRenewal(() => {
       if (this.closingStatus) return;
       void this.enqueue(async () => {
@@ -206,6 +219,11 @@ export class DurableLearnSession implements LearnSessionPersistence {
       completedCards: 0,
       valid: false,
       ...options.settings,
+      charWpmBand: normalizeCharacterWpmBand(options.settings.charWpm),
+      effectiveWpmBand: normalizeEffectiveWpmBand(
+        options.settings.effectiveWpm,
+        normalizeCharacterWpmBand(options.settings.charWpm),
+      ),
       unlockedAtStart: [...options.activeCharacters],
       appVersion: dependencies.appVersion ?? "0.0.0",
       revision: 0,
@@ -279,6 +297,8 @@ export class DurableLearnSession implements LearnSessionPersistence {
         ? {}
         : { durationMs: evidence.durationMs }),
       ...this.settings,
+      charWpmBand: this.charWpmBand,
+      effectiveWpmBand: this.effectiveWpmBand,
     };
 
     return this.enqueue(async () => {

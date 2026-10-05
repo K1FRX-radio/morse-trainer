@@ -1,6 +1,10 @@
 import type { SchedulerReason } from "../core/types.ts";
 import type { CharacterProgress } from "../core/types.ts";
-import type { PracticeSettings } from "../core/settings.ts";
+import type {
+  CharacterWpmBand,
+  EffectiveWpmBand,
+  PracticeSettings,
+} from "../core/settings.ts";
 
 export const RECORD_SCHEMA_VERSION = 1;
 export const PROJECTION_VERSION = 1;
@@ -52,6 +56,10 @@ export type TrainingSessionRecord = PersistedRecord & {
   valid: boolean;
   charWpm: number;
   effectiveWpm: number;
+  /** Normalized canonical band derived from charWpm. */
+  charWpmBand?: CharacterWpmBand;
+  /** Normalized canonical band derived from effectiveWpm and charWpmBand. */
+  effectiveWpmBand?: EffectiveWpmBand;
   toneHz: number;
   noiseLevel: number;
   unlockedAtStart: string[];
@@ -130,6 +138,10 @@ export type TrainingAttemptRecord = PersistedRecord & {
   keying?: EncodedKeyingTiming;
   charWpm: number;
   effectiveWpm: number;
+  /** Normalized canonical band derived from charWpm. */
+  charWpmBand?: CharacterWpmBand;
+  /** Normalized canonical band derived from effectiveWpm and charWpmBand. */
+  effectiveWpmBand?: EffectiveWpmBand;
   toneHz: number;
   noiseLevel: number;
 };

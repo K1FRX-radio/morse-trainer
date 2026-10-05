@@ -1,6 +1,10 @@
 import { IDBKeyRange, indexedDB } from "fake-indexeddb";
 import { DEFAULT_CURRICULUM_CONFIG } from "../content/curriculum-data.ts";
 import { createInitialState, forceUnlockNext } from "../core/curriculum.ts";
+import {
+  normalizeCharacterWpmBand,
+  normalizeEffectiveWpmBand,
+} from "../core/settings.ts";
 import { minimumAdvancementObservations } from "../training/advancement.ts";
 import type {
   CurriculumStateRecord,
@@ -20,7 +24,7 @@ const startedAt = {
 function session(
   overrides: Partial<TrainingSessionRecord> = {},
 ): TrainingSessionRecord {
-  return {
+  const base: TrainingSessionRecord = {
     id: "session-1",
     schemaVersion: 1,
     updatedAt: startedAt.utc,
@@ -42,14 +46,24 @@ function session(
     revision: 0,
     ownerTabId: "tab-1",
     leaseExpiresAt: "2026-09-24T17:01:00.000Z",
-    ...overrides,
+  };
+  const record: TrainingSessionRecord = { ...base, ...overrides };
+  const charWpmBand =
+    overrides.charWpmBand ?? normalizeCharacterWpmBand(record.charWpm);
+  const effectiveWpmBand =
+    overrides.effectiveWpmBand ??
+    normalizeEffectiveWpmBand(record.effectiveWpm, charWpmBand);
+  return {
+    ...record,
+    charWpmBand,
+    effectiveWpmBand,
   };
 }
 
 function attempt(
   overrides: Partial<TrainingAttemptRecord> = {},
 ): TrainingAttemptRecord {
-  return {
+  const base: TrainingAttemptRecord = {
     id: "attempt-1",
     schemaVersion: 1,
     updatedAt: "2026-09-24T17:00:10.000Z",
@@ -86,7 +100,17 @@ function attempt(
     effectiveWpm: 12,
     toneHz: 600,
     noiseLevel: 0,
-    ...overrides,
+  };
+  const record: TrainingAttemptRecord = { ...base, ...overrides };
+  const charWpmBand =
+    overrides.charWpmBand ?? normalizeCharacterWpmBand(record.charWpm);
+  const effectiveWpmBand =
+    overrides.effectiveWpmBand ??
+    normalizeEffectiveWpmBand(record.effectiveWpm, charWpmBand);
+  return {
+    ...record,
+    charWpmBand,
+    effectiveWpmBand,
   };
 }
 

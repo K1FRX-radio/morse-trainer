@@ -1,7 +1,13 @@
-import { DEFAULT_SETTINGS } from "../core/settings.ts";
+import {
+  DEFAULT_SETTINGS,
+  normalizeCharacterWpmBand,
+  normalizeEffectiveWpmBand,
+} from "../core/settings.ts";
 import type { TrainingAttemptRecord, TrainingSessionRecord } from "./models.ts";
 import {
   parsePortableSettingsRecord,
+  parseTrainingAttempt,
+  parseTrainingSession,
   parseTrainingAttempts,
   parseTrainingDataset,
   parseTrainingSessions,
@@ -17,7 +23,7 @@ const captured = {
 function validSession(
   overrides: Partial<TrainingSessionRecord> = {},
 ): TrainingSessionRecord {
-  return {
+  const merged: TrainingSessionRecord = {
     id: "session-1",
     schemaVersion: 1,
     updatedAt: "2026-09-24T17:05:00.000Z",
@@ -48,12 +54,24 @@ function validSession(
     revision: 1,
     ...overrides,
   };
+
+  const charWpmBand =
+    overrides.charWpmBand ?? normalizeCharacterWpmBand(merged.charWpm);
+  const effectiveWpmBand =
+    overrides.effectiveWpmBand ??
+    normalizeEffectiveWpmBand(merged.effectiveWpm, charWpmBand);
+
+  return {
+    ...merged,
+    charWpmBand,
+    effectiveWpmBand,
+  };
 }
 
 function validAttempt(
   overrides: Partial<TrainingAttemptRecord> = {},
 ): TrainingAttemptRecord {
-  return {
+  const merged: TrainingAttemptRecord = {
     id: "attempt-1",
     schemaVersion: 1,
     updatedAt: "2026-09-24T17:01:00.000Z",
@@ -88,6 +106,18 @@ function validAttempt(
     noiseLevel: 0,
     ...overrides,
   };
+
+  const charWpmBand =
+    overrides.charWpmBand ?? normalizeCharacterWpmBand(merged.charWpm);
+  const effectiveWpmBand =
+    overrides.effectiveWpmBand ??
+    normalizeEffectiveWpmBand(merged.effectiveWpm, charWpmBand);
+
+  return {
+    ...merged,
+    charWpmBand,
+    effectiveWpmBand,
+  };
 }
 
 describe("persisted record semantics", () => {
@@ -120,6 +150,52 @@ describe("persisted record semantics", () => {
       valid: true,
     });
     expect(parseTrainingSessions([imported])).toEqual([imported]);
+  });
+
+  it("derives speed-band fields for legacy records that omit them", () => {
+    const legacySession = validSession({ charWpm: 18, effectiveWpm: 11 });
+    delete legacySession.charWpmBand;
+    delete legacySession.effectiveWpmBand;
+    expect(parseTrainingSession(legacySession)).toMatchObject({
+      charWpm: 18,
+      effectiveWpm: 11,
+      charWpmBand: 20,
+      effectiveWpmBand: 10,
+    });
+
+    const legacyAttempt = validAttempt({ charWpm: 18, effectiveWpm: 11 });
+    delete legacyAttempt.charWpmBand;
+    delete legacyAttempt.effectiveWpmBand;
+    expect(parseTrainingAttempt(legacyAttempt)).toMatchObject({
+      charWpm: 18,
+      effectiveWpm: 11,
+      charWpmBand: 20,
+      effectiveWpmBand: 10,
+    });
+  });
+
+  it("rejects records with explicit speed bands that do not match normalization", () => {
+    expect(() =>
+      parseTrainingSession(
+        validSession({
+          charWpm: 20,
+          effectiveWpm: 12,
+          charWpmBand: 25,
+          effectiveWpmBand: 12,
+        }),
+      ),
+    ).toThrow(/charWpmBand/);
+
+    expect(() =>
+      parseTrainingAttempt(
+        validAttempt({
+          charWpm: 20,
+          effectiveWpm: 12,
+          charWpmBand: 20,
+          effectiveWpmBand: 18,
+        }),
+      ),
+    ).toThrow(/effectiveWpmBand/);
   });
 
   it("preserves compatibility with existing v2 source/mode pairs", () => {

@@ -12,6 +12,10 @@ import {
   type RetryCounterIdentity,
 } from "./retry-history.ts";
 import { parseTrainingAttempt } from "./validation.ts";
+import {
+  normalizeCharacterWpmBand,
+  normalizeEffectiveWpmBand,
+} from "../core/settings.ts";
 
 const identity: RetryCounterIdentity = {
   activeCharacters: ["K", "M"],
@@ -32,7 +36,7 @@ function session(
   startedAt: string,
   overrides: Partial<TrainingSessionRecord> = {},
 ): TrainingSessionRecord {
-  const record: TrainingSessionRecord = {
+  const base: TrainingSessionRecord = {
     id,
     schemaVersion: 1,
     updatedAt: startedAt,
@@ -60,8 +64,15 @@ function session(
     unlockedAtEnd: ["K", "M"],
     appVersion: "0.0.0",
     revision: 1,
-    ...overrides,
   };
+  const record: TrainingSessionRecord = { ...base, ...overrides };
+  const charWpmBand =
+    overrides.charWpmBand ?? normalizeCharacterWpmBand(record.charWpm);
+  const effectiveWpmBand =
+    overrides.effectiveWpmBand ??
+    normalizeEffectiveWpmBand(record.effectiveWpm, charWpmBand);
+  record.charWpmBand = charWpmBand;
+  record.effectiveWpmBand = effectiveWpmBand;
   if (record.status === "active") delete record.endedAt;
   return record;
 }
@@ -73,7 +84,7 @@ function attempt(
   readinessReason: ContinuousCopyReadinessReason,
   overrides: Partial<TrainingAttemptRecord> = {},
 ): TrainingAttemptRecord {
-  return {
+  const base: TrainingAttemptRecord = {
     id,
     schemaVersion: 1,
     updatedAt: occurredAt,
@@ -114,7 +125,17 @@ function attempt(
     toneHz: 600,
     noiseLevel: 0,
     readinessReason,
-    ...overrides,
+  };
+  const record: TrainingAttemptRecord = { ...base, ...overrides };
+  const charWpmBand =
+    overrides.charWpmBand ?? normalizeCharacterWpmBand(record.charWpm);
+  const effectiveWpmBand =
+    overrides.effectiveWpmBand ??
+    normalizeEffectiveWpmBand(record.effectiveWpm, charWpmBand);
+  return {
+    ...record,
+    charWpmBand,
+    effectiveWpmBand,
   };
 }
 

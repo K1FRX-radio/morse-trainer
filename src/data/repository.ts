@@ -380,6 +380,24 @@ function curriculumState(record: CurriculumStateRecord): CurriculumState {
   };
 }
 
+function toBackupSessionV1(
+  session: TrainingSessionRecord,
+): TrainingSessionRecord {
+  const legacy = structuredClone(session);
+  delete legacy.charWpmBand;
+  delete legacy.effectiveWpmBand;
+  return legacy;
+}
+
+function toBackupAttemptV1(
+  attempt: TrainingAttemptRecord,
+): TrainingAttemptRecord {
+  const legacy = structuredClone(attempt);
+  delete legacy.charWpmBand;
+  delete legacy.effectiveWpmBand;
+  return legacy;
+}
+
 export class DexieTrainingRepository implements TrainingDataRepository {
   private readonly now: () => Date;
   private readonly createId: () => string;
@@ -1373,8 +1391,8 @@ export class DexieTrainingRepository implements TrainingDataRepository {
         settings: parsePortableSettingsRecord(structuredClone(settings)),
         curriculum: parseCurriculumStateRecord(structuredClone(curriculum)),
         introductions: parseIntroductionsRecord(structuredClone(introductions)),
-        sessions: dataset.sessions,
-        attempts: dataset.attempts,
+        sessions: dataset.sessions.map((session) => toBackupSessionV1(session)),
+        attempts: dataset.attempts.map((attempt) => toBackupAttemptV1(attempt)),
         progressionEvents: progressionEvents.map((record) =>
           parseProgressionEventRecord(structuredClone(record)),
         ),
