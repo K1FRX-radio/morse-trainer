@@ -79,7 +79,7 @@ Confirmed current for the completed subset:
 - `docs/metrics.md`
 
 Repository-level milestone status documents now reflect Milestone 4 completion
-and Phase 5 as next.
+and issue #60 as the immediate next implementation item before Phase 5.
 
 ## Issue #58 storage lifecycle implementation evidence
 
@@ -180,5 +180,5 @@ Recorded on 2026-10-05:
 
 Checkpoint 4 is accepted. Every Milestone 4 gate now has explicit passing
 evidence (automated and/or manual with documented limitations), full validation
-is green, benchmark evidence is published, and the repository is ready to begin
-Phase 5 work.
+is green, benchmark evidence is published, and the repository is ready for
+post-M4 work on issue #60, with Phase 5 following afterward.

@@ -7,7 +7,9 @@ Milestone 4 (Persistence and analytics MVP) is complete.
 The app has moved from portable browser-only state to a versioned IndexedDB
 runtime data layer, exposes persisted analytics in the History screen, and now
 has durable Learn and Practice workflows with explicit persistence recovery.
-Phase 5 (PWA/install/release polish) is next.
+The next implementation item is issue #60 (speed-aware CW proficiency with
+discrete global WPM bands). Phase 5 (PWA/install/release polish) follows #60
+and has not started.
 
 ## Completed in repository
 
