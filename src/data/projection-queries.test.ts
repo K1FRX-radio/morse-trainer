@@ -426,6 +426,17 @@ describe("DexieTrainingRepository projection queries", () => {
       ).rejects.toThrow(new RegExp(String(MAX_PROJECTION_QUERY_LIMIT)));
 
       await expect(
+        repository.listCharacterSpeedProficiency({
+          charWpmBand: 20,
+          limit: 1,
+          characters: Array.from(
+            { length: MAX_PROJECTION_QUERY_LIMIT + 1 },
+            (_, index) => `C${index}`,
+          ),
+        }),
+      ).rejects.toThrow(/characters must be at most/);
+
+      await expect(
         repository.listConfusionProjections({
           limit: MAX_PROJECTION_QUERY_LIMIT + 1,
         }),

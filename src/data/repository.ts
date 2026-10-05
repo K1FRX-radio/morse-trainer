@@ -493,28 +493,43 @@ export class DexieTrainingRepository implements TrainingDataRepository {
       },
     );
 
-    await this.rebuildStaleCharacterProjections();
+    await this.rebuildStaleProjections();
     return metadata;
   }
 
-  private async rebuildStaleCharacterProjections(): Promise<void> {
+  private async rebuildStaleProjections(): Promise<void> {
+    const staleDaily =
+      (await this.database.dailyProjections
+        .where("projectionVersion")
+        .notEqual(PROJECTION_VERSION)
+        .count()) > 0;
+
+    const staleCharacters =
+      (await this.database.characterProjections
+        .where("projectionVersion")
+        .notEqual(PROJECTION_VERSION)
+        .count()) > 0;
+
+    const staleConfusions =
+      (await this.database.confusionProjections
+        .where("projectionVersion")
+        .notEqual(PROJECTION_VERSION)
+        .count()) > 0;
+
     const rxRows = await this.database.characterProjections
       .where("direction")
       .equals("rx")
       .toArray();
 
-    if (rxRows.length === 0) return;
-
-    const stale = rxRows.some((row) => {
+    const staleRxShape = rxRows.some((row) => {
       const candidate = row as CharacterProjectionRecord;
       return (
-        candidate.projectionVersion !== PROJECTION_VERSION ||
         candidate.recentIsolatedRxResponseMs === undefined ||
         candidate.speedProficiencyBands === undefined
       );
     });
 
-    if (stale) {
+    if (staleDaily || staleCharacters || staleConfusions || staleRxShape) {
       await this.rebuildProjections();
     }
   }
@@ -1371,6 +1386,8 @@ export class DexieTrainingRepository implements TrainingDataRepository {
       const characters = [...new Set(query.characters)]
         .filter((character) => character.length > 0)
         .sort((left, right) => left.localeCompare(right));
+
+      assertBoundedLimit(characters.length, "characters");
 
       for (const character of characters) {
         if (projectionRows.length >= query.limit) break;

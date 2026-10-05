@@ -4,6 +4,7 @@ import { DEFAULT_SETTINGS } from "../core/settings.ts";
 import { DEFAULT_CURRICULUM_CONFIG } from "../content/curriculum-data.ts";
 import { createInitialState } from "../core/curriculum.ts";
 import { SCHEMA_V1, SCHEMA_V2, TrainerDatabase } from "./indexeddb.ts";
+import { PROJECTION_VERSION } from "./models.ts";
 import { DexieTrainingRepository } from "./repository.ts";
 
 describe("DexieTrainingRepository", () => {
@@ -288,7 +289,7 @@ describe("DexieTrainingRepository", () => {
       id: "character:rx:K",
       schemaVersion: 1,
       updatedAt: "2026-09-25T13:00:00.000Z",
-      projectionVersion: 1,
+      projectionVersion: PROJECTION_VERSION - 1,
       character: "K",
       direction: "rx",
       recent: Array.from({ length: 50 }, (_, index) => ({
@@ -325,6 +326,84 @@ describe("DexieTrainingRepository", () => {
       expect(rows[0]?.recentIsolatedRxResponseMs).toEqual(
         Array.from({ length: 20 }, (_, index) => 100 + index),
       );
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
+  it("rebuilds stale TX-only/daily projection rows on open", async () => {
+    const name = crypto.randomUUID();
+    const legacy = new Dexie(name, { indexedDB, IDBKeyRange });
+    legacy.version(1).stores(SCHEMA_V1);
+    legacy.version(2).stores(SCHEMA_V2);
+    await legacy.open();
+
+    await legacy.table("metadata").put({
+      id: "schema-metadata",
+      schemaVersion: 1,
+      updatedAt: "2026-09-25T13:00:00.000Z",
+      databaseVersion: 2,
+      datasetGeneration: "legacy-v2",
+    });
+    await legacy.table("dailyProjections").put({
+      id: "daily:2026-09-25",
+      schemaVersion: 1,
+      updatedAt: "2026-09-25T13:00:00.000Z",
+      projectionVersion: PROJECTION_VERSION - 1,
+      localDate: "2026-09-25",
+      activeMs: 60_000,
+      sessionCount: 1,
+      attemptCount: 1,
+      rxCorrect: 0,
+      rxTotal: 0,
+      txCorrect: 1,
+      txTotal: 1,
+      effectiveWpmTotal: 12,
+      effectiveWpmSamples: 1,
+    });
+    await legacy.table("characterProjections").put({
+      id: "character:tx:T",
+      schemaVersion: 1,
+      updatedAt: "2026-09-25T13:00:00.000Z",
+      projectionVersion: PROJECTION_VERSION - 1,
+      character: "T",
+      direction: "tx",
+      recent: [
+        {
+          attemptId: "attempt-1",
+          occurredAt: {
+            utc: "2026-09-25T13:00:00.000Z",
+            localDate: "2026-09-25",
+            utcOffsetMinutes: 0,
+            timeZone: "UTC",
+          },
+          correct: true,
+          kind: "match" as const,
+          answer: "T",
+        },
+      ],
+    });
+    legacy.close();
+
+    const database = new TrainerDatabase({ name, indexedDB, IDBKeyRange });
+    const repository = new DexieTrainingRepository(database, {
+      now: () => new Date("2026-09-26T00:00:00.000Z"),
+    });
+
+    try {
+      await repository.open();
+
+      await expect(
+        repository.listDailyProjections({
+          fromLocalDate: "2026-09-25",
+          toLocalDate: "2026-09-25",
+          limit: 10,
+        }),
+      ).resolves.toEqual([]);
+      await expect(
+        repository.listCharacterProjections({ direction: "tx", limit: 10 }),
+      ).resolves.toEqual([]);
     } finally {
       repository.close();
       await database.delete();
