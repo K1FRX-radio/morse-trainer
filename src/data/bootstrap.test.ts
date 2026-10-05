@@ -66,7 +66,7 @@ describe("bootstrapTrainingData", () => {
     });
 
     await expect(bootstrapTrainingData(storage, repository)).resolves.toEqual({
-      settings: { ...DEFAULT_SETTINGS, charWpm: 18 },
+      settings: { ...DEFAULT_SETTINGS, charWpm: 20 },
       curriculum: {
         config: DEFAULT_CURRICULUM_CONFIG,
         characters: expect.any(Array),
