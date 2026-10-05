@@ -11,10 +11,12 @@ only which issue should be implemented next and what follows it.
 
 ## Queue
 
-1. #52 — Phase 5 kickoff: installable PWA foundation, offline shell, and safe updates
+1. #60 — Design speed-aware CW proficiency with discrete global WPM bands
+2. #52 — Phase 5 kickoff: installable PWA foundation, offline shell, and safe updates
 
 ## Later / stretch
 
+- #61 — Architecture review: modularize oversized files and reduce structural coupling
 - #43 — Add external CW paddle support via USB HID/MIDI
 
 ## Blocked / awaiting decision
