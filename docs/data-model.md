@@ -92,6 +92,33 @@ Active sessions carry `ownerTabId` and `leaseExpiresAt`.
 - expired leases can be recovered into interrupted terminal sessions
 - recovery clears ownership fields and writes operation ledgers
 
+## IndexedDB lifecycle hardening
+
+The app now treats database lifecycle events as first-class runtime state:
+
+- `TrainerDatabase` closes this tab's connection on IndexedDB `versionchange`.
+- On `versionchange`, the app emits lifecycle signals over `BroadcastChannel`
+  (`k1frx-morse-trainer-storage-lifecycle-v1`) when available:
+  - `connection-closed-for-upgrade`
+  - `reload-required`
+- On IndexedDB open `blocked`, the app emits `upgrade-blocked`.
+- Startup/UI handling surfaces explicit guidance:
+  - blocked upgrade: close/reload competing tabs before retrying;
+  - reload-required: reload the current tab to reconnect after another-tab upgrade;
+  - unavailable IndexedDB/open failure: training is not started, and retry/recovery guidance is shown.
+
+The app subscribes to the same lifecycle channel during bootstrap so tabs can
+coordinate state messaging without coupling data writes to UI state.
+
+## Persistent storage request
+
+Settings now exposes explicit persistent-storage controls under Data management:
+
+- reads current grant state via `navigator.storage.persisted()` where supported;
+- requests durable storage via user gesture (`navigator.storage.persist()`);
+- shows granted/not-granted/unsupported/error status;
+- continues safely if persistence is denied or unsupported.
+
 ## Interrupted-session recovery
 
 Recovery targets active sessions with expired/absent lease.
@@ -155,3 +182,13 @@ Reset semantics:
 - restores first-run portable defaults
 - creates new dataset generation
 - preserves migration ledgers and external localStorage migration markers
+
+## Unsaved-write and retry behavior
+
+Persistence failures remain recoverable and visible at runtime:
+
+- Learn and Practice persistence queues retain ordered unsaved work until commit.
+- Retry paths replay pending work in-order with preserved evidence snapshots.
+- Failure diagnostics expose operation category, retryability, and retry count.
+- Navigation is blocked while Practice has unsaved queued work, preventing
+  progression-changing navigation during pending writes.

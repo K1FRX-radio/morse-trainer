@@ -4,7 +4,7 @@ import {
   type CurriculumState,
 } from "../core/curriculum.ts";
 import { DEFAULT_SETTINGS, type PracticeSettings } from "../core/settings.ts";
-import { TrainerDatabase } from "./indexeddb.ts";
+import { TrainerDatabase, type TrainerDatabaseOptions } from "./indexeddb.ts";
 import {
   migrateLegacyStorage,
   type LegacyMigrationRepository,
@@ -39,6 +39,10 @@ export type TrainingDataBootstrap = {
   curriculum: CurriculumState;
   introductions: string[];
   recoveredSessionCount: number;
+};
+
+export type TrainingDataBootstrapOptions = {
+  databaseOptions?: TrainerDatabaseOptions;
 };
 
 type BootstrapSnapshot = Omit<TrainingDataBootstrap, "repository">;
@@ -86,8 +90,11 @@ export async function bootstrapTrainingData(
 
 export async function createTrainingDataBootstrap(
   storage: LegacyStorage,
+  options: TrainingDataBootstrapOptions = {},
 ): Promise<TrainingDataBootstrap> {
-  const repository = new DexieTrainingRepository(new TrainerDatabase());
+  const repository = new DexieTrainingRepository(
+    new TrainerDatabase(options.databaseOptions),
+  );
   try {
     const bootstrap = await bootstrapTrainingData(storage, repository);
     return { repository, ...bootstrap };

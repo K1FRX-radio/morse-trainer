@@ -70,6 +70,19 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+function mockStoragePersistenceApi(options: {
+  persisted: () => Promise<boolean>;
+  persist: () => Promise<boolean>;
+}) {
+  Object.defineProperty(navigator, "storage", {
+    configurable: true,
+    value: {
+      persisted: options.persisted,
+      persist: options.persist,
+    },
+  });
+}
+
 describe("SettingsScreen continuous copy", () => {
   it("applies the one-minute default to migrated partial settings", () => {
     renderSettings(normalizeSettings({ charWpm: 18 }));
@@ -247,5 +260,49 @@ describe("SettingsScreen continuous copy", () => {
 
     expect(confirm).toHaveBeenCalledTimes(1);
     expect(resetPortableData).not.toHaveBeenCalled();
+  });
+
+  it("requests persistent storage from a user gesture and shows granted status", async () => {
+    const persisted = vi.fn().mockResolvedValue(false);
+    const persist = vi.fn().mockResolvedValue(true);
+    mockStoragePersistenceApi({ persisted, persist });
+
+    renderSettings();
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Persistent storage is not granted/i),
+      ).toBeInTheDocument();
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Request persistent storage" }),
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Persistent storage is enabled/i),
+      ).toBeInTheDocument();
+    });
+    expect(persisted).toHaveBeenCalledTimes(1);
+    expect(persist).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports when persistent storage controls are unsupported", async () => {
+    Object.defineProperty(navigator, "storage", {
+      configurable: true,
+      value: undefined,
+    });
+
+    renderSettings();
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/does not expose persistent-storage controls/i),
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.getByRole("button", { name: "Request persistent storage" }),
+    ).toBeDisabled();
   });
 });
