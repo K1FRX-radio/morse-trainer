@@ -7,10 +7,29 @@ import {
   type TrainingAttemptRecord,
   type TrainingSessionRecord,
 } from "./models.ts";
+import {
+  CHARACTER_WPM_BANDS,
+  normalizeCharacterWpmBand,
+  type CharacterWpmBand,
+} from "../core/settings.ts";
 import { isValidSessionRecord } from "./session-validity-policy.ts";
 
 export const CHARACTER_RECENT_WINDOW = 50;
 export const CHARACTER_RX_RESPONSE_WINDOW = 20;
+export const SPEED_PROFICIENCY_WINDOW = 50;
+
+export type CharacterSpeedBandEvidence = {
+  band: CharacterWpmBand;
+  attempts: number;
+  correct: number;
+  weightedAttempts: number;
+  weightedCorrect: number;
+};
+
+export type CharacterSpeedProficiency = {
+  character: string;
+  bands: CharacterSpeedBandEvidence[];
+};
 
 export type ProjectionRows = {
   daily: DailyProjectionRecord[];
@@ -68,6 +87,88 @@ function compareAttempts(
     left.occurredAt.utc.localeCompare(right.occurredAt.utc) ||
     left.id.localeCompare(right.id)
   );
+}
+
+function transferWeight(
+  targetBand: CharacterWpmBand,
+  sourceBand: CharacterWpmBand,
+): number {
+  const delta = Math.abs(targetBand - sourceBand);
+  if (delta === 0) return 1;
+  if (delta === 5) return 0.5;
+  if (delta === 10) return 0.25;
+  return 0;
+}
+
+export function buildCharacterSpeedProficiency(options: {
+  attempts: readonly TrainingAttemptRecord[];
+  perCharacterWindow?: number;
+}): CharacterSpeedProficiency[] {
+  const perCharacterWindow =
+    options.perCharacterWindow ?? SPEED_PROFICIENCY_WINDOW;
+  if (!Number.isInteger(perCharacterWindow) || perCharacterWindow <= 0) {
+    throw new RangeError("perCharacterWindow must be a positive integer");
+  }
+
+  const observationsByCharacter = new Map<
+    string,
+    Array<{ band: CharacterWpmBand; correct: boolean }>
+  >();
+
+  for (const attempt of [...options.attempts].sort(compareAttempts)) {
+    if (!accuracyEligible(attempt) || attempt.direction !== "rx") continue;
+
+    const attemptBand =
+      attempt.charWpmBand ?? normalizeCharacterWpmBand(attempt.charWpm);
+
+    for (const observation of attempt.observations) {
+      if (
+        observation.target === undefined ||
+        observation.kind === "insertion"
+      ) {
+        continue;
+      }
+      const bucket = observationsByCharacter.get(observation.target) ?? [];
+      bucket.push({ band: attemptBand, correct: observation.correct });
+      if (bucket.length > perCharacterWindow) {
+        bucket.splice(0, bucket.length - perCharacterWindow);
+      }
+      observationsByCharacter.set(observation.target, bucket);
+    }
+  }
+
+  return [...observationsByCharacter.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([character, observations]) => {
+      const bands = CHARACTER_WPM_BANDS.map((band) => {
+        let attempts = 0;
+        let correct = 0;
+        let weightedAttempts = 0;
+        let weightedCorrect = 0;
+
+        for (const observation of observations) {
+          if (observation.band === band) {
+            attempts += 1;
+            if (observation.correct) correct += 1;
+          }
+
+          const weight = transferWeight(band, observation.band);
+          if (weight === 0) continue;
+          weightedAttempts += weight;
+          if (observation.correct) weightedCorrect += weight;
+        }
+
+        return {
+          band,
+          attempts,
+          correct,
+          weightedAttempts,
+          weightedCorrect,
+        } satisfies CharacterSpeedBandEvidence;
+      });
+
+      return { character, bands } satisfies CharacterSpeedProficiency;
+    });
 }
 
 /** Rebuilds all derived rows from authoritative sessions and attempts. */
