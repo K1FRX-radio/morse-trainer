@@ -9,6 +9,16 @@ import type { LegacyStorage } from "../data/legacy-migration.ts";
 import type { StorageLifecycleEvent } from "../data/storage-lifecycle.ts";
 import { AppRoot } from "./app-root.tsx";
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 function memoryStorage(): LegacyStorage {
   const values = new Map<string, string>();
   return {
@@ -221,7 +231,7 @@ describe("AppRoot lifecycle integration", () => {
     expect(screen.queryByText(/this tab may be blocking it/i)).toBeNull();
   });
 
-  it("clears startup blocked guidance after a connection-released broadcast", async () => {
+  it("keeps startup blocked guidance latched until bootstrap resolves", async () => {
     let lifecycleEventHandler:
       ((event: "upgrade-blocked" | "reload-required") => void) | undefined;
     let subscribeHandler: ((event: StorageLifecycleEvent) => void) | undefined;
@@ -270,11 +280,73 @@ describe("AppRoot lifecycle integration", () => {
       });
     });
 
+    expect(
+      screen.getByText(/database upgrade is blocked by another open tab/i),
+    ).toBeInTheDocument();
+  });
+
+  it("does not launch duplicate bootstrap attempts while pending blocked/release events fire", async () => {
+    let lifecycleEventHandler:
+      ((event: "upgrade-blocked" | "reload-required") => void) | undefined;
+    let subscribeHandler: ((event: StorageLifecycleEvent) => void) | undefined;
+    const pending = deferred<TrainingDataBootstrap>();
+
+    const createBootstrap = vi.fn(
+      async (
+        _storage: LegacyStorage,
+        options?: TrainingDataBootstrapOptions,
+      ) => {
+        lifecycleEventHandler = options?.databaseOptions?.onLifecycleEvent;
+        return pending.promise;
+      },
+    );
+
+    render(
+      <AppRoot
+        dependencies={{
+          createBootstrap,
+          subscribeLifecycle: (subscriber) => {
+            subscribeHandler = subscriber;
+            return () => undefined;
+          },
+          reloadPage: vi.fn(),
+          storage: memoryStorage(),
+          tabId: "tab-self",
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(createBootstrap).toHaveBeenCalledTimes(1);
+    });
+
+    act(() => {
+      lifecycleEventHandler?.("upgrade-blocked");
+    });
     await waitFor(() => {
       expect(
-        screen.queryByText(/database upgrade is blocked by another open tab/i),
-      ).toBeNull();
+        screen.getByText(/database upgrade is blocked by another open tab/i),
+      ).toBeInTheDocument();
     });
+    expect(createBootstrap).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      subscribeHandler?.({
+        type: "connection-closed-for-upgrade",
+        databaseName: "k1frx-morse-trainer",
+        emittedAt: "2026-10-04T22:00:10.000Z",
+        sourceTabId: "tab-other",
+      });
+    });
+    expect(createBootstrap).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      pending.resolve(bootstrapFixture());
+      await pending.promise;
+    });
+
+    await screen.findByRole("heading", { name: "Learn" });
+    expect(createBootstrap).toHaveBeenCalledTimes(1);
   });
 
   it("blocks interaction and requires reload after local versionchange", async () => {

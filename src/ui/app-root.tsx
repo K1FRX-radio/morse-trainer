@@ -81,6 +81,12 @@ export function AppRoot({ dependencies }: AppRootProps) {
   const [upgradeBlocked, setUpgradeBlocked] = useState(false);
   const [possibleBlocker, setPossibleBlocker] = useState(false);
   const [reloadRequired, setReloadRequired] = useState(false);
+  const startInFlightRef = useRef<Promise<void> | undefined>(undefined);
+  const upgradeBlockedRef = useRef(false);
+
+  useEffect(() => {
+    upgradeBlockedRef.current = upgradeBlocked;
+  }, [upgradeBlocked]);
 
   useEffect(() => {
     return subscribeLifecycle((event: StorageLifecycleEvent) => {
@@ -92,42 +98,52 @@ export function AppRoot({ dependencies }: AppRootProps) {
         return;
       }
       if (event.type === "connection-closed-for-upgrade") {
-        setUpgradeBlocked(false);
         setPossibleBlocker(false);
       }
     });
   }, [subscribeLifecycle]);
 
-  const start = useCallback(async () => {
-    setState({ status: "loading" });
-    try {
-      const bootstrap = await createBootstrap(storage, {
-        databaseOptions: {
-          tabId: tabIdRef.current,
-          onLifecycleEvent: (event) => {
-            if (event === "upgrade-blocked") {
-              setUpgradeBlocked(true);
-              return;
-            }
-            if (event === "reload-required") {
-              setReloadRequired(true);
-            }
-          },
-        },
-      });
-      setUpgradeBlocked(false);
-      setPossibleBlocker(false);
-      setState({ status: "ready", bootstrap });
-    } catch (error) {
-      const details = startupErrorDetails(error);
-      setState({
-        status: "error",
-        message: details.message,
-        guidance: details.guidance,
-        retryable: !upgradeBlocked,
-      });
+  const start = useCallback((): Promise<void> => {
+    if (startInFlightRef.current) {
+      return startInFlightRef.current;
     }
-  }, [createBootstrap, storage, upgradeBlocked]);
+
+    setState({ status: "loading" });
+    const startPromise = (async () => {
+      try {
+        const bootstrap = await createBootstrap(storage, {
+          databaseOptions: {
+            tabId: tabIdRef.current,
+            onLifecycleEvent: (event) => {
+              if (event === "upgrade-blocked") {
+                setUpgradeBlocked(true);
+                return;
+              }
+              if (event === "reload-required") {
+                setReloadRequired(true);
+              }
+            },
+          },
+        });
+        setUpgradeBlocked(false);
+        setPossibleBlocker(false);
+        setState({ status: "ready", bootstrap });
+      } catch (error) {
+        const details = startupErrorDetails(error);
+        setState({
+          status: "error",
+          message: details.message,
+          guidance: details.guidance,
+          retryable: !upgradeBlockedRef.current,
+        });
+      } finally {
+        startInFlightRef.current = undefined;
+      }
+    })();
+
+    startInFlightRef.current = startPromise;
+    return startPromise;
+  }, [createBootstrap, storage]);
 
   useEffect(() => {
     void start();
