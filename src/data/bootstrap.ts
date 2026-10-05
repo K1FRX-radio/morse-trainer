@@ -3,7 +3,11 @@ import {
   createInitialState,
   type CurriculumState,
 } from "../core/curriculum.ts";
-import { DEFAULT_SETTINGS, type PracticeSettings } from "../core/settings.ts";
+import {
+  DEFAULT_SETTINGS,
+  normalizeSettings,
+  type PracticeSettings,
+} from "../core/settings.ts";
 import { TrainerDatabase, type TrainerDatabaseOptions } from "./indexeddb.ts";
 import {
   migrateLegacyStorage,
@@ -47,6 +51,22 @@ export type TrainingDataBootstrapOptions = {
 
 type BootstrapSnapshot = Omit<TrainingDataBootstrap, "repository">;
 
+function settingsEqual(
+  left: PracticeSettings,
+  right: PracticeSettings,
+): boolean {
+  return (
+    left.charWpm === right.charWpm &&
+    left.effectiveWpm === right.effectiveWpm &&
+    left.toneHz === right.toneHz &&
+    left.volume === right.volume &&
+    left.noiseLevel === right.noiseLevel &&
+    left.pacing === right.pacing &&
+    left.continuousCopyDurationMs === right.continuousCopyDurationMs &&
+    left.speedSuggestionAfterAttempts === right.speedSuggestionAfterAttempts
+  );
+}
+
 export function curriculumState(
   record: CurriculumStateRecord,
 ): CurriculumState {
@@ -69,9 +89,13 @@ export async function bootstrapTrainingData(
   await repository.open();
   await migrateLegacyStorage(storage, repository);
   const recovered = await repository.recoverInterruptedSessions();
-  const settingsRecord =
+  const storedSettings =
     (await repository.getPortableSettings()) ??
     (await repository.savePortableSettings(DEFAULT_SETTINGS));
+  const canonicalSettings = normalizeSettings(storedSettings.value);
+  const settingsRecord = settingsEqual(storedSettings.value, canonicalSettings)
+    ? storedSettings
+    : await repository.savePortableSettings(canonicalSettings);
   const curriculumRecord =
     (await repository.getCurriculumState()) ??
     (await repository.saveCurriculumState(

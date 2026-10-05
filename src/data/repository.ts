@@ -6,7 +6,7 @@ import type {
 } from "../core/settings.ts";
 import type { CurriculumState } from "../core/curriculum.ts";
 import { createInitialState } from "../core/curriculum.ts";
-import { DEFAULT_SETTINGS } from "../core/settings.ts";
+import { DEFAULT_SETTINGS, normalizeSettings } from "../core/settings.ts";
 import {
   applyAdvancementTransition,
   evaluateAdvancementEvidence,
@@ -493,6 +493,7 @@ export class DexieTrainingRepository implements TrainingDataRepository {
   async savePortableSettings(
     settings: PracticeSettings,
   ): Promise<PortableSettingsRecord> {
+    const canonicalSettings = normalizeSettings(settings);
     return this.database.transaction("rw", this.database.settings, async () => {
       const existing = await this.database.settings.get("portable-settings");
       const record = parsePortableSettingsRecord({
@@ -505,7 +506,7 @@ export class DexieTrainingRepository implements TrainingDataRepository {
                 parsePortableSettingsRecord(existing).updatedAt,
                 this.now().toISOString(),
               ),
-        value: settings,
+        value: canonicalSettings,
       });
       await this.database.settings.put(record);
       return record;

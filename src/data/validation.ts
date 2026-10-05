@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { KOCH_ORDER } from "../content/curriculum-data.ts";
 import { normalizeCopy } from "../core/scoring.ts";
-import { SETTING_RANGES } from "../core/settings.ts";
+import { PERSISTED_SETTING_RANGES, SETTING_RANGES } from "../core/settings.ts";
 import type {
   MigrationLedgerRecord,
   MilestoneRecord,
@@ -461,13 +461,13 @@ const practiceSettingsSchema = z
     charWpm: z
       .number()
       .finite()
-      .min(SETTING_RANGES.charWpm.min)
-      .max(SETTING_RANGES.charWpm.max),
+      .min(PERSISTED_SETTING_RANGES.charWpm.min)
+      .max(PERSISTED_SETTING_RANGES.charWpm.max),
     effectiveWpm: z
       .number()
       .finite()
-      .min(SETTING_RANGES.effectiveWpm.min)
-      .max(SETTING_RANGES.effectiveWpm.max),
+      .min(PERSISTED_SETTING_RANGES.effectiveWpm.min)
+      .max(PERSISTED_SETTING_RANGES.effectiveWpm.max),
     toneHz: z
       .number()
       .finite()

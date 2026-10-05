@@ -47,6 +47,20 @@ export type SettingRange = {
   default: number;
 };
 
+export type PersistedSettingRange = {
+  min: number;
+  max: number;
+};
+
+/**
+ * Backward-compatible persisted/baseline acceptance ranges. Keep legacy values
+ * readable at storage/import boundaries, then normalize into canonical bands.
+ */
+export const PERSISTED_SETTING_RANGES = {
+  charWpm: { min: 5, max: 40 },
+  effectiveWpm: { min: 5, max: 40 },
+} as const satisfies Record<"charWpm" | "effectiveWpm", PersistedSettingRange>;
+
 /** Inclusive ranges and defaults for each numeric setting. Tunable config. */
 export const SETTING_RANGES = {
   charWpm: { min: 10, max: 40, default: 20 },

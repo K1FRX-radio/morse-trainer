@@ -6,7 +6,12 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_SETTINGS, normalizeSettings } from "../../core/settings.ts";
+import {
+  CHARACTER_WPM_BANDS,
+  DEFAULT_SETTINGS,
+  EFFECTIVE_WPM_BANDS,
+  normalizeSettings,
+} from "../../core/settings.ts";
 import { SettingsProvider } from "../settings-provider.tsx";
 import {
   TrainingDataContext,
@@ -121,6 +126,66 @@ describe("SettingsScreen continuous copy", () => {
     );
     expect(persistSettings).toHaveBeenCalledWith(
       expect.objectContaining({ speedSuggestionAfterAttempts: "off" }),
+    );
+  });
+
+  it("shows exactly the canonical character speed options", () => {
+    renderSettings();
+
+    const characterSelect = screen.getByLabelText(
+      "Character speed",
+    ) as HTMLSelectElement;
+    const options = Array.from(characterSelect.options).map((option) =>
+      Number(option.value),
+    );
+
+    expect(options).toEqual(CHARACTER_WPM_BANDS);
+  });
+
+  it("filters effective speed options to values at or below character speed", () => {
+    renderSettings({ ...DEFAULT_SETTINGS, charWpm: 15, effectiveWpm: 12 });
+
+    const effectiveSelect = screen.getByLabelText(
+      "Effective speed",
+    ) as HTMLSelectElement;
+    const options = Array.from(effectiveSelect.options).map((option) =>
+      Number(option.value),
+    );
+
+    expect(options).toEqual(EFFECTIVE_WPM_BANDS.filter((wpm) => wpm <= 15));
+  });
+
+  it("clamps effective speed when character speed is lowered", () => {
+    const persistSettings = vi.fn();
+    renderSettings(DEFAULT_SETTINGS, persistSettings);
+
+    fireEvent.change(screen.getByLabelText("Effective speed"), {
+      target: { value: "20" },
+    });
+    fireEvent.change(screen.getByLabelText("Character speed"), {
+      target: { value: "15" },
+    });
+
+    expect(screen.getByLabelText("Character speed")).toHaveValue("15");
+    expect(screen.getByLabelText("Effective speed")).toHaveValue("15");
+    expect(persistSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({ charWpm: 15, effectiveWpm: 15 }),
+    );
+  });
+
+  it("persists canonical speed bands after selector updates", () => {
+    const persistSettings = vi.fn();
+    renderSettings(DEFAULT_SETTINGS, persistSettings);
+
+    fireEvent.change(screen.getByLabelText("Character speed"), {
+      target: { value: "25" },
+    });
+    fireEvent.change(screen.getByLabelText("Effective speed"), {
+      target: { value: "18" },
+    });
+
+    expect(persistSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({ charWpm: 25, effectiveWpm: 18 }),
     );
   });
 
