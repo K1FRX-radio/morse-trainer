@@ -288,6 +288,45 @@ describe("SettingsScreen continuous copy", () => {
     expect(persist).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps a safe not-granted status when persistence is denied", async () => {
+    const persisted = vi.fn().mockResolvedValue(false);
+    const persist = vi.fn().mockResolvedValue(false);
+    mockStoragePersistenceApi({ persisted, persist });
+
+    renderSettings();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Request persistent storage" }),
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Persistent storage is not granted/i),
+      ).toBeInTheDocument();
+    });
+    expect(persist).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows an error message when persistence request throws", async () => {
+    mockStoragePersistenceApi({
+      persisted: vi.fn().mockResolvedValue(false),
+      persist: vi.fn().mockRejectedValue(new Error("persist failed")),
+    });
+
+    renderSettings();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Request persistent storage" }),
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Could not determine persistent-storage status/i),
+      ).toBeInTheDocument();
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent("persist failed");
+  });
+
   it("reports when persistent storage controls are unsupported", async () => {
     Object.defineProperty(navigator, "storage", {
       configurable: true,

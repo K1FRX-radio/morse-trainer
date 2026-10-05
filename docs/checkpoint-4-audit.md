@@ -1,6 +1,6 @@
 # Checkpoint 4 Audit (Issue #51)
 
-Date: 2026-10-04
+Date: 2026-10-05
 
 This document records the acceptance audit for Milestone 4 (Persistence and analytics MVP).
 
@@ -34,14 +34,13 @@ Tracking issues:
 Issue status update:
 
 - #57: completed and merged (PR #59)
-- #58: lifecycle implementation and deterministic coverage added; manual-browser
-  gate items recorded below
+- #58: implementation complete and accepted in PR #62; manual/deterministic
+  evidence recorded below
 
 Required execution order before checkpoint closure:
 
-1. #58
-2. #51 (re-run closeout audit)
-3. #52 (Phase 5 kickoff)
+1. #51 (re-run closeout audit with #57/#58 fixes in place)
+2. #52 (Phase 5 kickoff)
 
 ## Automated validation evidence
 
@@ -88,7 +87,7 @@ Confirmed current for the completed subset:
 - `docs/metrics.md`
 
 Repository-level milestone status documents must remain in "Milestone 4 in progress"
-state until #58 is complete and #51 is re-run.
+state until #51 is re-run.
 
 ## Issue #58 storage lifecycle implementation evidence
 
@@ -96,7 +95,8 @@ Implemented in code:
 
 - closes IndexedDB connection on `versionchange`
 - emits cross-tab lifecycle signals over `BroadcastChannel` where supported
-  (`upgrade-blocked`, `connection-closed-for-upgrade`, `reload-required`)
+  (`upgrade-blocked`, `connection-closed-for-upgrade`) with source-tab
+  identity to prevent self-staleness
 - surfaces clear bootstrap/runtime guidance for blocked upgrades, reload-required
   state, and unavailable IndexedDB startup failures
 - blocks startup retry while upgrade blockers remain active
@@ -108,6 +108,10 @@ Deterministic coverage added:
 
 - `src/data/storage-lifecycle.test.ts`
 - `src/ui/screens/SettingsScreen.test.tsx` (persistent-storage request/support)
+- `src/ui/app-root.test.tsx` (blocked startup, blocker-tab guidance, stale-tab
+  lockout, unavailable IndexedDB startup)
+- `src/data/indexeddb.test.ts` (real versionchange closure + local
+  reload-required callback)
 
 Existing deterministic evidence for unsaved/quota retry behavior remains in:
 
@@ -116,8 +120,9 @@ Existing deterministic evidence for unsaved/quota retry behavior remains in:
 
 ## Defect handling outcome
 
-Substantive blockers were identified and tracked as focused issues (#57, #58).
-Checkpoint closure is deferred until those blockers are resolved.
+Substantive blockers were identified and tracked as focused issues (#57, #58),
+both now resolved in implementation. Checkpoint closure remains deferred until
+Issue #51 is re-run for final audit signoff.
 
 ## Manual verification status and limitations
 
@@ -128,11 +133,11 @@ Still manual by nature and outside deterministic unit coverage:
 - physical hardware input behavior on real devices.
 
 These manual areas still require explicit checkpoint evidence and remain part of
-the #58 acceptance work.
+the #51 closeout audit packet.
 
 ## Browser acceptance matrix for #58
 
-Recorded on 2026-10-04:
+Recorded on 2026-10-05:
 
 - migration from existing localStorage state: pass (manual). Seeded legacy
   `k1frx.settings.v1`/`k1frx.curriculum.v2`/`k1frx.introduced.v1`, reloaded,
@@ -142,28 +147,32 @@ Recorded on 2026-10-04:
   marker creation, injected stale legacy curriculum/settings values and reloaded;
   persisted portable settings remained unchanged (`charWpm` stayed at migrated
   value) and stale legacy payload was ignored.
-- normal and interrupted Learn sessions: pass (manual smoke). Started Learn and
-  ended session early; summary persisted and returned retry actions without
-  runtime failure.
+- normal and interrupted Learn sessions: pass (manual). Started Learn, let an
+  active card persist, forced reload, and verified interrupted-session recovery
+  with preserved attempt/session records and no advancement/progression side
+  effects.
 - Copy and Send Practice attempt recording: pass (manual smoke). Completed one
   Copy check and one Send keying attempt; both showed save activity and History
   attempt totals/character metrics updated.
 - dashboard refresh and low-sample states: pass (manual). Verified initial
   low-sample/empty-state History rendering, then verified live refresh to
   non-empty bounded summaries after Practice attempts.
-- export -> reset -> import round trip: partial. Reset path and import-rejection
-  behavior were manually exercised; full user-visible export-to-file then
-  replace-import round trip remains covered by deterministic repository/UI tests
-  (`src/data/repository.test.ts`, `src/ui/screens/SettingsScreen.test.tsx`).
+- export -> reset -> import round trip: pass (manual + deterministic).
+  Browser-run export payload was captured and fed through Replace import after
+  reset; record counts changed from attempts/sessions `1/2` to `0/0` after reset
+  and returned to `1/2` after import. Repository/UI deterministic coverage
+  remains in `src/data/repository.test.ts` and
+  `src/ui/screens/SettingsScreen.test.tsx`.
 - blocked-upgrade and competing-tab behavior: pass (manual + deterministic).
   Real multi-tab IndexedDB upgrade request triggered competing-tab versionchange
   closure and displayed reload-required banner; blocked-upgrade banner verified
   via cross-tab lifecycle signal. Deterministic lifecycle channel coverage is in
   `src/data/storage-lifecycle.test.ts`.
-- unavailable/quota-exceeded storage behavior: partial. Quota/retry persistence
-  diagnostics remain covered by deterministic Learn persistence tests
-  (`src/ui/screens/LearnScreen.test.tsx`), but true browser-level unavailable
-  IndexedDB context could not be forced in this environment.
+- unavailable/quota-exceeded storage behavior: pass for deterministic
+  verification; browser forcing remains environment-limited. Quota/retry
+  persistence diagnostics remain covered by deterministic Learn persistence tests
+  (`src/ui/screens/LearnScreen.test.tsx`), and unavailable IndexedDB bootstrap
+  behavior is now covered in `src/ui/app-root.test.tsx`.
 - malformed/future-version import rejection: pass (manual + deterministic).
   Malformed JSON and incompatible backup payload were rejected in Settings UI;
   parser/validation rejection remains covered by `src/data/backup-repository.test.ts`.
@@ -178,6 +187,5 @@ Recorded on 2026-10-04:
 
 ## Conclusion
 
-Checkpoint 4 acceptance criteria are not yet fully satisfied. Milestone 4
-remains in progress pending blocker completion (#57, #58), after which #51
-should be re-run for final acceptance closure.
+Issue blockers #57 and #58 are resolved. Milestone 4 remains in progress until
+Issue #51 is re-run and signed off as the final closeout audit.

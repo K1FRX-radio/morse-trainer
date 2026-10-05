@@ -14,7 +14,10 @@ import type {
 } from "./models.ts";
 import { buildProjectionRows } from "./projections.ts";
 import { parseTrainingDataset } from "./validation.ts";
-import { publishStorageLifecycleEvent } from "./storage-lifecycle.ts";
+import {
+  createLifecycleTabId,
+  publishStorageLifecycleEvent,
+} from "./storage-lifecycle.ts";
 
 export const DATABASE_NAME = "k1frx-morse-trainer";
 export const DATABASE_VERSION = 2;
@@ -48,6 +51,7 @@ export type TrainerDatabaseOptions = {
   IDBKeyRange?: typeof IDBKeyRange;
   now?: () => Date;
   onLifecycleEvent?: (event: "upgrade-blocked" | "reload-required") => void;
+  tabId?: string;
 };
 
 export class TrainerDatabase extends Dexie {
@@ -66,6 +70,7 @@ export class TrainerDatabase extends Dexie {
   private readonly clock: () => Date;
   private readonly onLifecycleEvent:
     ((event: "upgrade-blocked" | "reload-required") => void) | undefined;
+  private readonly tabId: string;
 
   constructor(options: TrainerDatabaseOptions = {}) {
     const dependencies =
@@ -78,6 +83,7 @@ export class TrainerDatabase extends Dexie {
     super(options.name ?? DATABASE_NAME, dependencies);
     this.clock = options.now ?? (() => new Date());
     this.onLifecycleEvent = options.onLifecycleEvent;
+    this.tabId = options.tabId ?? createLifecycleTabId();
 
     this.version(1).stores(SCHEMA_V1);
     this.version(2)
@@ -90,6 +96,7 @@ export class TrainerDatabase extends Dexie {
         type: "upgrade-blocked",
         databaseName: this.name,
         emittedAt,
+        sourceTabId: this.tabId,
       });
       this.onLifecycleEvent?.("upgrade-blocked");
     });
@@ -101,11 +108,7 @@ export class TrainerDatabase extends Dexie {
         type: "connection-closed-for-upgrade",
         databaseName: this.name,
         emittedAt,
-      });
-      publishStorageLifecycleEvent({
-        type: "reload-required",
-        databaseName: this.name,
-        emittedAt,
+        sourceTabId: this.tabId,
       });
       this.onLifecycleEvent?.("reload-required");
     });

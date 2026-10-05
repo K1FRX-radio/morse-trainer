@@ -2,9 +2,10 @@ export const STORAGE_LIFECYCLE_CHANNEL =
   "k1frx-morse-trainer-storage-lifecycle-v1";
 
 export type StorageLifecycleEvent = {
-  type: "upgrade-blocked" | "connection-closed-for-upgrade" | "reload-required";
+  type: "upgrade-blocked" | "connection-closed-for-upgrade";
   databaseName: string;
   emittedAt: string;
+  sourceTabId: string;
 };
 
 export type StorageLifecycleSubscriber = (event: StorageLifecycleEvent) => void;
@@ -24,11 +25,21 @@ function isStorageLifecycleEvent(
   const event = value as Partial<StorageLifecycleEvent>;
   return (
     (event.type === "upgrade-blocked" ||
-      event.type === "connection-closed-for-upgrade" ||
-      event.type === "reload-required") &&
+      event.type === "connection-closed-for-upgrade") &&
     typeof event.databaseName === "string" &&
-    typeof event.emittedAt === "string"
+    typeof event.emittedAt === "string" &&
+    typeof event.sourceTabId === "string"
   );
+}
+
+export function createLifecycleTabId(): string {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
+    return crypto.randomUUID();
+  }
+  return `tab-${Math.random().toString(36).slice(2)}`;
 }
 
 function hasBroadcastChannel(): boolean {

@@ -25,6 +25,7 @@ describe("storage lifecycle broadcast", () => {
         type: "upgrade-blocked",
         databaseName: "k1frx-morse-trainer",
         emittedAt: "2026-10-04T20:00:00.000Z",
+        sourceTabId: "tab-1",
       },
       channelFactory(channel),
     );
@@ -54,14 +55,15 @@ describe("storage lifecycle broadcast", () => {
       dispatch({ data: { type: "ignored" } });
       dispatch({
         data: {
-          type: "reload-required",
+          type: "connection-closed-for-upgrade",
           databaseName: "k1frx-morse-trainer",
           emittedAt: "2026-10-04T20:00:00.000Z",
+          sourceTabId: "tab-2",
         },
       });
     }
 
-    expect(received).toEqual(["reload-required"]);
+    expect(received).toEqual(["connection-closed-for-upgrade"]);
     unsubscribe();
     expect(channel.onmessage).toBeNull();
     expect(close).toHaveBeenCalledTimes(1);

@@ -285,4 +285,42 @@ describe("TrainerDatabase", () => {
     stillVersion1.close();
     await stillVersion1.delete();
   });
+
+  it("closes the stale connection and notifies reload-required on versionchange", async () => {
+    const name = crypto.randomUUID();
+    const lifecycleEvents: string[] = [];
+    const database = new TrainerDatabase({
+      ...options(name),
+      tabId: "tab-under-test",
+      onLifecycleEvent: (event) => lifecycleEvents.push(event),
+    });
+
+    try {
+      await database.open();
+      expect(database.isOpen()).toBe(true);
+
+      const upgrade = indexedDB.open(name, 99);
+      await new Promise<void>((resolve, reject) => {
+        upgrade.onerror = () =>
+          reject(upgrade.error ?? new Error("upgrade failed"));
+        upgrade.onupgradeneeded = () => undefined;
+        upgrade.onsuccess = () => {
+          upgrade.result.close();
+          resolve();
+        };
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(database.isOpen()).toBe(false);
+      expect(lifecycleEvents).toContain("reload-required");
+    } finally {
+      database.close();
+      await new Promise<void>((resolve) => {
+        const request = indexedDB.deleteDatabase(name);
+        request.onsuccess = () => resolve();
+        request.onerror = () => resolve();
+        request.onblocked = () => resolve();
+      });
+    }
+  });
 });
