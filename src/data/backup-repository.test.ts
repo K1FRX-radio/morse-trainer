@@ -176,6 +176,8 @@ describe("portable backup and reset", () => {
       expect(serialized).not.toContain("dailyProjections");
       expect(serialized).not.toContain("characterProjections");
       expect(serialized).not.toContain("confusionProjections");
+      expect(serialized).not.toContain("charWpmBand");
+      expect(serialized).not.toContain("effectiveWpmBand");
     } finally {
       repository.close();
       await database.delete();
@@ -408,6 +410,93 @@ describe("portable backup and reset", () => {
       expect((await repository.getPortableSettings())?.value).toMatchObject({
         charWpm: 5,
         effectiveWpm: 5,
+      });
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
+  it("accepts a true pre-band backup digest and derives speed bands after import", async () => {
+    const database = new TrainerDatabase({
+      name: crypto.randomUUID(),
+      indexedDB,
+      IDBKeyRange,
+    });
+    const repository = new DexieTrainingRepository(database, {
+      now: () => new Date("2026-10-03T10:00:00.000Z"),
+      createId: () => "dataset-pre-band-digest",
+    });
+
+    try {
+      await repository.open();
+      await seedPortableState(repository);
+      await database.sessions.put({
+        ...sessionRecord(),
+        charWpm: 18,
+        effectiveWpm: 11,
+        charWpmBand: 20,
+        effectiveWpmBand: 10,
+      });
+      await database.attempts.put({
+        ...attemptRecord(),
+        charWpm: 18,
+        effectiveWpm: 11,
+        charWpmBand: 20,
+        effectiveWpmBand: 10,
+      });
+
+      const baseline = await repository.exportPortableBackup("1.2.3");
+      const preBandPayload = {
+        ...baseline.payload,
+        sessions: baseline.payload.sessions.map((session) => {
+          const legacy = structuredClone(session);
+          delete legacy.charWpmBand;
+          delete legacy.effectiveWpmBand;
+          return legacy;
+        }),
+        attempts: baseline.payload.attempts.map((attempt) => {
+          const legacy = structuredClone(attempt);
+          delete legacy.charWpmBand;
+          delete legacy.effectiveWpmBand;
+          return legacy;
+        }),
+      };
+      const preBandBackup = await createPortableBackupDocument({
+        appVersion: baseline.appVersion,
+        databaseVersion: baseline.databaseVersion,
+        exportedAt: baseline.exportedAt,
+        payload: preBandPayload,
+      });
+      const raw = JSON.stringify(preBandBackup);
+
+      const preview = await repository.previewPortableBackup(raw);
+      expect(preview.counts).toEqual({
+        sessions: 1,
+        attempts: 1,
+        progressionEvents: 0,
+        milestones: 0,
+        migrationLedgers: 0,
+      });
+
+      const confirmation = preview.replaceConfirmation;
+      await expect(
+        repository.replacePortableBackup(raw, confirmation),
+      ).resolves.toBe("applied");
+
+      const importedSession = await database.sessions.get("session-1");
+      expect(importedSession).toMatchObject({
+        charWpm: 18,
+        effectiveWpm: 11,
+        charWpmBand: 20,
+        effectiveWpmBand: 10,
+      });
+      const importedAttempt = await database.attempts.get("attempt-1");
+      expect(importedAttempt).toMatchObject({
+        charWpm: 18,
+        effectiveWpm: 11,
+        charWpmBand: 20,
+        effectiveWpmBand: 10,
       });
     } finally {
       repository.close();

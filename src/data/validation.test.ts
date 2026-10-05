@@ -153,18 +153,20 @@ describe("persisted record semantics", () => {
   });
 
   it("derives speed-band fields for legacy records that omit them", () => {
-    expect(
-      parseTrainingSession(validSession({ charWpm: 18, effectiveWpm: 11 })),
-    ).toMatchObject({
+    const legacySession = validSession({ charWpm: 18, effectiveWpm: 11 });
+    delete legacySession.charWpmBand;
+    delete legacySession.effectiveWpmBand;
+    expect(parseTrainingSession(legacySession)).toMatchObject({
       charWpm: 18,
       effectiveWpm: 11,
       charWpmBand: 20,
       effectiveWpmBand: 10,
     });
 
-    expect(
-      parseTrainingAttempt(validAttempt({ charWpm: 18, effectiveWpm: 11 })),
-    ).toMatchObject({
+    const legacyAttempt = validAttempt({ charWpm: 18, effectiveWpm: 11 });
+    delete legacyAttempt.charWpmBand;
+    delete legacyAttempt.effectiveWpmBand;
+    expect(parseTrainingAttempt(legacyAttempt)).toMatchObject({
       charWpm: 18,
       effectiveWpm: 11,
       charWpmBand: 20,

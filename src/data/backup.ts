@@ -114,6 +114,20 @@ const documentHeaderSchema = z
   })
   .strict();
 
+const rawPayloadSchema = z
+  .object({
+    settings: z.unknown(),
+    curriculum: z.unknown(),
+    introductions: z.unknown(),
+    sessions: z.array(z.unknown()),
+    attempts: z.array(z.unknown()),
+    progressionEvents: z.array(z.unknown()),
+    milestones: z.array(z.unknown()),
+    schemaMetadata: z.unknown(),
+    migrationLedgers: z.array(z.unknown()),
+  })
+  .strict();
+
 function canonicalize(value: unknown): string {
   if (value === null || typeof value !== "object") {
     return JSON.stringify(value);
@@ -198,6 +212,17 @@ function parsePayload(value: unknown): PortableBackupPayload {
   return parsed;
 }
 
+function rawPayloadRecordCounts(payload: unknown): PortableBackupRecordCounts {
+  const parsed = rawPayloadSchema.parse(payload);
+  return {
+    sessions: parsed.sessions.length,
+    attempts: parsed.attempts.length,
+    progressionEvents: parsed.progressionEvents.length,
+    milestones: parsed.milestones.length,
+    migrationLedgers: parsed.migrationLedgers.length,
+  };
+}
+
 export function countPortableBackupRecords(
   payload: PortableBackupPayload,
 ): PortableBackupRecordCounts {
@@ -264,18 +289,19 @@ export async function parsePortableBackupDocument(
     throw new Error("backup canonicalization is unsupported");
   }
 
-  const payload = parsePayload(header.payload);
-  const counts = countPortableBackupRecords(payload);
+  const counts = rawPayloadRecordCounts(header.payload);
   if (JSON.stringify(counts) !== JSON.stringify(header.counts)) {
     throw new Error("backup record counts do not match payload");
   }
 
-  const expectedDigest = await sha256Hex(canonicalize(payload));
+  const expectedDigest = await sha256Hex(canonicalize(header.payload));
   if (
     expectedDigest.toLowerCase() !== header.integrity.digestHex.toLowerCase()
   ) {
     throw new Error("backup integrity digest does not match payload");
   }
+
+  const payload = parsePayload(header.payload);
 
   return {
     format: BACKUP_FORMAT_ID,
