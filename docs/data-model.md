@@ -97,10 +97,9 @@ Active sessions carry `ownerTabId` and `leaseExpiresAt`.
 The app now treats database lifecycle events as first-class runtime state:
 
 - `TrainerDatabase` closes this tab's connection on IndexedDB `versionchange`.
-- On `versionchange`, the app emits lifecycle signals over `BroadcastChannel`
-  (`k1frx-morse-trainer-storage-lifecycle-v1`) when available:
-  - `connection-closed-for-upgrade`
-  - `reload-required`
+- On `versionchange`, the stale tab enters a local reload-required state and
+  emits `connection-closed-for-upgrade` over `BroadcastChannel`
+  (`k1frx-morse-trainer-storage-lifecycle-v1`) when available.
 - On IndexedDB open `blocked`, the app emits `upgrade-blocked`.
 - Startup/UI handling surfaces explicit guidance:
   - blocked upgrade: close/reload competing tabs before retrying;

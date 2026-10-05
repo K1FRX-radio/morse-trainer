@@ -349,6 +349,84 @@ describe("AppRoot lifecycle integration", () => {
     expect(createBootstrap).toHaveBeenCalledTimes(1);
   });
 
+  it("clears blocked latch after bootstrap failure and allows exactly one retry attempt", async () => {
+    let lifecycleEventHandler:
+      ((event: "upgrade-blocked" | "reload-required") => void) | undefined;
+    const firstAttempt = deferred<TrainingDataBootstrap>();
+    const secondAttempt = deferred<TrainingDataBootstrap>();
+
+    const createBootstrap = vi.fn(
+      async (
+        _storage: LegacyStorage,
+        options?: TrainingDataBootstrapOptions,
+      ) => {
+        lifecycleEventHandler = options?.databaseOptions?.onLifecycleEvent;
+        if (createBootstrap.mock.calls.length === 1) {
+          return firstAttempt.promise;
+        }
+        return secondAttempt.promise;
+      },
+    );
+
+    render(
+      <AppRoot
+        dependencies={{
+          createBootstrap,
+          subscribeLifecycle: () => () => undefined,
+          reloadPage: vi.fn(),
+          storage: memoryStorage(),
+          tabId: "tab-self",
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(createBootstrap).toHaveBeenCalledTimes(1);
+    });
+
+    act(() => {
+      lifecycleEventHandler?.("upgrade-blocked");
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByText(/database upgrade is blocked by another open tab/i),
+      ).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      firstAttempt.reject(new Error("upgrade transaction aborted"));
+      try {
+        await firstAttempt.promise;
+      } catch {
+        // The rejection is consumed by AppRoot start() catch path.
+      }
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          /Unable to open training data: upgrade transaction aborted/i,
+        ),
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByText(/database upgrade is blocked by another open tab/i),
+    ).toBeNull();
+
+    const retryButton = screen.getByRole("button", {
+      name: "Retry opening data",
+    });
+    expect(retryButton).toBeEnabled();
+
+    act(() => {
+      retryButton.click();
+    });
+
+    await waitFor(() => {
+      expect(createBootstrap).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it("blocks interaction and requires reload after local versionchange", async () => {
     let lifecycleEventHandler:
       ((event: "upgrade-blocked" | "reload-required") => void) | undefined;

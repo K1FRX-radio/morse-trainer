@@ -129,6 +129,9 @@ export function AppRoot({ dependencies }: AppRootProps) {
         setPossibleBlocker(false);
         setState({ status: "ready", bootstrap });
       } catch (error) {
+        // Once the pending open rejects, this attempt is no longer blocked.
+        setUpgradeBlocked(false);
+        upgradeBlockedRef.current = false;
         const details = startupErrorDetails(error);
         setState({
           status: "error",
