@@ -2,12 +2,14 @@
 
 ## Current milestone
 
-Milestone 4 (Persistence and analytics MVP) is in progress.
+Milestone 4 (Persistence and analytics MVP) is complete.
 
 The app has moved from portable browser-only state to a versioned IndexedDB
 runtime data layer, exposes persisted analytics in the History screen, and now
 has durable Learn and Practice workflows with explicit persistence recovery.
-Milestone 5 (PWA/install/release polish) has not started.
+The next implementation item is issue #60 (speed-aware CW proficiency with
+discrete global WPM bands). Phase 5 (PWA/install/release polish) follows #60
+and has not started.
 
 ## Completed in repository
 
@@ -54,14 +56,13 @@ Milestone 5 (PWA/install/release polish) has not started.
 
 ## Checkpoint 4 audit status
 
-- Checkpoint 4 acceptance audit is in progress and currently blocked.
-- Audit findings are recorded in `docs/checkpoint-4-audit.md`.
-- Blockers are tracked in issues #57 and #58 and must be completed before #51
-  can close Milestone 4.
+- Checkpoint 4 acceptance audit is complete and accepted.
+- Closeout evidence is recorded in `docs/checkpoint-4-audit.md`.
+- Milestone 4 blockers #57 and #58 are closed.
 
 Implementation order is tracked separately in `docs/ROADMAP.md`.
 
-## Milestone 5 and later (not started)
+## Phase 5 and later (not started)
 
 - PWA manifest/service worker and installability flow.
 - Production release polish for mobile standalone usage.
