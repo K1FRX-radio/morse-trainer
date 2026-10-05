@@ -4,7 +4,7 @@ Date: 2026-10-05
 
 This document records the acceptance audit for Milestone 4 (Persistence and analytics MVP).
 
-Checkpoint outcome: blockers found. Milestone 4 is not closed yet.
+Checkpoint outcome: pass. Milestone 4 is closed.
 
 ## Scope reviewed
 
@@ -25,26 +25,17 @@ The audit reviewed Phase 4 requirements in the master plan and milestone documen
 
 ## Audit disposition
 
-The audit identified substantive remaining requirements that block Checkpoint 4 closure.
+The re-run audit found no remaining Milestone 4 blockers. Previously tracked
+blocking issues are resolved:
 
-Tracking issues:
+- #57: closed
+- #58: closed
 
-- #58 — Milestone 4 blocker: finish IndexedDB lifecycle hardening and browser acceptance checks.
-
-Issue status update:
-
-- #57: completed and merged (PR #59)
-- #58: implementation complete and accepted in PR #62; manual/deterministic
-  evidence recorded below
-
-Required execution order before checkpoint closure:
-
-1. #51 (re-run closeout audit with #57/#58 fixes in place)
-2. #52 (Phase 5 kickoff)
+Checkpoint 4 is accepted and Milestone 4 is complete.
 
 ## Automated validation evidence
 
-Executed on 2026-10-04:
+Executed on 2026-10-05:
 
 - npm test
 - npm run typecheck
@@ -62,17 +53,18 @@ Notes:
 
 ## Representative benchmark evidence (100k mixed RX/TX)
 
-From `npm run benchmark:data` on 2026-10-04:
+From `npm run benchmark:data` on 2026-10-05:
 
 - source serialized record size: 115,615,766 bytes
-- projection serialized record size: 222,422 bytes
+- projection serialized record size: 223,310 bytes
 - portable backup serialized record size: 115,617,557 bytes
-- projection rebuild: 2,362.70 ms
-- daily query: 4.83 ms
-- RX character query: 8.81 ms
-- TX character query: 7.60 ms
-- confusion query: 1.46 ms
-- portable export: 4,164.66 ms
+- projection rebuild: 1,868.01 ms
+- daily query: 3.20 ms
+- dashboard aggregate query: 2.06 ms
+- RX character query: 5.24 ms
+- TX character query: 6.84 ms
+- confusion query: 1.00 ms
+- portable export: 3,351.02 ms
 
 Budget check:
 
@@ -86,8 +78,8 @@ Confirmed current for the completed subset:
 - `docs/data-model.md`
 - `docs/metrics.md`
 
-Repository-level milestone status documents must remain in "Milestone 4 in progress"
-state until #51 is re-run.
+Repository-level milestone status documents now reflect Milestone 4 completion
+and Phase 5 as next.
 
 ## Issue #58 storage lifecycle implementation evidence
 
@@ -120,9 +112,8 @@ Existing deterministic evidence for unsaved/quota retry behavior remains in:
 
 ## Defect handling outcome
 
-Substantive blockers were identified and tracked as focused issues (#57, #58),
-both now resolved in implementation. Checkpoint closure remains deferred until
-Issue #51 is re-run for final audit signoff.
+No new substantive defects were found in this re-run closeout audit. Existing
+focused blockers (#57, #58) were resolved before this acceptance pass.
 
 ## Manual verification status and limitations
 
@@ -132,8 +123,8 @@ Still manual by nature and outside deterministic unit coverage:
 - cross-browser output-device routing behavior where APIs differ;
 - physical hardware input behavior on real devices.
 
-These manual areas still require explicit checkpoint evidence and remain part of
-the #51 closeout audit packet.
+These manual areas remain ongoing product-quality checks outside deterministic
+automation and do not block Milestone 4 closure.
 
 ## Browser acceptance matrix for #58
 
@@ -187,5 +178,7 @@ Recorded on 2026-10-05:
 
 ## Conclusion
 
-Issue blockers #57 and #58 are resolved. Milestone 4 remains in progress until
-Issue #51 is re-run and signed off as the final closeout audit.
+Checkpoint 4 is accepted. Every Milestone 4 gate now has explicit passing
+evidence (automated and/or manual with documented limitations), full validation
+is green, benchmark evidence is published, and the repository is ready to begin
+Phase 5 work.

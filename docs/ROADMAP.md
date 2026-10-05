@@ -7,12 +7,11 @@ only which issue should be implemented next and what follows it.
 
 ## Next
 
-- #51 — Checkpoint 4: audit and close Persistence & Analytics milestone
+- #60 — Design speed-aware CW proficiency with discrete global WPM bands
 
 ## Queue
 
-1. #60 — Design speed-aware CW proficiency with discrete global WPM bands
-2. #52 — Phase 5 kickoff: installable PWA foundation, offline shell, and safe updates
+1. #52 — Phase 5 kickoff: installable PWA foundation, offline shell, and safe updates
 
 ## Later / stretch
 
@@ -25,6 +24,7 @@ None.
 
 ## Recently completed
 
+- #51 — Checkpoint 4: audit and close Persistence & Analytics milestone
 - #58 — Milestone 4 blocker: finish IndexedDB lifecycle hardening and browser acceptance checks
 - #57 — Milestone 4 blocker: complete Progress dashboard contract and analytics semantics
 - #50 — Milestone 4: publish data/metrics docs and 100k-history benchmark
@@ -32,7 +32,6 @@ None.
 - #28 — Cleanup: remove dead 3-char notice delay configuration
 - #29 — Add regression: Send Practice does not mutate Learn progression
 - #31 — Isolate GitHub Pages deployment concurrency from PR CI
-- #36 — Avoid creating empty Copy Practice sessions for unavailable content
 
 ## Maintenance contract
 
