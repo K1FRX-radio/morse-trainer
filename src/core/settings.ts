@@ -5,6 +5,12 @@
 export type PacingMode = "auto" | "manual";
 export type ContinuousCopyDurationMs = 60000 | 180000 | 300000 | 600000;
 export type SpeedSuggestionAfterAttempts = 3 | 4 | 5 | "off";
+export const CHARACTER_WPM_BANDS = [10, 15, 20, 25, 30, 35, 40] as const;
+export const EFFECTIVE_WPM_BANDS = [
+  5, 8, 10, 12, 15, 18, 20, 25, 30, 35, 40,
+] as const;
+export type CharacterWpmBand = (typeof CHARACTER_WPM_BANDS)[number];
+export type EffectiveWpmBand = (typeof EFFECTIVE_WPM_BANDS)[number];
 
 export const CONTINUOUS_COPY_DURATIONS = [
   60000, 180000, 300000, 600000,
@@ -41,9 +47,23 @@ export type SettingRange = {
   default: number;
 };
 
+export type PersistedSettingRange = {
+  min: number;
+  max: number;
+};
+
+/**
+ * Backward-compatible persisted/baseline acceptance ranges. Keep legacy values
+ * readable at storage/import boundaries, then normalize into canonical bands.
+ */
+export const PERSISTED_SETTING_RANGES = {
+  charWpm: { min: 5, max: 40 },
+  effectiveWpm: { min: 5, max: 40 },
+} as const satisfies Record<"charWpm" | "effectiveWpm", PersistedSettingRange>;
+
 /** Inclusive ranges and defaults for each numeric setting. Tunable config. */
 export const SETTING_RANGES = {
-  charWpm: { min: 5, max: 40, default: 20 },
+  charWpm: { min: 10, max: 40, default: 20 },
   effectiveWpm: { min: 5, max: 40, default: 12 },
   toneHz: { min: 300, max: 1000, default: 600 },
   volume: { min: 0, max: 1, default: 0.7 },
@@ -71,6 +91,50 @@ function clamp(value: number, range: SettingRange): number {
   return Math.min(range.max, Math.max(range.min, value));
 }
 
+function nearestBand<T extends number>(value: number, bands: readonly T[]): T {
+  let best = bands[0];
+  let bestDistance = Math.abs(value - best);
+  for (const candidate of bands.slice(1)) {
+    const distance = Math.abs(value - candidate);
+    if (distance < bestDistance) {
+      best = candidate;
+      bestDistance = distance;
+      continue;
+    }
+    if (distance === bestDistance && candidate < best) {
+      best = candidate;
+    }
+  }
+  return best;
+}
+
+function maxEffectiveBandAtOrBelow(
+  charWpm: CharacterWpmBand,
+): EffectiveWpmBand {
+  const eligible = EFFECTIVE_WPM_BANDS.filter(
+    (candidate) => candidate <= charWpm,
+  );
+  return eligible[eligible.length - 1] as EffectiveWpmBand;
+}
+
+export function normalizeCharacterWpmBand(value: number): CharacterWpmBand {
+  return nearestBand(clamp(value, SETTING_RANGES.charWpm), CHARACTER_WPM_BANDS);
+}
+
+export function normalizeEffectiveWpmBand(
+  value: number,
+  charWpm: CharacterWpmBand,
+): EffectiveWpmBand {
+  const snapped = nearestBand(
+    clamp(value, SETTING_RANGES.effectiveWpm),
+    EFFECTIVE_WPM_BANDS,
+  );
+  if (snapped <= charWpm) {
+    return snapped;
+  }
+  return maxEffectiveBandAtOrBelow(charWpm);
+}
+
 /**
  * Clamps each field to its range and enforces effectiveWpm <= charWpm so
  * Farnsworth timing stays valid.
@@ -78,16 +142,12 @@ function clamp(value: number, range: SettingRange): number {
 export function normalizeSettings(
   settings: Partial<PracticeSettings>,
 ): PracticeSettings {
-  const charWpm = clamp(
+  const charWpm = normalizeCharacterWpmBand(
     settings.charWpm ?? DEFAULT_SETTINGS.charWpm,
-    SETTING_RANGES.charWpm,
   );
-  const effectiveWpm = Math.min(
+  const effectiveWpm = normalizeEffectiveWpmBand(
+    settings.effectiveWpm ?? DEFAULT_SETTINGS.effectiveWpm,
     charWpm,
-    clamp(
-      settings.effectiveWpm ?? DEFAULT_SETTINGS.effectiveWpm,
-      SETTING_RANGES.effectiveWpm,
-    ),
   );
   return {
     charWpm,

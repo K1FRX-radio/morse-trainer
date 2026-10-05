@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  CHARACTER_WPM_BANDS,
   CONTINUOUS_COPY_DURATIONS,
+  EFFECTIVE_WPM_BANDS,
   SPEED_SUGGESTION_THRESHOLDS,
   SETTING_RANGES,
+  type CharacterWpmBand,
   type ContinuousCopyDurationMs,
+  type EffectiveWpmBand,
   type PracticeSettings,
   type SpeedSuggestionAfterAttempts,
 } from "../../core/settings.ts";
@@ -17,7 +21,7 @@ import {
 import { useTrainingData } from "../training-data-context.ts";
 import { useSettings } from "../settings-context.ts";
 
-type NumericField = "charWpm" | "effectiveWpm" | "toneHz";
+type NumericField = "toneHz";
 
 type PersistenceStatus =
   | "checking"
@@ -279,8 +283,51 @@ export function SettingsScreen() {
     <section>
       <h2>Settings</h2>
 
-      {numberField("charWpm", "Character speed", " WPM")}
-      {numberField("effectiveWpm", "Effective speed", " WPM")}
+      <label className="field">
+        <span className="field__label">Character speed</span>
+        <select
+          aria-label="Character speed"
+          value={settings.charWpm}
+          onChange={(event) => {
+            const charWpm = Number(event.target.value) as CharacterWpmBand;
+            update({
+              charWpm,
+              effectiveWpm: Math.min(
+                settings.effectiveWpm,
+                charWpm,
+              ) as EffectiveWpmBand,
+            });
+          }}
+        >
+          {CHARACTER_WPM_BANDS.map((wpm) => (
+            <option key={wpm} value={wpm}>
+              {wpm} WPM
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label className="field">
+        <span className="field__label">Effective speed</span>
+        <select
+          aria-label="Effective speed"
+          value={settings.effectiveWpm}
+          onChange={(event) =>
+            update({
+              effectiveWpm: Number(event.target.value) as EffectiveWpmBand,
+            })
+          }
+        >
+          {EFFECTIVE_WPM_BANDS.filter((wpm) => wpm <= settings.charWpm).map(
+            (wpm) => (
+              <option key={wpm} value={wpm}>
+                {wpm} WPM
+              </option>
+            ),
+          )}
+        </select>
+      </label>
+
       {numberField("toneHz", "Tone", " Hz", 10)}
 
       <RangeField

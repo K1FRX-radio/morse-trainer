@@ -66,7 +66,7 @@ describe("bootstrapTrainingData", () => {
     });
 
     await expect(bootstrapTrainingData(storage, repository)).resolves.toEqual({
-      settings: { ...DEFAULT_SETTINGS, charWpm: 18 },
+      settings: { ...DEFAULT_SETTINGS, charWpm: 20 },
       curriculum: {
         config: DEFAULT_CURRICULUM_CONFIG,
         characters: expect.any(Array),
@@ -145,5 +145,75 @@ describe("bootstrapTrainingData", () => {
       "curriculum-save",
       "introductions-save",
     ]);
+  });
+
+  it("normalizes and persists existing non-canonical settings before use", async () => {
+    const calls: string[] = [];
+    const existingSettings: PortableSettingsRecord = {
+      id: "portable-settings",
+      schemaVersion: 1,
+      updatedAt: "2026-09-24T18:00:00.000Z",
+      value: { ...DEFAULT_SETTINGS, charWpm: 18, effectiveWpm: 11 },
+    };
+    const defaultCurriculum = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    const curriculumRecord: CurriculumStateRecord = {
+      id: "curriculum-state",
+      schemaVersion: 1,
+      updatedAt: "2026-09-24T18:00:00.000Z",
+      ...defaultCurriculum.config,
+      order: [...defaultCurriculum.config.order],
+      characters: defaultCurriculum.characters,
+    };
+    const introductionsRecord: IntroductionsRecord = {
+      id: "completed-introductions",
+      schemaVersion: 1,
+      updatedAt: "2026-09-24T18:00:00.000Z",
+      characters: [],
+    };
+    const repository = {
+      open: async () => undefined,
+      isMigrationComplete: async () => true,
+      commitLegacyMigration: async () => {
+        throw new Error("completed migration must not run");
+      },
+      recoverInterruptedSessions: async () => [],
+      getPortableSettings: async () => {
+        calls.push("settings-get");
+        return existingSettings;
+      },
+      savePortableSettings: async (
+        settings: PortableSettingsRecord["value"],
+      ) => {
+        calls.push("settings-save");
+        expect(settings).toEqual({
+          ...DEFAULT_SETTINGS,
+          charWpm: 20,
+          effectiveWpm: 10,
+        });
+        return {
+          ...existingSettings,
+          updatedAt: "2026-09-24T18:01:00.000Z",
+          value: settings,
+        };
+      },
+      getCurriculumState: async () => curriculumRecord,
+      saveCurriculumState: async () => {
+        throw new Error("existing curriculum should be reused");
+      },
+      getIntroductions: async () => introductionsRecord,
+      saveIntroductions: async () => {
+        throw new Error("existing introductions should be reused");
+      },
+    };
+
+    await expect(
+      bootstrapTrainingData(memoryStorage(), repository),
+    ).resolves.toEqual({
+      settings: { ...DEFAULT_SETTINGS, charWpm: 20, effectiveWpm: 10 },
+      curriculum: defaultCurriculum,
+      introductions: [],
+      recoveredSessionCount: 0,
+    });
+    expect(calls).toEqual(["settings-get", "settings-save"]);
   });
 });

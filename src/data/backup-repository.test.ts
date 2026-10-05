@@ -9,6 +9,7 @@ import {
   LEGACY_ROLLBACK_KEY,
 } from "./legacy-migration.ts";
 import { createPortableBackupDocument } from "./backup.ts";
+import { bootstrapTrainingData } from "./bootstrap.ts";
 import { TrainerDatabase } from "./indexeddb.ts";
 import { DexieTrainingRepository } from "./repository.ts";
 
@@ -117,6 +118,15 @@ const DUMMY_CONFIRMATION = {
   backupDigestHex: "0".repeat(64),
   operationKey: "1".repeat(64),
 };
+
+function memoryStorage(initial: Record<string, string> = {}) {
+  const values = new Map(Object.entries(initial));
+  return {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value),
+    removeItem: (key: string) => values.delete(key),
+  };
+}
 
 describe("portable backup and reset", () => {
   it("exports portable authoritative records and excludes projection rows", async () => {
@@ -348,6 +358,105 @@ describe("portable backup and reset", () => {
       expect(await repository.getPortableSettings()).toEqual(stableSettings);
       expect(await database.sessions.count()).toBe(stableSessionCount);
       expect(await database.attempts.count()).toBe(stableAttemptCount);
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
+  it("previews and imports prior-format backups with legacy 5 WPM settings", async () => {
+    const database = new TrainerDatabase({
+      name: crypto.randomUUID(),
+      indexedDB,
+      IDBKeyRange,
+    });
+    const repository = new DexieTrainingRepository(database, {
+      now: () => new Date("2026-10-03T10:00:00.000Z"),
+      createId: () => "dataset-legacy-5",
+    });
+
+    try {
+      await repository.open();
+      await seedPortableState(repository);
+
+      const baseline = await repository.exportPortableBackup("1.2.3");
+      const legacyFive = await createPortableBackupDocument({
+        appVersion: baseline.appVersion,
+        databaseVersion: baseline.databaseVersion,
+        exportedAt: baseline.exportedAt,
+        payload: {
+          ...baseline.payload,
+          settings: {
+            ...baseline.payload.settings,
+            value: {
+              ...baseline.payload.settings.value,
+              charWpm: 5,
+              effectiveWpm: 5,
+            },
+          },
+        },
+      });
+      const raw = JSON.stringify(legacyFive);
+
+      const preview = await repository.previewPortableBackup(raw);
+      expect(preview.counts).toEqual(baseline.counts);
+
+      const confirmation = preview.replaceConfirmation;
+      await expect(
+        repository.replacePortableBackup(raw, confirmation),
+      ).resolves.toBe("applied");
+      expect((await repository.getPortableSettings())?.value).toMatchObject({
+        charWpm: 5,
+        effectiveWpm: 5,
+      });
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
+  it("canonicalizes stored settings during bootstrap so immediate export matches runtime bands", async () => {
+    const database = new TrainerDatabase({
+      name: crypto.randomUUID(),
+      indexedDB,
+      IDBKeyRange,
+    });
+    const repository = new DexieTrainingRepository(database, {
+      now: () => new Date("2026-10-03T10:00:00.000Z"),
+      createId: () => "dataset-bootstrap-canonical",
+    });
+
+    try {
+      await repository.open();
+      await seedPortableState(repository);
+      await database.settings.put({
+        id: "portable-settings",
+        schemaVersion: 1,
+        updatedAt: "2026-10-03T10:00:00.000Z",
+        value: {
+          ...DEFAULT_SETTINGS,
+          charWpm: 18,
+          effectiveWpm: 11,
+        },
+      });
+
+      const bootstrap = await bootstrapTrainingData(
+        memoryStorage({ [LEGACY_ROLLBACK_KEY]: "{}" }),
+        repository,
+      );
+      expect(bootstrap.settings).toMatchObject({
+        charWpm: 20,
+        effectiveWpm: 10,
+      });
+
+      const persisted = await repository.getPortableSettings();
+      expect(persisted?.value).toMatchObject({ charWpm: 20, effectiveWpm: 10 });
+
+      const exported = await repository.exportPortableBackup("1.2.3");
+      expect(exported.payload.settings.value).toMatchObject({
+        charWpm: 20,
+        effectiveWpm: 10,
+      });
     } finally {
       repository.close();
       await database.delete();

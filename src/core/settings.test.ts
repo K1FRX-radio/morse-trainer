@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  CHARACTER_WPM_BANDS,
   DEFAULT_SETTINGS,
+  EFFECTIVE_WPM_BANDS,
   SETTING_RANGES,
+  normalizeCharacterWpmBand,
+  normalizeEffectiveWpmBand,
   normalizeSettings,
   recommendedContinuousCopyDurationMs,
 } from "./settings.ts";
@@ -27,6 +31,12 @@ describe("normalizeSettings", () => {
   it("keeps effectiveWpm at or below charWpm", () => {
     const result = normalizeSettings({ charWpm: 15, effectiveWpm: 30 });
     expect(result.effectiveWpm).toBe(15);
+  });
+
+  it("snaps speeds to canonical discrete ladders", () => {
+    const result = normalizeSettings({ charWpm: 24, effectiveWpm: 11.1 });
+    expect(result.charWpm).toBe(25);
+    expect(result.effectiveWpm).toBe(12);
   });
 
   it("allows effectiveWpm below charWpm unchanged", () => {
@@ -75,6 +85,26 @@ describe("normalizeSettings", () => {
       normalizeSettings({ speedSuggestionAfterAttempts: 2 as 3 })
         .speedSuggestionAfterAttempts,
     ).toBe(3);
+  });
+});
+
+describe("speed-band normalization", () => {
+  it("exposes canonical character and effective speed ladders", () => {
+    expect(CHARACTER_WPM_BANDS).toEqual([10, 15, 20, 25, 30, 35, 40]);
+    expect(EFFECTIVE_WPM_BANDS).toEqual([
+      5, 8, 10, 12, 15, 18, 20, 25, 30, 35, 40,
+    ]);
+  });
+
+  it("maps character speeds to nearest band with lower tie break", () => {
+    expect(normalizeCharacterWpmBand(19)).toBe(20);
+    expect(normalizeCharacterWpmBand(22.5)).toBe(20);
+    expect(normalizeCharacterWpmBand(37.5)).toBe(35);
+  });
+
+  it("maps effective speed then clamps to character band", () => {
+    expect(normalizeEffectiveWpmBand(11.9, 20)).toBe(12);
+    expect(normalizeEffectiveWpmBand(29, 20)).toBe(20);
   });
 });
 
