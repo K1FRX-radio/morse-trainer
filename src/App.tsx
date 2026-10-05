@@ -13,7 +13,18 @@ const NAV = [
   { to: "/settings", label: "Settings" },
 ] as const;
 
-export function App() {
+export type StorageLifecycleNotice = {
+  message: string;
+  actionLabel?: string;
+  actionDisabled?: boolean;
+  onAction?: () => void;
+};
+
+export function App({
+  storageNotice,
+}: {
+  storageNotice?: StorageLifecycleNotice;
+}) {
   const [navigationBlocked, setNavigationBlocked] = useState(false);
 
   useEffect(() => {
@@ -33,6 +44,23 @@ export function App() {
         <header className="app__header">
           <h1 className="app__title">K1FRX Morse Trainer</h1>
           <p className="app__tagline">Learn CW by ear.</p>
+          {storageNotice && (
+            <div
+              className="feedback feedback--neutral app__notice"
+              role="alert"
+            >
+              <p>{storageNotice.message}</p>
+              {storageNotice.onAction && storageNotice.actionLabel && (
+                <button
+                  type="button"
+                  onClick={storageNotice.onAction}
+                  disabled={storageNotice.actionDisabled}
+                >
+                  {storageNotice.actionLabel}
+                </button>
+              )}
+            </div>
+          )}
         </header>
 
         <main className="app__main">

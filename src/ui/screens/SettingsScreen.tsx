@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   CONTINUOUS_COPY_DURATIONS,
   SPEED_SUGGESTION_THRESHOLDS,
@@ -18,6 +18,22 @@ import { useTrainingData } from "../training-data-context.ts";
 import { useSettings } from "../settings-context.ts";
 
 type NumericField = "charWpm" | "effectiveWpm" | "toneHz";
+
+type PersistenceStatus =
+  | "checking"
+  | "unsupported"
+  | "granted"
+  | "not-granted"
+  | "requesting"
+  | "error";
+
+function hasPersistenceApi(): boolean {
+  return (
+    typeof navigator !== "undefined" &&
+    typeof navigator.storage?.persisted === "function" &&
+    typeof navigator.storage?.persist === "function"
+  );
+}
 
 function RangeField({
   label,
@@ -73,7 +89,57 @@ export function SettingsScreen() {
   );
   const [importError, setImportError] = useState<string | undefined>(undefined);
   const [resetConfirmText, setResetConfirmText] = useState("");
+  const [persistenceStatus, setPersistenceStatus] =
+    useState<PersistenceStatus>("checking");
+  const [persistenceError, setPersistenceError] = useState<string | undefined>(
+    undefined,
+  );
   const outputSupport = getOutputSupport();
+
+  const refreshPersistenceStatus = useCallback(async (): Promise<void> => {
+    if (!hasPersistenceApi()) {
+      setPersistenceStatus("unsupported");
+      setPersistenceError(undefined);
+      return;
+    }
+    try {
+      const granted = await navigator.storage.persisted();
+      setPersistenceStatus(granted ? "granted" : "not-granted");
+      setPersistenceError(undefined);
+    } catch (error) {
+      setPersistenceStatus("error");
+      setPersistenceError(
+        error instanceof Error
+          ? error.message
+          : "Could not read persistence status.",
+      );
+    }
+  }, []);
+
+  async function requestPersistentStorage(): Promise<void> {
+    if (!hasPersistenceApi()) {
+      setPersistenceStatus("unsupported");
+      setPersistenceError(undefined);
+      return;
+    }
+    setPersistenceStatus("requesting");
+    setPersistenceError(undefined);
+    try {
+      const granted = await navigator.storage.persist();
+      setPersistenceStatus(granted ? "granted" : "not-granted");
+    } catch (error) {
+      setPersistenceStatus("error");
+      setPersistenceError(
+        error instanceof Error
+          ? error.message
+          : "Persistent-storage request failed.",
+      );
+    }
+  }
+
+  useEffect(() => {
+    void refreshPersistenceStatus();
+  }, [refreshPersistenceStatus]);
 
   async function enableOutputSelection(): Promise<void> {
     const granted = await requestOutputAccess();
@@ -343,6 +409,38 @@ export function SettingsScreen() {
       )}
 
       <h3>Data management</h3>
+
+      <div className="field">
+        <button
+          type="button"
+          onClick={() => void requestPersistentStorage()}
+          disabled={
+            persistenceStatus === "requesting" ||
+            persistenceStatus === "unsupported"
+          }
+        >
+          {persistenceStatus === "requesting"
+            ? "Requesting persistent storage..."
+            : "Request persistent storage"}
+        </button>
+        <span className="field__label" role="status">
+          {persistenceStatus === "granted"
+            ? "Persistent storage is enabled for this browser profile."
+            : persistenceStatus === "not-granted"
+              ? "Persistent storage is not granted. Training still works, but the browser may evict data under pressure."
+              : persistenceStatus === "unsupported"
+                ? "This browser does not expose persistent-storage controls."
+                : persistenceStatus === "error"
+                  ? "Could not determine persistent-storage status."
+                  : "Checking persistent-storage status..."}
+        </span>
+        {persistenceError && (
+          <span className="field__label" role="alert">
+            {persistenceError}
+          </span>
+        )}
+      </div>
+
       <div className="field">
         <button type="button" onClick={() => void exportBackup()}>
           Export backup
