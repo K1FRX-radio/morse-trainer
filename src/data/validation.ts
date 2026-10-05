@@ -889,6 +889,16 @@ const recentCharacterObservationSchema = z
   })
   .strict();
 
+const characterSpeedBandEvidenceSchema = z
+  .object({
+    band: characterWpmBandSchema,
+    attempts: z.number().int().nonnegative(),
+    correct: z.number().int().nonnegative(),
+    weightedAttempts: z.number().finite().nonnegative(),
+    weightedCorrect: z.number().finite().nonnegative(),
+  })
+  .strict();
+
 const characterProjectionRecordSchema = persistedRecordSchema
   .extend({
     projectionVersion: z.literal(PROJECTION_VERSION),
@@ -898,8 +908,60 @@ const characterProjectionRecordSchema = persistedRecordSchema
     recentIsolatedRxResponseMs: z
       .array(z.number().finite().nonnegative())
       .optional(),
+    speedProficiencyBands: z.array(characterSpeedBandEvidenceSchema).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((projection, context) => {
+    if (projection.direction !== "rx") return;
+
+    if (projection.recentIsolatedRxResponseMs === undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["recentIsolatedRxResponseMs"],
+        message: "RX character projections must include response-time samples",
+      });
+    }
+
+    if (projection.speedProficiencyBands === undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["speedProficiencyBands"],
+        message:
+          "RX character projections must include speed proficiency bands",
+      });
+      return;
+    }
+
+    const actualBands = projection.speedProficiencyBands.map(
+      (band) => band.band,
+    );
+    const expectedBands = [...CHARACTER_WPM_BANDS].sort(
+      (left, right) => left - right,
+    );
+    const sortedActual = [...actualBands].sort((left, right) => left - right);
+
+    if (sortedActual.length !== expectedBands.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["speedProficiencyBands"],
+        message:
+          "speedProficiencyBands must include one entry for each canonical character band",
+      });
+      return;
+    }
+
+    for (let index = 0; index < expectedBands.length; index += 1) {
+      if (sortedActual[index] !== expectedBands[index]) {
+        context.addIssue({
+          code: "custom",
+          path: ["speedProficiencyBands"],
+          message:
+            "speedProficiencyBands must include one entry for each canonical character band",
+        });
+        break;
+      }
+    }
+  });
 
 const confusionProjectionRecordSchema = persistedRecordSchema
   .extend({

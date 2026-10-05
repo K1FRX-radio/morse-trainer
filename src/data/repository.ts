@@ -21,8 +21,10 @@ import {
   type LegacyMigrationRepository,
 } from "./legacy-migration.ts";
 import {
+  PROJECTION_VERSION,
   RECORD_SCHEMA_VERSION,
   type AttemptDirection,
+  type CharacterSpeedBandEvidenceRecord,
   type CharacterProjectionRecord,
   type ConfusionProjectionRecord,
   type CurriculumStateRecord,
@@ -38,12 +40,7 @@ import {
   type TrainingAttemptRecord,
   type TrainingSessionRecord,
 } from "./models.ts";
-import {
-  buildCharacterSpeedProficiency,
-  buildProjectionRows,
-  SPEED_PROFICIENCY_WINDOW,
-  type CharacterSpeedBandEvidence,
-} from "./projections.ts";
+import { buildProjectionRows } from "./projections.ts";
 import { captureDateTime } from "./time.ts";
 import {
   classifyRetryHistory,
@@ -159,7 +156,6 @@ export type CharacterSpeedProficiencyQuery = {
   charWpmBand: CharacterWpmBand;
   limit: number;
   characters?: readonly string[];
-  perCharacterWindow?: number;
 };
 
 export type CharacterSpeedProficiencyRecord = {
@@ -347,8 +343,8 @@ function assertCharacterWpmBand(band: CharacterWpmBand): void {
 }
 
 function copySpeedEvidence(
-  evidence: CharacterSpeedBandEvidence,
-): CharacterSpeedBandEvidence {
+  evidence: CharacterSpeedBandEvidenceRecord,
+): CharacterSpeedBandEvidenceRecord {
   return {
     band: evidence.band,
     attempts: evidence.attempts,
@@ -509,11 +505,14 @@ export class DexieTrainingRepository implements TrainingDataRepository {
 
     if (rxRows.length === 0) return;
 
-    const stale = rxRows.some(
-      (row) =>
-        parseCharacterProjectionRecord(structuredClone(row))
-          .recentIsolatedRxResponseMs === undefined,
-    );
+    const stale = rxRows.some((row) => {
+      const candidate = row as CharacterProjectionRecord;
+      return (
+        candidate.projectionVersion !== PROJECTION_VERSION ||
+        candidate.recentIsolatedRxResponseMs === undefined ||
+        candidate.speedProficiencyBands === undefined
+      );
+    });
 
     if (stale) {
       await this.rebuildProjections();
@@ -1359,36 +1358,38 @@ export class DexieTrainingRepository implements TrainingDataRepository {
     assertCharacterWpmBand(query.charWpmBand);
     assertBoundedLimit(query.limit);
 
-    const perCharacterWindow =
-      query.perCharacterWindow ?? SPEED_PROFICIENCY_WINDOW;
-    if (!Number.isInteger(perCharacterWindow) || perCharacterWindow <= 0) {
-      throw new RangeError("perCharacterWindow must be a positive integer");
+    const projectionRows: CharacterProjectionRecord[] = [];
+    if (query.characters === undefined) {
+      projectionRows.push(
+        ...(await this.database.characterProjections
+          .where("direction")
+          .equals("rx")
+          .limit(query.limit)
+          .toArray()),
+      );
+    } else {
+      const characters = [...new Set(query.characters)]
+        .filter((character) => character.length > 0)
+        .sort((left, right) => left.localeCompare(right));
+
+      for (const character of characters) {
+        if (projectionRows.length >= query.limit) break;
+        const row = await this.database.characterProjections
+          .where("[character+direction]")
+          .equals([character, "rx"])
+          .first();
+        if (row !== undefined) {
+          projectionRows.push(row);
+        }
+      }
     }
 
-    const includedCharacters =
-      query.characters === undefined
-        ? undefined
-        : new Set(query.characters.filter((character) => character.length > 0));
-
-    const attempts = await this.database.attempts
-      .where("direction")
-      .equals("rx")
-      .toArray();
-    const parsedAttempts = attempts.map((attempt) =>
-      parseTrainingAttempt(structuredClone(attempt)),
-    );
-
-    const rows = buildCharacterSpeedProficiency({
-      attempts: parsedAttempts,
-      perCharacterWindow,
-    })
-      .filter(
-        (row) =>
-          includedCharacters === undefined ||
-          includedCharacters.has(row.character),
-      )
+    return projectionRows
+      .map((row) => parseCharacterProjectionRecord(structuredClone(row)))
+      .sort((left, right) => left.character.localeCompare(right.character))
+      .slice(0, query.limit)
       .map((row) => {
-        const evidence = row.bands.find(
+        const evidence = row.speedProficiencyBands?.find(
           (band) => band.band === query.charWpmBand,
         );
         if (evidence === undefined) {
@@ -1401,9 +1402,7 @@ export class DexieTrainingRepository implements TrainingDataRepository {
           ...copySpeedEvidence(evidence),
         } satisfies CharacterSpeedProficiencyRecord;
       })
-      .sort((left, right) => left.character.localeCompare(right.character));
-
-    return rows.slice(0, query.limit).map((row) => structuredClone(row));
+      .map((row) => structuredClone(row));
   }
 
   async listMilestones(query: MilestoneQuery): Promise<MilestoneRecord[]> {

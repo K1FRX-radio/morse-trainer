@@ -18,6 +18,7 @@ type BenchmarkSample = {
   rxQueryMs: number;
   txQueryMs: number;
   confusionQueryMs: number;
+  speedQueryMs: number;
   exportMs: number;
 };
 
@@ -84,6 +85,14 @@ async function runBenchmark(): Promise<BenchmarkSample> {
     await repository.listConfusionProjections({ limit: 50 });
     const confusionQueryMs = performance.now() - confusionStart;
 
+    const speedStart = performance.now();
+    await repository.listCharacterSpeedProficiency({
+      charWpmBand: 20,
+      characters: ["K", "M", "R", "S", "U", "A", "N", "T"],
+      limit: 8,
+    });
+    const speedQueryMs = performance.now() - speedStart;
+
     const exportStart = performance.now();
     const backup = await repository.exportPortableBackup("0.0.0");
     const exportMs = performance.now() - exportStart;
@@ -106,6 +115,7 @@ async function runBenchmark(): Promise<BenchmarkSample> {
       rxQueryMs,
       txQueryMs,
       confusionQueryMs,
+      speedQueryMs,
       exportMs,
     };
   } finally {
@@ -129,6 +139,7 @@ describe("100k history benchmark", () => {
     expect(sample.rxQueryMs).toBeLessThanOrEqual(budget.queryMs);
     expect(sample.txQueryMs).toBeLessThanOrEqual(budget.queryMs);
     expect(sample.confusionQueryMs).toBeLessThanOrEqual(budget.queryMs);
+    expect(sample.speedQueryMs).toBeLessThanOrEqual(budget.queryMs);
     expect(sample.exportMs).toBeLessThanOrEqual(budget.exportMs);
 
     expect(sample.sourceBytes).toBeGreaterThan(0);

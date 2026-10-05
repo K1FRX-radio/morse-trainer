@@ -7,7 +7,7 @@ import type {
 } from "../core/settings.ts";
 
 export const RECORD_SCHEMA_VERSION = 1;
-export const PROJECTION_VERSION = 1;
+export const PROJECTION_VERSION = 2;
 export const SCORING_ALGORITHM_VERSION = "alignment-v1";
 export const KEYING_TIMING_ENCODING = "u32-ms-le-v1";
 export const MAX_KEYING_MARK_SAMPLES = 512;
@@ -248,12 +248,21 @@ export type RecentCharacterObservation = {
   responseMs?: number;
 };
 
+export type CharacterSpeedBandEvidenceRecord = {
+  band: CharacterWpmBand;
+  attempts: number;
+  correct: number;
+  weightedAttempts: number;
+  weightedCorrect: number;
+};
+
 export type CharacterProjectionRecord = PersistedRecord & {
   projectionVersion: number;
   character: string;
   direction: AttemptDirection;
   recent: RecentCharacterObservation[];
   recentIsolatedRxResponseMs?: number[];
+  speedProficiencyBands?: CharacterSpeedBandEvidenceRecord[];
 };
 
 export type ConfusionProjectionRecord = PersistedRecord & {

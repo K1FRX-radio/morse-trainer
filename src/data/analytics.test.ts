@@ -15,6 +15,7 @@ import type {
   DailyProjectionRecord,
   MilestoneRecord,
 } from "./models.ts";
+import { PROJECTION_VERSION } from "./models.ts";
 
 describe("analytics presentation models", () => {
   it("builds totals over multiple daily rows with weighted effective WPM", () => {
@@ -276,7 +277,7 @@ function daily(
     id: `daily:${overrides.localDate}`,
     schemaVersion: 1,
     updatedAt: "2026-09-24T18:00:00.000Z",
-    projectionVersion: 1,
+    projectionVersion: PROJECTION_VERSION,
     localDate: overrides.localDate,
     activeMs: overrides.activeMs ?? 0,
     sessionCount: overrides.sessionCount ?? 0,
@@ -300,7 +301,7 @@ function character(
     id: `character:${overrides.direction}:${overrides.character}`,
     schemaVersion: 1,
     updatedAt: "2026-09-24T18:00:00.000Z",
-    projectionVersion: 1,
+    projectionVersion: PROJECTION_VERSION,
     character: overrides.character,
     direction: overrides.direction,
     recent: overrides.recent,
@@ -336,7 +337,7 @@ function confusion(
     id: `confusion:${target}:${answer}`,
     schemaVersion: 1,
     updatedAt: "2026-09-24T18:00:00.000Z",
-    projectionVersion: 1,
+    projectionVersion: PROJECTION_VERSION,
     target,
     answer,
     count,
