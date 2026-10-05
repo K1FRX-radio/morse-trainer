@@ -1,12 +1,17 @@
 import { DATABASE_VERSION, TrainerDatabase } from "./indexeddb.ts";
 import { DEFAULT_CURRICULUM_CONFIG } from "../content/curriculum-data.ts";
 import type {
+  CharacterWpmBand,
   PracticeSettings,
   SpeedSuggestionAfterAttempts,
 } from "../core/settings.ts";
 import type { CurriculumState } from "../core/curriculum.ts";
 import { createInitialState } from "../core/curriculum.ts";
-import { DEFAULT_SETTINGS, normalizeSettings } from "../core/settings.ts";
+import {
+  CHARACTER_WPM_BANDS,
+  DEFAULT_SETTINGS,
+  normalizeSettings,
+} from "../core/settings.ts";
 import {
   applyAdvancementTransition,
   evaluateAdvancementEvidence,
@@ -33,7 +38,12 @@ import {
   type TrainingAttemptRecord,
   type TrainingSessionRecord,
 } from "./models.ts";
-import { buildProjectionRows } from "./projections.ts";
+import {
+  buildCharacterSpeedProficiency,
+  buildProjectionRows,
+  SPEED_PROFICIENCY_WINDOW,
+  type CharacterSpeedBandEvidence,
+} from "./projections.ts";
 import { captureDateTime } from "./time.ts";
 import {
   classifyRetryHistory,
@@ -145,6 +155,22 @@ export type ConfusionProjectionQuery = {
   limit: number;
 };
 
+export type CharacterSpeedProficiencyQuery = {
+  charWpmBand: CharacterWpmBand;
+  limit: number;
+  characters?: readonly string[];
+  perCharacterWindow?: number;
+};
+
+export type CharacterSpeedProficiencyRecord = {
+  character: string;
+  band: CharacterWpmBand;
+  attempts: number;
+  correct: number;
+  weightedAttempts: number;
+  weightedCorrect: number;
+};
+
 export type MilestoneQuery = {
   limit: number;
 };
@@ -216,6 +242,9 @@ export interface TrainingDataRepository extends LegacyMigrationRepository {
   listConfusionProjections(
     query: ConfusionProjectionQuery,
   ): Promise<ConfusionProjectionRecord[]>;
+  listCharacterSpeedProficiency(
+    query: CharacterSpeedProficiencyQuery,
+  ): Promise<CharacterSpeedProficiencyRecord[]>;
   listMilestones(query: MilestoneQuery): Promise<MilestoneRecord[]>;
   rebuildProjections(): Promise<void>;
   exportPortableBackup(appVersion: string): Promise<PortableBackupDocument>;
@@ -307,6 +336,26 @@ function assertBoundedLimit(limit: number, label = "limit"): void {
       `${label} must be at most ${MAX_PROJECTION_QUERY_LIMIT}`,
     );
   }
+}
+
+function assertCharacterWpmBand(band: CharacterWpmBand): void {
+  if (!CHARACTER_WPM_BANDS.includes(band)) {
+    throw new RangeError(
+      "charWpmBand must be a canonical character speed band",
+    );
+  }
+}
+
+function copySpeedEvidence(
+  evidence: CharacterSpeedBandEvidence,
+): CharacterSpeedBandEvidence {
+  return {
+    band: evidence.band,
+    attempts: evidence.attempts,
+    correct: evidence.correct,
+    weightedAttempts: evidence.weightedAttempts,
+    weightedCorrect: evidence.weightedCorrect,
+  };
 }
 
 function laterTimestamp(left: string, right: string): string {
@@ -1302,6 +1351,59 @@ export class DexieTrainingRepository implements TrainingDataRepository {
     return ordered.map((row) =>
       structuredClone(parseConfusionProjectionRecord(structuredClone(row))),
     );
+  }
+
+  async listCharacterSpeedProficiency(
+    query: CharacterSpeedProficiencyQuery,
+  ): Promise<CharacterSpeedProficiencyRecord[]> {
+    assertCharacterWpmBand(query.charWpmBand);
+    assertBoundedLimit(query.limit);
+
+    const perCharacterWindow =
+      query.perCharacterWindow ?? SPEED_PROFICIENCY_WINDOW;
+    if (!Number.isInteger(perCharacterWindow) || perCharacterWindow <= 0) {
+      throw new RangeError("perCharacterWindow must be a positive integer");
+    }
+
+    const includedCharacters =
+      query.characters === undefined
+        ? undefined
+        : new Set(query.characters.filter((character) => character.length > 0));
+
+    const attempts = await this.database.attempts
+      .where("direction")
+      .equals("rx")
+      .toArray();
+    const parsedAttempts = attempts.map((attempt) =>
+      parseTrainingAttempt(structuredClone(attempt)),
+    );
+
+    const rows = buildCharacterSpeedProficiency({
+      attempts: parsedAttempts,
+      perCharacterWindow,
+    })
+      .filter(
+        (row) =>
+          includedCharacters === undefined ||
+          includedCharacters.has(row.character),
+      )
+      .map((row) => {
+        const evidence = row.bands.find(
+          (band) => band.band === query.charWpmBand,
+        );
+        if (evidence === undefined) {
+          throw new Error(
+            `missing speed-band evidence for character ${row.character}`,
+          );
+        }
+        return {
+          character: row.character,
+          ...copySpeedEvidence(evidence),
+        } satisfies CharacterSpeedProficiencyRecord;
+      })
+      .sort((left, right) => left.character.localeCompare(right.character));
+
+    return rows.slice(0, query.limit).map((row) => structuredClone(row));
   }
 
   async listMilestones(query: MilestoneQuery): Promise<MilestoneRecord[]> {
