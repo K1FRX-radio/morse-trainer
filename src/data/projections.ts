@@ -112,7 +112,7 @@ export function buildCharacterSpeedProficiency(options: {
 
   const observationsByCharacter = new Map<
     string,
-    Array<{ band: CharacterWpmBand; correct: boolean }>
+    Map<CharacterWpmBand, boolean[]>
   >();
 
   for (const attempt of [...options.attempts].sort(compareAttempts)) {
@@ -128,34 +128,52 @@ export function buildCharacterSpeedProficiency(options: {
       ) {
         continue;
       }
-      const bucket = observationsByCharacter.get(observation.target) ?? [];
-      bucket.push({ band: attemptBand, correct: observation.correct });
+      const perBand =
+        observationsByCharacter.get(observation.target) ?? new Map();
+      const bucket = perBand.get(attemptBand) ?? [];
+      bucket.push(observation.correct);
       if (bucket.length > perCharacterWindow) {
         bucket.splice(0, bucket.length - perCharacterWindow);
       }
-      observationsByCharacter.set(observation.target, bucket);
+      perBand.set(attemptBand, bucket);
+      observationsByCharacter.set(observation.target, perBand);
     }
   }
 
   return [...observationsByCharacter.entries()]
     .sort(([left], [right]) => left.localeCompare(right))
-    .map(([character, observations]) => {
+    .map(([character, sourceBands]) => {
+      const sourceBandStats = [...sourceBands.entries()].map(
+        ([sourceBand, observations]) => ({
+          sourceBand,
+          attempts: observations.length,
+          correct: observations.reduce(
+            (count, observationCorrect) => count + (observationCorrect ? 1 : 0),
+            0,
+          ),
+        }),
+      );
+
       const bands = CHARACTER_WPM_BANDS.map((band) => {
         let attempts = 0;
         let correct = 0;
         let weightedAttempts = 0;
         let weightedCorrect = 0;
 
-        for (const observation of observations) {
-          if (observation.band === band) {
-            attempts += 1;
-            if (observation.correct) correct += 1;
+        for (const {
+          sourceBand,
+          attempts: sourceAttempts,
+          correct: sourceCorrect,
+        } of sourceBandStats) {
+          if (sourceBand === band) {
+            attempts += sourceAttempts;
+            correct += sourceCorrect;
           }
 
-          const weight = transferWeight(band, observation.band);
+          const weight = transferWeight(band, sourceBand);
           if (weight === 0) continue;
-          weightedAttempts += weight;
-          if (observation.correct) weightedCorrect += weight;
+          weightedAttempts += sourceAttempts * weight;
+          weightedCorrect += sourceCorrect * weight;
         }
 
         return {
