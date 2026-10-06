@@ -428,7 +428,7 @@ function curriculumState(record: CurriculumStateRecord): CurriculumState {
 function toBackupSessionV1(
   session: TrainingSessionRecord,
 ): TrainingSessionRecord {
-  const legacy = structuredClone(session);
+  const legacy = { ...session };
   delete legacy.charWpmBand;
   delete legacy.effectiveWpmBand;
   return legacy;
@@ -437,7 +437,7 @@ function toBackupSessionV1(
 function toBackupAttemptV1(
   attempt: TrainingAttemptRecord,
 ): TrainingAttemptRecord {
-  const legacy = structuredClone(attempt);
+  const legacy = { ...attempt };
   delete legacy.charWpmBand;
   delete legacy.effectiveWpmBand;
   return legacy;
