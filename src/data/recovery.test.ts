@@ -1,5 +1,9 @@
 import { IDBKeyRange, indexedDB } from "fake-indexeddb";
-import type { TrainingAttemptRecord, TrainingSessionRecord } from "./models.ts";
+import {
+  PROJECTION_VERSION,
+  type TrainingAttemptRecord,
+  type TrainingSessionRecord,
+} from "./models.ts";
 import { TrainerDatabase } from "./indexeddb.ts";
 import { DexieTrainingRepository } from "./repository.ts";
 
@@ -391,7 +395,7 @@ describe("interrupted-session recovery", () => {
         id: "daily:stale",
         schemaVersion: 1,
         updatedAt: "2026-09-24T17:30:00.000Z",
-        projectionVersion: 1,
+        projectionVersion: PROJECTION_VERSION,
         localDate: "stale",
         activeMs: 1,
         sessionCount: 1,

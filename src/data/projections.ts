@@ -1,5 +1,6 @@
 import {
   PROJECTION_VERSION,
+  type CharacterSpeedBandEvidenceRecord,
   type CharacterProjectionRecord,
   type ConfusionProjectionRecord,
   type DailyProjectionRecord,
@@ -18,13 +19,7 @@ export const CHARACTER_RECENT_WINDOW = 50;
 export const CHARACTER_RX_RESPONSE_WINDOW = 20;
 export const SPEED_PROFICIENCY_WINDOW = 50;
 
-export type CharacterSpeedBandEvidence = {
-  band: CharacterWpmBand;
-  attempts: number;
-  correct: number;
-  weightedAttempts: number;
-  weightedCorrect: number;
-};
+export type CharacterSpeedBandEvidence = CharacterSpeedBandEvidenceRecord;
 
 export type CharacterSpeedProficiency = {
   character: string;
@@ -197,6 +192,12 @@ export function buildProjectionRows(
 ): ProjectionRows {
   const daily = new Map<string, DailyProjectionRecord>();
   const characters = new Map<string, CharacterProjectionRecord>();
+  const speedProficiencyByCharacter = new Map(
+    buildCharacterSpeedProficiency({ attempts }).map((row) => [
+      row.character,
+      row.bands.map((band) => ({ ...band })),
+    ]),
+  );
 
   const getDaily = (localDate: string): DailyProjectionRecord => {
     const existing = daily.get(localDate);
@@ -294,6 +295,11 @@ export function buildProjectionRows(
   >();
   for (const row of characters.values()) {
     if (row.direction !== "rx") continue;
+    row.speedProficiencyBands =
+      speedProficiencyByCharacter.get(row.character)?.map((band) => ({
+        ...band,
+      })) ?? [];
+
     for (const observation of row.recent) {
       if (
         observation.kind !== "substitution" ||

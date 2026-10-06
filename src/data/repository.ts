@@ -1,12 +1,17 @@
 import { DATABASE_VERSION, TrainerDatabase } from "./indexeddb.ts";
 import { DEFAULT_CURRICULUM_CONFIG } from "../content/curriculum-data.ts";
 import type {
+  CharacterWpmBand,
   PracticeSettings,
   SpeedSuggestionAfterAttempts,
 } from "../core/settings.ts";
 import type { CurriculumState } from "../core/curriculum.ts";
 import { createInitialState } from "../core/curriculum.ts";
-import { DEFAULT_SETTINGS, normalizeSettings } from "../core/settings.ts";
+import {
+  CHARACTER_WPM_BANDS,
+  DEFAULT_SETTINGS,
+  normalizeSettings,
+} from "../core/settings.ts";
 import {
   applyAdvancementTransition,
   evaluateAdvancementEvidence,
@@ -16,8 +21,10 @@ import {
   type LegacyMigrationRepository,
 } from "./legacy-migration.ts";
 import {
+  PROJECTION_VERSION,
   RECORD_SCHEMA_VERSION,
   type AttemptDirection,
+  type CharacterSpeedBandEvidenceRecord,
   type CharacterProjectionRecord,
   type ConfusionProjectionRecord,
   type CurriculumStateRecord,
@@ -145,6 +152,21 @@ export type ConfusionProjectionQuery = {
   limit: number;
 };
 
+export type CharacterSpeedProficiencyQuery = {
+  charWpmBand: CharacterWpmBand;
+  limit: number;
+  characters?: readonly string[];
+};
+
+export type CharacterSpeedProficiencyRecord = {
+  character: string;
+  band: CharacterWpmBand;
+  attempts: number;
+  correct: number;
+  weightedAttempts: number;
+  weightedCorrect: number;
+};
+
 export type MilestoneQuery = {
   limit: number;
 };
@@ -216,6 +238,9 @@ export interface TrainingDataRepository extends LegacyMigrationRepository {
   listConfusionProjections(
     query: ConfusionProjectionQuery,
   ): Promise<ConfusionProjectionRecord[]>;
+  listCharacterSpeedProficiency(
+    query: CharacterSpeedProficiencyQuery,
+  ): Promise<CharacterSpeedProficiencyRecord[]>;
   listMilestones(query: MilestoneQuery): Promise<MilestoneRecord[]>;
   rebuildProjections(): Promise<void>;
   exportPortableBackup(appVersion: string): Promise<PortableBackupDocument>;
@@ -309,6 +334,26 @@ function assertBoundedLimit(limit: number, label = "limit"): void {
   }
 }
 
+function assertCharacterWpmBand(band: CharacterWpmBand): void {
+  if (!CHARACTER_WPM_BANDS.includes(band)) {
+    throw new RangeError(
+      "charWpmBand must be a canonical character speed band",
+    );
+  }
+}
+
+function copySpeedEvidence(
+  evidence: CharacterSpeedBandEvidenceRecord,
+): CharacterSpeedBandEvidenceRecord {
+  return {
+    band: evidence.band,
+    attempts: evidence.attempts,
+    correct: evidence.correct,
+    weightedAttempts: evidence.weightedAttempts,
+    weightedCorrect: evidence.weightedCorrect,
+  };
+}
+
 function laterTimestamp(left: string, right: string): string {
   return instant(left, "timestamp") >= instant(right, "timestamp")
     ? left
@@ -383,7 +428,7 @@ function curriculumState(record: CurriculumStateRecord): CurriculumState {
 function toBackupSessionV1(
   session: TrainingSessionRecord,
 ): TrainingSessionRecord {
-  const legacy = structuredClone(session);
+  const legacy = { ...session };
   delete legacy.charWpmBand;
   delete legacy.effectiveWpmBand;
   return legacy;
@@ -392,7 +437,7 @@ function toBackupSessionV1(
 function toBackupAttemptV1(
   attempt: TrainingAttemptRecord,
 ): TrainingAttemptRecord {
-  const legacy = structuredClone(attempt);
+  const legacy = { ...attempt };
   delete legacy.charWpmBand;
   delete legacy.effectiveWpmBand;
   return legacy;
@@ -448,25 +493,43 @@ export class DexieTrainingRepository implements TrainingDataRepository {
       },
     );
 
-    await this.rebuildStaleCharacterProjections();
+    await this.rebuildStaleProjections();
     return metadata;
   }
 
-  private async rebuildStaleCharacterProjections(): Promise<void> {
+  private async rebuildStaleProjections(): Promise<void> {
+    const staleDaily =
+      (await this.database.dailyProjections
+        .where("projectionVersion")
+        .notEqual(PROJECTION_VERSION)
+        .count()) > 0;
+
+    const staleCharacters =
+      (await this.database.characterProjections
+        .where("projectionVersion")
+        .notEqual(PROJECTION_VERSION)
+        .count()) > 0;
+
+    const staleConfusions =
+      (await this.database.confusionProjections
+        .where("projectionVersion")
+        .notEqual(PROJECTION_VERSION)
+        .count()) > 0;
+
     const rxRows = await this.database.characterProjections
       .where("direction")
       .equals("rx")
       .toArray();
 
-    if (rxRows.length === 0) return;
+    const staleRxShape = rxRows.some((row) => {
+      const candidate = row as CharacterProjectionRecord;
+      return (
+        candidate.recentIsolatedRxResponseMs === undefined ||
+        candidate.speedProficiencyBands === undefined
+      );
+    });
 
-    const stale = rxRows.some(
-      (row) =>
-        parseCharacterProjectionRecord(structuredClone(row))
-          .recentIsolatedRxResponseMs === undefined,
-    );
-
-    if (stale) {
+    if (staleDaily || staleCharacters || staleConfusions || staleRxShape) {
       await this.rebuildProjections();
     }
   }
@@ -1302,6 +1365,61 @@ export class DexieTrainingRepository implements TrainingDataRepository {
     return ordered.map((row) =>
       structuredClone(parseConfusionProjectionRecord(structuredClone(row))),
     );
+  }
+
+  async listCharacterSpeedProficiency(
+    query: CharacterSpeedProficiencyQuery,
+  ): Promise<CharacterSpeedProficiencyRecord[]> {
+    assertCharacterWpmBand(query.charWpmBand);
+    assertBoundedLimit(query.limit);
+
+    const projectionRows: CharacterProjectionRecord[] = [];
+    if (query.characters === undefined) {
+      projectionRows.push(
+        ...(await this.database.characterProjections
+          .where("direction")
+          .equals("rx")
+          .limit(query.limit)
+          .toArray()),
+      );
+    } else {
+      const characters = [...new Set(query.characters)]
+        .filter((character) => character.length > 0)
+        .sort((left, right) => left.localeCompare(right));
+
+      assertBoundedLimit(characters.length, "characters");
+
+      for (const character of characters) {
+        if (projectionRows.length >= query.limit) break;
+        const row = await this.database.characterProjections
+          .where("[character+direction]")
+          .equals([character, "rx"])
+          .first();
+        if (row !== undefined) {
+          projectionRows.push(row);
+        }
+      }
+    }
+
+    return projectionRows
+      .map((row) => parseCharacterProjectionRecord(structuredClone(row)))
+      .sort((left, right) => left.character.localeCompare(right.character))
+      .slice(0, query.limit)
+      .map((row) => {
+        const evidence = row.speedProficiencyBands?.find(
+          (band) => band.band === query.charWpmBand,
+        );
+        if (evidence === undefined) {
+          throw new Error(
+            `missing speed-band evidence for character ${row.character}`,
+          );
+        }
+        return {
+          character: row.character,
+          ...copySpeedEvidence(evidence),
+        } satisfies CharacterSpeedProficiencyRecord;
+      })
+      .map((row) => structuredClone(row));
   }
 
   async listMilestones(query: MilestoneQuery): Promise<MilestoneRecord[]> {

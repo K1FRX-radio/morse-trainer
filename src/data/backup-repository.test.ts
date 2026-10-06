@@ -11,6 +11,7 @@ import {
 import { createPortableBackupDocument } from "./backup.ts";
 import { bootstrapTrainingData } from "./bootstrap.ts";
 import { TrainerDatabase } from "./indexeddb.ts";
+import { PROJECTION_VERSION } from "./models.ts";
 import { DexieTrainingRepository } from "./repository.ts";
 
 function sessionRecord() {
@@ -149,7 +150,7 @@ describe("portable backup and reset", () => {
         id: "daily:stale",
         schemaVersion: 1,
         updatedAt: "2026-10-03T10:00:00.000Z",
-        projectionVersion: 1,
+        projectionVersion: PROJECTION_VERSION,
         localDate: "stale",
         activeMs: 1,
         sessionCount: 1,

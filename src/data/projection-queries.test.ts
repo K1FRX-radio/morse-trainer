@@ -1,5 +1,7 @@
 import { IDBKeyRange, indexedDB } from "fake-indexeddb";
+import { CHARACTER_WPM_BANDS } from "../core/settings.ts";
 import { TrainerDatabase } from "./indexeddb.ts";
+import { PROJECTION_VERSION } from "./models.ts";
 import {
   DexieTrainingRepository,
   MAX_PROJECTION_QUERY_LIMIT,
@@ -46,7 +48,7 @@ describe("DexieTrainingRepository projection queries", () => {
           id: `daily:${localDate}`,
           schemaVersion: 1 as const,
           updatedAt: "2026-10-04T18:00:00.000Z",
-          projectionVersion: 1 as const,
+          projectionVersion: PROJECTION_VERSION,
           localDate,
           activeMs: 60_000,
           sessionCount: 1,
@@ -193,6 +195,208 @@ describe("DexieTrainingRepository projection queries", () => {
     }
   });
 
+  it("derives current-band character speed proficiency from authoritative attempts", async () => {
+    const { database, repository } = makeRepository();
+
+    try {
+      await repository.open();
+      await database.sessions.put(speedSession(4));
+      await database.attempts.bulkPut([
+        speedAttempt({
+          id: "k20-1",
+          occurredAtUtc: "2026-09-24T09:00:00.000Z",
+          direction: "rx",
+          exerciseType: "copy-character",
+          target: "K",
+          answer: "K",
+          correct: true,
+          charWpmBand: 20,
+        }),
+        speedAttempt({
+          id: "k25-1",
+          occurredAtUtc: "2026-09-24T09:01:00.000Z",
+          direction: "rx",
+          exerciseType: "copy-group",
+          source: "learn",
+          target: "K",
+          answer: "M",
+          correct: false,
+          charWpmBand: 25,
+        }),
+        speedAttempt({
+          id: "m20-1",
+          occurredAtUtc: "2026-09-24T09:02:00.000Z",
+          direction: "rx",
+          exerciseType: "continuous-copy",
+          source: "learn",
+          target: "M",
+          answer: "M",
+          correct: true,
+          charWpmBand: 20,
+        }),
+        speedAttempt({
+          id: "assisted-ignored",
+          occurredAtUtc: "2026-09-24T09:03:00.000Z",
+          direction: "rx",
+          exerciseType: "copy-character",
+          target: "K",
+          answer: "K",
+          correct: true,
+          assisted: true,
+          charWpmBand: 20,
+        }),
+      ]);
+
+      await repository.rebuildProjections();
+
+      const rows = await repository.listCharacterSpeedProficiency({
+        charWpmBand: 20,
+        limit: 10,
+      });
+
+      expect(rows).toEqual([
+        {
+          character: "K",
+          band: 20,
+          attempts: 1,
+          correct: 1,
+          weightedAttempts: 1.5,
+          weightedCorrect: 1,
+        },
+        {
+          character: "M",
+          band: 20,
+          attempts: 1,
+          correct: 1,
+          weightedAttempts: 1,
+          weightedCorrect: 1,
+        },
+      ]);
+
+      const filtered = await repository.listCharacterSpeedProficiency({
+        charWpmBand: 20,
+        limit: 1,
+        characters: ["M", "", "Z"],
+      });
+      expect(filtered).toEqual([
+        {
+          character: "M",
+          band: 20,
+          attempts: 1,
+          correct: 1,
+          weightedAttempts: 1,
+          weightedCorrect: 1,
+        },
+      ]);
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
+  it("keeps bounded windows independent per character source speed band", async () => {
+    const { database, repository } = makeRepository();
+
+    try {
+      await repository.open();
+      await database.sessions.put(speedSession(7));
+
+      await database.attempts.bulkPut([
+        speedAttempt({
+          id: "k20-old-1",
+          occurredAtUtc: "2026-09-24T10:00:00.000Z",
+          direction: "rx",
+          exerciseType: "copy-character",
+          target: "K",
+          answer: "M",
+          correct: false,
+          charWpmBand: 20,
+        }),
+        speedAttempt({
+          id: "k20-old-2",
+          occurredAtUtc: "2026-09-24T10:01:00.000Z",
+          direction: "rx",
+          exerciseType: "copy-character",
+          target: "K",
+          answer: "K",
+          correct: true,
+          charWpmBand: 20,
+        }),
+        speedAttempt({
+          id: "k40-1",
+          occurredAtUtc: "2026-09-24T10:02:00.000Z",
+          direction: "rx",
+          exerciseType: "copy-character",
+          target: "K",
+          answer: "K",
+          correct: true,
+          charWpmBand: 40,
+        }),
+        speedAttempt({
+          id: "k40-2",
+          occurredAtUtc: "2026-09-24T10:03:00.000Z",
+          direction: "rx",
+          exerciseType: "copy-character",
+          target: "K",
+          answer: "K",
+          correct: true,
+          charWpmBand: 40,
+        }),
+        speedAttempt({
+          id: "k40-3",
+          occurredAtUtc: "2026-09-24T10:04:00.000Z",
+          direction: "rx",
+          exerciseType: "copy-character",
+          target: "K",
+          answer: "K",
+          correct: true,
+          charWpmBand: 40,
+        }),
+        speedAttempt({
+          id: "k20-new-1",
+          occurredAtUtc: "2026-09-24T10:05:00.000Z",
+          direction: "rx",
+          exerciseType: "copy-character",
+          target: "K",
+          answer: "K",
+          correct: true,
+          charWpmBand: 20,
+        }),
+        speedAttempt({
+          id: "k20-new-2",
+          occurredAtUtc: "2026-09-24T10:06:00.000Z",
+          direction: "rx",
+          exerciseType: "copy-character",
+          target: "K",
+          answer: "K",
+          correct: true,
+          charWpmBand: 20,
+        }),
+      ]);
+
+      await repository.rebuildProjections();
+
+      const rows = await repository.listCharacterSpeedProficiency({
+        charWpmBand: 20,
+        limit: 10,
+      });
+
+      expect(rows).toEqual([
+        {
+          character: "K",
+          band: 20,
+          attempts: 4,
+          correct: 3,
+          weightedAttempts: 4,
+          weightedCorrect: 3,
+        },
+      ]);
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
   it("rejects non-positive and oversized query limits", async () => {
     const { database, repository } = makeRepository();
 
@@ -208,6 +412,31 @@ describe("DexieTrainingRepository projection queries", () => {
       );
 
       await expect(
+        repository.listCharacterSpeedProficiency({
+          charWpmBand: 20,
+          limit: 0,
+        }),
+      ).rejects.toThrow(/positive integer/);
+
+      await expect(
+        repository.listCharacterSpeedProficiency({
+          charWpmBand: 20,
+          limit: MAX_PROJECTION_QUERY_LIMIT + 1,
+        }),
+      ).rejects.toThrow(new RegExp(String(MAX_PROJECTION_QUERY_LIMIT)));
+
+      await expect(
+        repository.listCharacterSpeedProficiency({
+          charWpmBand: 20,
+          limit: 1,
+          characters: Array.from(
+            { length: MAX_PROJECTION_QUERY_LIMIT + 1 },
+            (_, index) => `C${index}`,
+          ),
+        }),
+      ).rejects.toThrow(/characters must be at most/);
+
+      await expect(
         repository.listConfusionProjections({
           limit: MAX_PROJECTION_QUERY_LIMIT + 1,
         }),
@@ -215,6 +444,13 @@ describe("DexieTrainingRepository projection queries", () => {
 
       await expect(
         repository.listMilestones({
+          limit: MAX_PROJECTION_QUERY_LIMIT + 1,
+        }),
+      ).rejects.toThrow(new RegExp(String(MAX_PROJECTION_QUERY_LIMIT)));
+
+      await expect(
+        repository.listCharacterSpeedProficiency({
+          charWpmBand: 20,
           limit: MAX_PROJECTION_QUERY_LIMIT + 1,
         }),
       ).rejects.toThrow(new RegExp(String(MAX_PROJECTION_QUERY_LIMIT)));
@@ -273,6 +509,13 @@ describe("DexieTrainingRepository projection queries", () => {
       await expect(
         repository.listConfusionProjections({ limit: 5 }),
       ).resolves.toEqual([]);
+
+      await expect(
+        repository.listCharacterSpeedProficiency({
+          charWpmBand: 20,
+          limit: 5,
+        }),
+      ).resolves.toEqual([]);
     } finally {
       repository.close();
       await database.delete();
@@ -301,7 +544,7 @@ function daily(localDate: string, seed: number) {
     id: `daily:${localDate}`,
     schemaVersion: 1 as const,
     updatedAt: "2026-09-24T18:00:00.000Z",
-    projectionVersion: 1 as const,
+    projectionVersion: PROJECTION_VERSION,
     localDate,
     activeMs: seed,
     sessionCount: seed,
@@ -324,7 +567,7 @@ function character(
     id: `character:${characterName}:${direction}`,
     schemaVersion: 1 as const,
     updatedAt: "2026-09-24T18:00:00.000Z",
-    projectionVersion: 1 as const,
+    projectionVersion: PROJECTION_VERSION,
     character: characterName,
     direction,
     recent: [
@@ -342,6 +585,18 @@ function character(
         responseMs: 100,
       },
     ],
+    ...(direction === "rx"
+      ? {
+          recentIsolatedRxResponseMs: [100],
+          speedProficiencyBands: CHARACTER_WPM_BANDS.map((band) => ({
+            band,
+            attempts: 0,
+            correct: 0,
+            weightedAttempts: 0,
+            weightedCorrect: 0,
+          })),
+        }
+      : {}),
   };
 }
 
@@ -350,7 +605,7 @@ function confusion(target: string, answer: string, count: number) {
     id: `confusion:${target}:${answer}`,
     schemaVersion: 1 as const,
     updatedAt: "2026-09-24T18:00:00.000Z",
-    projectionVersion: 1 as const,
+    projectionVersion: PROJECTION_VERSION,
     target,
     answer,
     count,
@@ -378,5 +633,117 @@ function milestone(
     },
     ...(character === undefined ? {} : { character }),
     migrationDerived: false,
+  };
+}
+
+function speedAttempt(overrides: {
+  id: string;
+  occurredAtUtc: string;
+  direction: "rx" | "tx";
+  exerciseType:
+    | "copy-character"
+    | "copy-group"
+    | "copy-word"
+    | "continuous-copy"
+    | "send-character"
+    | "send-group"
+    | "send-word";
+  target: string;
+  answer: string;
+  correct: boolean;
+  source?: "learn" | "copy-practice" | "send-practice";
+  assisted?: boolean;
+  replayed?: boolean;
+  abandoned?: boolean;
+  charWpmBand?: 10 | 15 | 20 | 25 | 30 | 35 | 40;
+}) {
+  return {
+    id: overrides.id,
+    schemaVersion: 1 as const,
+    updatedAt: overrides.occurredAtUtc,
+    sessionId: "session-1",
+    occurredAt: {
+      utc: overrides.occurredAtUtc,
+      localDate: overrides.occurredAtUtc.slice(0, 10),
+      utcOffsetMinutes: 0,
+      timeZone: "UTC",
+    },
+    source: overrides.source ?? "learn",
+    direction: overrides.direction,
+    exerciseType: overrides.exerciseType,
+    rawTarget: overrides.target,
+    rawResponse: overrides.answer,
+    normalizedTarget: overrides.target,
+    normalizedResponse: overrides.answer,
+    correct: overrides.correct,
+    assisted: overrides.assisted ?? false,
+    replayed: overrides.replayed ?? false,
+    abandoned: overrides.abandoned ?? false,
+    scoringAlgorithmVersion: "alignment-v1",
+    observations: [
+      {
+        kind: overrides.correct
+          ? ("match" as const)
+          : ("substitution" as const),
+        correct: overrides.correct,
+        targetIndex: 0,
+        target: overrides.target,
+        answerIndex: 0,
+        answer: overrides.answer,
+      },
+    ],
+    charWpm: overrides.charWpmBand ?? 20,
+    effectiveWpm: 12,
+    ...(overrides.charWpmBand === undefined
+      ? {}
+      : { charWpmBand: overrides.charWpmBand }),
+    toneHz: 600,
+    noiseLevel: 0,
+  };
+}
+
+function speedSession(attemptCount: number) {
+  return {
+    id: "session-1",
+    schemaVersion: 1 as const,
+    updatedAt: "2026-09-24T12:00:00.000Z",
+    source: "learn" as const,
+    mode: "learn" as const,
+    status: "completed" as const,
+    startedAt: {
+      utc: "2026-09-24T11:00:00.000Z",
+      localDate: "2026-09-24",
+      utcOffsetMinutes: 0,
+      timeZone: "UTC",
+    },
+    endedAt: {
+      utc: "2026-09-24T12:00:00.000Z",
+      localDate: "2026-09-24",
+      utcOffsetMinutes: 0,
+      timeZone: "UTC",
+    },
+    activeMs: 60_000,
+    activeDateBuckets: [
+      {
+        localDate: "2026-09-24",
+        utcOffsetMinutes: 0,
+        timeZone: "UTC",
+        activeMs: 60_000,
+      },
+    ],
+    attemptCount,
+    finalizedAttemptCount: attemptCount,
+    completedCards: attemptCount,
+    valid: true,
+    charWpm: 20,
+    effectiveWpm: 12,
+    charWpmBand: 20 as const,
+    effectiveWpmBand: 12 as const,
+    toneHz: 600,
+    noiseLevel: 0,
+    unlockedAtStart: ["K", "M"],
+    unlockedAtEnd: ["K", "M"],
+    appVersion: "0.0.0",
+    revision: 1,
   };
 }
