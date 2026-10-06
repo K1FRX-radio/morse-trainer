@@ -10,6 +10,7 @@ import {
   unlockedCharacters,
   type CurriculumState,
 } from "../core/curriculum.ts";
+import type { CharacterWpmBand, EffectiveWpmBand } from "../core/settings.ts";
 import type { ContinuousCopyResult } from "./continuous-copy.ts";
 
 type AdvancementEvidence = Pick<
@@ -26,7 +27,13 @@ export type AdvancementReason =
   | "LOW_OVERALL_ACCURACY"
   | "LOW_NEWEST_ACCURACY"
   | "NEEDS_REVIEW"
+  | "SPEED_REACQUISITION"
   | "COMPLETE";
+
+export type AdvancementSpeedBands = {
+  charWpmBand: CharacterWpmBand;
+  effectiveWpmBand: EffectiveWpmBand;
+};
 
 export type AdvancementAssessment = {
   eligible: boolean;
@@ -41,6 +48,7 @@ export type AdvancementAssessment = {
   missingCharacters: string[];
   weakCharacter?: string;
   nextCharacter?: string;
+  speedBands?: AdvancementSpeedBands;
 };
 
 export type AdvancementAcceptance =
@@ -131,6 +139,7 @@ export function evaluateAdvancementEvidence(
   state: CurriculumState,
   result: AdvancementEvidence,
   config: AdvancementConfig = DEFAULT_ADVANCEMENT_CONFIG,
+  speedBands?: AdvancementSpeedBands,
 ): AdvancementAssessment {
   const activeCharacters = unlockedCharacters(state);
   const newest = newestCharacter(state)?.character;
@@ -179,6 +188,7 @@ export function evaluateAdvancementEvidence(
     coveredCharacters,
     missingCharacters,
     ...(nextCharacter ? { nextCharacter } : {}),
+    ...(speedBands ? { speedBands } : {}),
   };
 
   if (result.abandoned) {
@@ -230,6 +240,34 @@ export function evaluateAdvancementEvidence(
     };
   }
   return { ...base, eligible: true, reason: "READY" };
+}
+
+/**
+ * Advancement offers are bound to the speed bands where their readiness
+ * evidence was collected. If settings change bands before acceptance, force a
+ * new qualifying stream at the current band.
+ */
+export function requireCurrentBandReacquisition(
+  assessment: AdvancementAssessment,
+  currentBands: AdvancementSpeedBands,
+): AdvancementAssessment {
+  if (!assessment.eligible) {
+    return assessment;
+  }
+  if (!assessment.speedBands) {
+    return assessment;
+  }
+  if (
+    assessment.speedBands.charWpmBand === currentBands.charWpmBand &&
+    assessment.speedBands.effectiveWpmBand === currentBands.effectiveWpmBand
+  ) {
+    return assessment;
+  }
+  return {
+    ...assessment,
+    eligible: false,
+    reason: "SPEED_REACQUISITION",
+  };
 }
 
 export function acceptAdvancement(

@@ -16,6 +16,10 @@ import {
 import type { Rng } from "../core/rng.ts";
 import { gradeCopy, gradeCopyAligned, normalizeCopy } from "../core/scoring.ts";
 import { MIN_VALID_SESSION_ACTIVE_MS } from "../core/session-validity.ts";
+import {
+  normalizeCharacterWpmBand,
+  normalizeEffectiveWpmBand,
+} from "../core/settings.ts";
 import type { TimingOptions } from "../core/timing.ts";
 import {
   applyContinuousCopyResult,
@@ -623,8 +627,20 @@ export class LearnSession {
   }
 
   summary(): SessionSummary {
+    const charWpmBand = normalizeCharacterWpmBand(
+      this.continuousCopyTiming.charWpm,
+    );
+    const effectiveWpmBand = normalizeEffectiveWpmBand(
+      this.continuousCopyTiming.effectiveWpm ?? charWpmBand,
+      charWpmBand,
+    );
     const advancementAssessment = this.lastContinuousCopyResult
-      ? evaluateAdvancementEvidence(this.state, this.lastContinuousCopyResult)
+      ? evaluateAdvancementEvidence(
+          this.state,
+          this.lastContinuousCopyResult,
+          undefined,
+          { charWpmBand, effectiveWpmBand },
+        )
       : undefined;
     const finalizedAttempts =
       this.finalizedOrdinaryAttempts +

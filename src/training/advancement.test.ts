@@ -16,6 +16,7 @@ import {
   acceptAdvancement,
   evaluateAdvancementEvidence,
   minimumAdvancementObservations,
+  requireCurrentBandReacquisition,
 } from "./advancement.ts";
 
 function stateWith(activeCount = 2): CurriculumState {
@@ -355,6 +356,66 @@ describe("evaluateAdvancementEvidence", () => {
     evaluateAdvancementEvidence(state, result);
     expect(state).toEqual(stateBefore);
     expect(result).toEqual(resultBefore);
+  });
+
+  it("keeps readiness eligible when the current speed bands match", () => {
+    const assessment = evaluateAdvancementEvidence(
+      stateWith(),
+      stream([...observations("K", 16), ...observations("M", 8)]),
+      DEFAULT_ADVANCEMENT_CONFIG,
+      { charWpmBand: 20, effectiveWpmBand: 12 },
+    );
+
+    expect(
+      requireCurrentBandReacquisition(assessment, {
+        charWpmBand: 20,
+        effectiveWpmBand: 12,
+      }),
+    ).toMatchObject({
+      eligible: true,
+      reason: "READY",
+      speedBands: { charWpmBand: 20, effectiveWpmBand: 12 },
+    });
+  });
+
+  it("requires reacquisition after raising speed bands", () => {
+    const assessment = evaluateAdvancementEvidence(
+      stateWith(),
+      stream([...observations("K", 16), ...observations("M", 8)]),
+      DEFAULT_ADVANCEMENT_CONFIG,
+      { charWpmBand: 20, effectiveWpmBand: 12 },
+    );
+
+    expect(
+      requireCurrentBandReacquisition(assessment, {
+        charWpmBand: 25,
+        effectiveWpmBand: 18,
+      }),
+    ).toMatchObject({
+      eligible: false,
+      reason: "SPEED_REACQUISITION",
+      speedBands: { charWpmBand: 20, effectiveWpmBand: 12 },
+    });
+  });
+
+  it("requires reacquisition after lowering speed bands", () => {
+    const assessment = evaluateAdvancementEvidence(
+      stateWith(),
+      stream([...observations("K", 16), ...observations("M", 8)]),
+      DEFAULT_ADVANCEMENT_CONFIG,
+      { charWpmBand: 25, effectiveWpmBand: 20 },
+    );
+
+    expect(
+      requireCurrentBandReacquisition(assessment, {
+        charWpmBand: 20,
+        effectiveWpmBand: 12,
+      }),
+    ).toMatchObject({
+      eligible: false,
+      reason: "SPEED_REACQUISITION",
+      speedBands: { charWpmBand: 25, effectiveWpmBand: 20 },
+    });
   });
 });
 

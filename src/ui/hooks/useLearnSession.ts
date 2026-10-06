@@ -5,7 +5,11 @@ import {
 } from "../../core/curriculum.ts";
 import { encodeText, isSupportedCharacter } from "../../core/morse.ts";
 import { createRng } from "../../core/rng.ts";
-import { recommendedContinuousCopyDurationMs } from "../../core/settings.ts";
+import {
+  normalizeCharacterWpmBand,
+  normalizeEffectiveWpmBand,
+  recommendedContinuousCopyDurationMs,
+} from "../../core/settings.ts";
 import type { CharacterProgress } from "../../core/types.ts";
 import type {
   LearnPersistenceSnapshot,
@@ -14,6 +18,7 @@ import type {
 import type { RetryClassification } from "../../data/retry-history.ts";
 import {
   acceptAdvancement as acceptAdvancementOffer,
+  requireCurrentBandReacquisition,
   type AdvancementAcceptance,
 } from "../../training/advancement.ts";
 import {
@@ -352,6 +357,10 @@ export function useLearnSession() {
         abandoned,
       );
       const assessment = session.summary().advancementAssessment;
+      const readinessReason =
+        assessment && assessment.reason !== "SPEED_REACQUISITION"
+          ? assessment.reason
+          : undefined;
       const persistence = persistenceRef.current;
       if (persistence) {
         trackPersistence(
@@ -365,7 +374,7 @@ export function useLearnSession() {
               replayed: false,
               abandoned,
               durationMs: durationCompleted,
-              ...(assessment ? { readinessReason: assessment.reason } : {}),
+              ...(readinessReason ? { readinessReason } : {}),
             },
             persistenceSnapshot(session),
           ),
@@ -716,18 +725,35 @@ export function useLearnSession() {
     [audio, phase, settings.toneHz, timing],
   );
 
+  const displayedSummary = useMemo(() => {
+    if (!summary?.advancementAssessment) return summary;
+    const charWpmBand = normalizeCharacterWpmBand(settings.charWpm);
+    const effectiveWpmBand = normalizeEffectiveWpmBand(
+      settings.effectiveWpm,
+      charWpmBand,
+    );
+    const nextAssessment = requireCurrentBandReacquisition(
+      summary.advancementAssessment,
+      { charWpmBand, effectiveWpmBand },
+    );
+    if (nextAssessment === summary.advancementAssessment) {
+      return summary;
+    }
+    return { ...summary, advancementAssessment: nextAssessment };
+  }, [settings.charWpm, settings.effectiveWpm, summary]);
+
   const retryRecommendation: RetryRecommendation | undefined = useMemo(() => {
-    const assessment = summary?.advancementAssessment;
+    const assessment = displayedSummary?.advancementAssessment;
     if (!assessment || assessment.eligible) return undefined;
     const historicalIsolated = retryClassification?.isolatedPerformance;
     const isolatedObservations =
-      summary.mode === "review" && historicalIsolated
+      displayedSummary.mode === "review" && historicalIsolated
         ? historicalIsolated.eligibleObservations
-        : summary.eligibleIsolatedObservations;
+        : displayedSummary.eligibleIsolatedObservations;
     const isolatedAccuracy =
-      summary.mode === "review" && historicalIsolated
+      displayedSummary.mode === "review" && historicalIsolated
         ? historicalIsolated.accuracy
-        : summary.isolatedAccuracy;
+        : displayedSummary.isolatedAccuracy;
     return recommendRetry({
       reason: assessment.reason,
       isolatedObservations,
@@ -738,7 +764,12 @@ export function useLearnSession() {
       charWpm: settings.charWpm,
       effectiveWpm: settings.effectiveWpm,
     });
-  }, [retryClassification, settings.charWpm, settings.effectiveWpm, summary]);
+  }, [
+    displayedSummary,
+    retryClassification,
+    settings.charWpm,
+    settings.effectiveWpm,
+  ]);
 
   const acceptSpacingSuggestion = useCallback(() => {
     if (persistenceStatus !== "ready") return;
@@ -1228,7 +1259,7 @@ export function useLearnSession() {
     feedback,
     introStage,
     awaitingContinue,
-    summary,
+    summary: displayedSummary,
     retryRecommendation,
     persistenceStatus,
     persistenceError,
