@@ -10,11 +10,15 @@ import { createInitialState } from "../core/curriculum.ts";
 import {
   CHARACTER_WPM_BANDS,
   DEFAULT_SETTINGS,
+  normalizeCharacterWpmBand,
+  normalizeEffectiveWpmBand,
   normalizeSettings,
 } from "../core/settings.ts";
 import {
   applyAdvancementTransition,
   evaluateAdvancementEvidence,
+  requireCurrentBandReacquisition,
+  type AdvancementAssessment,
 } from "../training/advancement.ts";
 import {
   LEGACY_MIGRATION_ID,
@@ -102,6 +106,7 @@ export type AdvancementCommit = {
   evidenceAttemptId: string;
   idempotencyKey: string;
   activeCharacters: string[];
+  offeredAssessment: AdvancementAssessment;
   type: "character-unlocked" | "curriculum-completed";
   unlockedCharacter?: string;
 };
@@ -644,6 +649,7 @@ export class DexieTrainingRepository implements TrainingDataRepository {
       "rw",
       [
         this.database.metadata,
+        this.database.settings,
         this.database.curriculum,
         this.database.sessions,
         this.database.attempts,
@@ -727,6 +733,34 @@ export class DexieTrainingRepository implements TrainingDataRepository {
           throw new Error(
             "advancement requires continuous-copy evidence from the completed session",
           );
+        }
+        const currentSettings =
+          await this.database.settings.get("portable-settings");
+        const persistedSettings =
+          currentSettings === undefined
+            ? DEFAULT_SETTINGS
+            : parsePortableSettingsRecord(currentSettings).value;
+        const currentCharWpmBand = normalizeCharacterWpmBand(
+          persistedSettings.charWpm,
+        );
+        const evidenceCharWpmBand = normalizeCharacterWpmBand(
+          evidenceAttempt.charWpm,
+        );
+        const offeredAssessment = requireCurrentBandReacquisition(
+          commit.offeredAssessment,
+          {
+            charWpmBand: currentCharWpmBand,
+            effectiveWpmBand: normalizeEffectiveWpmBand(
+              persistedSettings.effectiveWpm,
+              currentCharWpmBand,
+            ),
+          },
+        );
+        if (
+          evidenceCharWpmBand !== currentCharWpmBand ||
+          !offeredAssessment.eligible
+        ) {
+          throw new Error("advancement offer is stale or invalidated");
         }
         if (
           !recordsEqual(storedSession.unlockedAtEnd, commit.activeCharacters)

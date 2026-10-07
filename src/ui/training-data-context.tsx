@@ -133,8 +133,11 @@ export function TrainingDataProvider({
         async retry() {
           await persistence.retry();
         },
-        async acceptAdvancement(acceptance) {
-          const next = await persistence.acceptAdvancement(acceptance);
+        async acceptAdvancement(acceptance, offeredAssessment) {
+          const next = await persistence.acceptAdvancement(
+            acceptance,
+            offeredAssessment,
+          );
           bumpStatsRevision();
           return next;
         },

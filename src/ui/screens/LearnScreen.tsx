@@ -510,6 +510,12 @@ export function LearnScreen() {
             time.
           </p>
         )}
+        {assessment?.reason === "SPEED_REACQUISITION" && (
+          <p className="feedback feedback--neutral">
+            Speed changed since this readiness pass. Complete one qualifying
+            continuous-copy stream at the current speed before advancing.
+          </p>
+        )}
         {assessment?.reason === "COMPLETE" && (
           <p className="feedback feedback--ok">
             You’ve unlocked every character. Keep practicing to stay sharp.
