@@ -29,6 +29,7 @@ import {
 import { DEFAULT_LESSON_CONFIG } from "../../training/lesson-plan.ts";
 import { sanitizeCopyInput } from "../copy-input.ts";
 import { LearnAudioContext, type LearnAudio } from "../learn-audio-context.ts";
+import { useSettings } from "../settings-context.ts";
 import { SettingsProvider } from "../settings-provider.tsx";
 import { TrainingDataContext } from "../training-data-context.ts";
 import { createLearnTestDriver } from "../test/learn-test-driver.ts";
@@ -274,8 +275,26 @@ function renderLearn(
     acceptAdvancement?: LearnSessionPersistence["acceptAdvancement"];
     onSaveCurriculum?: () => void;
     onReconcileCurriculum?: () => void;
+    includeSettingsControls?: boolean;
   } = {},
 ) {
+  function SettingsTestControls() {
+    const { update } = useSettings();
+    return (
+      <div>
+        <button type="button" onClick={() => update({ charWpm: 25 })}>
+          Test set char 25
+        </button>
+        <button type="button" onClick={() => update({ charWpm: 20 })}>
+          Test set char 20
+        </button>
+        <button type="button" onClick={() => update({ effectiveWpm: 10 })}>
+          Test set effective 10
+        </button>
+      </div>
+    );
+  }
+
   return render(
     <SettingsProvider
       initialSettings={normalizeSettings(settings)}
@@ -307,6 +326,7 @@ function renderLearn(
           : {})}
       >
         <LearnAudioContext.Provider value={audio}>
+          {options.includeSettingsControls && <SettingsTestControls />}
           <LearnScreen />
         </LearnAudioContext.Provider>
       </TrainingDataFixture>
@@ -2286,6 +2306,68 @@ describe("LearnScreen advancement", () => {
     ).toBeEnabled();
   });
 
+  it("prevents stale advancement acceptance after changing character speed bands", async () => {
+    const fake = makeFakeAudio();
+    const acceptAdvancement = vi.fn((acceptance: AdvancementAcceptance) =>
+      Promise.resolve(acceptedCurriculum(acceptance)),
+    );
+    renderLearn(
+      fake.audio,
+      {},
+      { acceptAdvancement, includeSettingsControls: true },
+    );
+    await completeContinuousCopy(fake);
+
+    const staleLearnButton = screen.getByRole("button", { name: "Learn U" });
+    fireEvent.click(screen.getByRole("button", { name: "Test set char 25" }));
+    await flush();
+
+    expect(
+      screen.queryByRole("button", { name: "Learn U" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Speed changed since this readiness pass\./),
+    ).toBeInTheDocument();
+
+    fireEvent.click(staleLearnButton);
+    await flush();
+    expect(acceptAdvancement).not.toHaveBeenCalled();
+  });
+
+  it("does not revive a stale offer after 20 -> 25 -> 20 without new evidence", async () => {
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio, {}, { includeSettingsControls: true });
+    await completeContinuousCopy(fake);
+
+    fireEvent.click(screen.getByRole("button", { name: "Test set char 25" }));
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: "Test set char 20" }));
+    await flush();
+
+    expect(
+      screen.queryByRole("button", { name: "Learn U" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Speed changed since this readiness pass\./),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps advancement eligible when only effective speed changes", async () => {
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio, {}, { includeSettingsControls: true });
+    await completeContinuousCopy(fake);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Test set effective 10" }),
+    );
+    await flush();
+
+    expect(screen.getByRole("button", { name: "Learn U" })).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Speed changed since this readiness pass\./),
+    ).not.toBeInTheDocument();
+  });
+
   it("retains the advancement offer and retries before starting the next lesson", async () => {
     const fake = makeFakeAudio();
     let rejectAcceptance: ((error: Error) => void) | undefined;
@@ -2352,6 +2434,52 @@ describe("LearnScreen advancement", () => {
       localStorage.getItem("k1frx.curriculum.v2") ?? "[]",
     ) as Array<{ character: string }>;
     expect(saved.map(({ character }) => character)).toEqual(["K", "M", "U"]);
+  });
+
+  it("does not replay failed advancement persistence after character speed changes", async () => {
+    const fake = makeFakeAudio();
+    let rejectAcceptance: ((error: Error) => void) | undefined;
+    const acceptAdvancement = vi
+      .fn<LearnSessionPersistence["acceptAdvancement"]>()
+      .mockImplementationOnce(
+        () =>
+          new Promise<ReturnType<typeof testCurriculum>>((_resolve, reject) => {
+            rejectAcceptance = reject;
+          }),
+      )
+      .mockImplementation((acceptance) =>
+        Promise.resolve(acceptedCurriculum(acceptance)),
+      );
+    const persistence: LearnSessionPersistence = {
+      recordAttempt: () => Promise.resolve(),
+      finish: () => Promise.resolve(),
+      interrupt: () => Promise.resolve(),
+      acceptAdvancement,
+      retry: () => Promise.resolve(),
+    };
+    const startLearnSessionPersistence = vi.fn(() =>
+      Promise.resolve(persistence),
+    );
+    renderLearn(
+      fake.audio,
+      {},
+      {
+        startLearnSessionPersistence,
+        includeSettingsControls: true,
+      },
+    );
+    await completeContinuousCopy(fake);
+
+    fireEvent.click(screen.getByRole("button", { name: "Learn U" }));
+    await act(async () => rejectAcceptance?.(new Error("quota exceeded")));
+    await flush();
+
+    fireEvent.click(screen.getByRole("button", { name: "Test set char 25" }));
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: "Retry saving" }));
+    await flush();
+
+    expect(acceptAdvancement).toHaveBeenCalledTimes(1);
   });
 
   it("reconciles advancement that commits after navigating away", async () => {

@@ -2,10 +2,14 @@ import { IDBKeyRange, indexedDB } from "fake-indexeddb";
 import { DEFAULT_CURRICULUM_CONFIG } from "../content/curriculum-data.ts";
 import { createInitialState, forceUnlockNext } from "../core/curriculum.ts";
 import {
+  DEFAULT_SETTINGS,
   normalizeCharacterWpmBand,
   normalizeEffectiveWpmBand,
 } from "../core/settings.ts";
-import { minimumAdvancementObservations } from "../training/advancement.ts";
+import {
+  evaluateAdvancementEvidence,
+  minimumAdvancementObservations,
+} from "../training/advancement.ts";
 import type {
   CurriculumStateRecord,
   TrainingAttemptRecord,
@@ -145,6 +149,38 @@ function advancementEvidence(
       answer: character,
     })),
   });
+}
+
+function offeredAssessmentFor(
+  state: ReturnType<typeof createInitialState>,
+  evidence: TrainingAttemptRecord,
+) {
+  const charWpmBand =
+    evidence.charWpmBand ?? normalizeCharacterWpmBand(evidence.charWpm);
+  const effectiveWpmBand =
+    evidence.effectiveWpmBand ??
+    normalizeEffectiveWpmBand(evidence.effectiveWpm, charWpmBand);
+  return evaluateAdvancementEvidence(
+    structuredClone(state),
+    {
+      abandoned: evidence.abandoned,
+      perCharacterResults: evidence.observations.flatMap((observation) =>
+        observation.target === undefined
+          ? []
+          : [
+              {
+                character: observation.target,
+                correct: observation.correct,
+              },
+            ],
+      ),
+    },
+    undefined,
+    {
+      charWpmBand,
+      effectiveWpmBand,
+    },
+  );
 }
 
 function curriculum(): CurriculumStateRecord {
@@ -531,11 +567,13 @@ describe("session persistence", () => {
       unlockedAtEnd: ["K", "M"],
     });
     const evidence = advancementEvidence(["K", "M"], "READY");
+    const offeredAssessment = offeredAssessmentFor(before, evidence);
     const command = {
       sessionId: completed.id,
       evidenceAttemptId: evidence.id,
       idempotencyKey: "advancement:session-1:attempt-1",
       activeCharacters: ["K", "M"],
+      offeredAssessment,
       type: "character-unlocked" as const,
       unlockedCharacter: "U",
     };
@@ -620,6 +658,7 @@ describe("session persistence", () => {
           evidenceAttemptId: command.evidenceAttemptId,
           idempotencyKey: command.idempotencyKey,
           activeCharacters: command.activeCharacters,
+          offeredAssessment: command.offeredAssessment,
           type: "curriculum-completed",
         }),
       ).rejects.toThrow(/idempotency key was reused with different data/);
@@ -649,6 +688,7 @@ describe("session persistence", () => {
       unlockedAtEnd: activeCharacters,
     });
     const evidence = advancementEvidence(activeCharacters, "COMPLETE");
+    const offeredAssessment = offeredAssessmentFor(before, evidence);
 
     try {
       await database.sessions.add(completed);
@@ -660,6 +700,7 @@ describe("session persistence", () => {
         evidenceAttemptId: evidence.id,
         idempotencyKey: "advancement:session-1:complete",
         activeCharacters,
+        offeredAssessment,
         type: "curriculum-completed",
       });
 
@@ -700,6 +741,7 @@ describe("session persistence", () => {
       unlockedAtEnd: ["K", "M"],
     });
     const evidence = advancementEvidence(["K", "M"], "READY");
+    const offeredAssessment = offeredAssessmentFor(before, evidence);
 
     try {
       await database.sessions.add(completed);
@@ -716,6 +758,7 @@ describe("session persistence", () => {
           evidenceAttemptId: evidence.id,
           idempotencyKey: "advancement:session-1:attempt-1",
           activeCharacters: ["K", "M"],
+          offeredAssessment,
           type: "character-unlocked",
           unlockedCharacter: "U",
         }),
@@ -725,6 +768,112 @@ describe("session persistence", () => {
       expect(
         (await database.curriculum.get("curriculum-state"))?.characters[0],
       ).toMatchObject({ needsReview: true, reviewStreak: 2 });
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
+  it("rejects advancement when persisted current character speed band differs", async () => {
+    const { database, repository } = await setupRepository();
+    const before = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    const completed = session({
+      status: "completed",
+      updatedAt: "2026-09-24T18:00:00.000Z",
+      attemptCount: 1,
+      finalizedAttemptCount: 1,
+      valid: true,
+      revision: 1,
+      finalizationKey: "learn-completed:session-1",
+      unlockedAtEnd: ["K", "M"],
+      charWpm: 20,
+      effectiveWpm: 12,
+    });
+    const evidence = advancementEvidence(["K", "M"], "READY");
+    const offeredAssessment = offeredAssessmentFor(before, evidence);
+
+    try {
+      await database.sessions.add(completed);
+      await database.attempts.add(evidence);
+      await repository.saveCurriculumState(before);
+      await repository.savePortableSettings({
+        ...DEFAULT_SETTINGS,
+        charWpm: 25,
+        effectiveWpm: 18,
+      });
+
+      await expect(
+        repository.acceptAdvancement({
+          sessionId: completed.id,
+          evidenceAttemptId: evidence.id,
+          idempotencyKey: "advancement:session-1:char-band-mismatch",
+          activeCharacters: ["K", "M"],
+          offeredAssessment,
+          type: "character-unlocked",
+          unlockedCharacter: "U",
+        }),
+      ).rejects.toThrow(/stale or invalidated/);
+      expect(await database.progressionEvents.count()).toBe(0);
+      expect(await database.milestones.count()).toBe(0);
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
+  it("accepts advancement for a fresh qualifying stream at 25 WPM", async () => {
+    const { database, repository } = await setupRepository();
+    const before = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    const completed = session({
+      status: "completed",
+      updatedAt: "2026-09-24T18:00:00.000Z",
+      attemptCount: 1,
+      finalizedAttemptCount: 1,
+      valid: true,
+      revision: 1,
+      finalizationKey: "learn-completed:session-1",
+      unlockedAtEnd: ["K", "M"],
+      charWpm: 25,
+      effectiveWpm: 18,
+    });
+    const evidence: TrainingAttemptRecord = {
+      ...advancementEvidence(["K", "M"], "READY"),
+      charWpm: 25,
+      effectiveWpm: 18,
+      charWpmBand: 25 as const,
+      effectiveWpmBand: 18 as const,
+    };
+    const offeredAssessment = offeredAssessmentFor(before, evidence);
+
+    try {
+      await database.sessions.add(completed);
+      await database.attempts.add(evidence);
+      await repository.saveCurriculumState(before);
+      await repository.savePortableSettings({
+        ...DEFAULT_SETTINGS,
+        charWpm: 25,
+        effectiveWpm: 18,
+      });
+
+      const result = await repository.acceptAdvancement({
+        sessionId: completed.id,
+        evidenceAttemptId: evidence.id,
+        idempotencyKey: "advancement:session-1:ready-25",
+        activeCharacters: ["K", "M"],
+        offeredAssessment,
+        type: "character-unlocked",
+        unlockedCharacter: "U",
+      });
+
+      expect(result).toMatchObject({
+        committed: true,
+        event: {
+          type: "advancement-accepted",
+          sessionId: completed.id,
+          evidenceAttemptId: evidence.id,
+          unlockedCharacter: "U",
+        },
+      });
     } finally {
       repository.close();
       await database.delete();
@@ -760,6 +909,7 @@ describe("session persistence", () => {
         unlockedAtEnd: activeCharacters,
       });
       const evidence = advancementEvidence(activeCharacters, readinessReason);
+      const offeredAssessment = offeredAssessmentFor(state, evidence);
       evidence[excludedFlag] = true;
 
       try {
@@ -773,6 +923,7 @@ describe("session persistence", () => {
             evidenceAttemptId: evidence.id,
             idempotencyKey: `advancement:${readinessReason}:${excludedFlag}`,
             activeCharacters,
+            offeredAssessment,
             type:
               readinessReason === "COMPLETE"
                 ? "curriculum-completed"
@@ -803,6 +954,7 @@ describe("session persistence", () => {
       unlockedAtEnd: ["K", "M"],
     });
     const evidence = advancementEvidence(["K", "M"], "READY");
+    const offeredAssessment = offeredAssessmentFor(before, evidence);
 
     try {
       await database.sessions.add(completed);
@@ -826,6 +978,7 @@ describe("session persistence", () => {
           evidenceAttemptId: evidence.id,
           idempotencyKey: "advancement:session-1:attempt-1",
           activeCharacters: ["K", "M"],
+          offeredAssessment,
           type: "character-unlocked",
           unlockedCharacter: "U",
         }),

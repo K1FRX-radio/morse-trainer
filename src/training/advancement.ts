@@ -257,10 +257,7 @@ export function requireCurrentBandReacquisition(
   if (!assessment.speedBands) {
     return assessment;
   }
-  if (
-    assessment.speedBands.charWpmBand === currentBands.charWpmBand &&
-    assessment.speedBands.effectiveWpmBand === currentBands.effectiveWpmBand
-  ) {
+  if (assessment.speedBands.charWpmBand === currentBands.charWpmBand) {
     return assessment;
   }
   return {

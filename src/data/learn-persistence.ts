@@ -2,7 +2,10 @@ import type { CurriculumState } from "../core/curriculum.ts";
 import { gradeCopyDetailed, normalizeCopy } from "../core/scoring.ts";
 import { isValidTrainingSession } from "../core/session-validity.ts";
 import type { LearnSessionMode } from "../training/learn-session.ts";
-import type { AdvancementAcceptance } from "../training/advancement.ts";
+import type {
+  AdvancementAcceptance,
+  AdvancementAssessment,
+} from "../training/advancement.ts";
 import {
   type CharacterWpmBand,
   type EffectiveWpmBand,
@@ -78,6 +81,7 @@ export interface LearnSessionPersistence {
   interrupt(snapshot: LearnPersistenceSnapshot): Promise<void>;
   acceptAdvancement(
     acceptance: AdvancementAcceptance,
+    offeredAssessment: AdvancementAssessment,
   ): Promise<CurriculumState>;
   retry(): Promise<void>;
 }
@@ -338,6 +342,7 @@ export class DurableLearnSession implements LearnSessionPersistence {
 
   async acceptAdvancement(
     acceptance: AdvancementAcceptance,
+    offeredAssessment: AdvancementAssessment,
   ): Promise<CurriculumState> {
     if (!this.terminal || this.record.status !== "completed") {
       throw new Error("advancement requires a finalized Learn session");
@@ -355,6 +360,7 @@ export class DurableLearnSession implements LearnSessionPersistence {
       evidenceAttemptId: this.continuousCopyAttemptId,
       idempotencyKey: `learn-advancement:${this.record.id}:${this.continuousCopyAttemptId}`,
       activeCharacters,
+      offeredAssessment,
       type: acceptance.type,
       ...(acceptance.type === "character-unlocked"
         ? { unlockedCharacter: acceptance.character }

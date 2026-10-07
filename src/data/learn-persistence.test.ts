@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_CURRICULUM_CONFIG } from "../content/curriculum-data.ts";
 import { createInitialState } from "../core/curriculum.ts";
 import { createRng } from "../core/rng.ts";
+import { evaluateAdvancementEvidence } from "../training/advancement.ts";
 import { LearnSession } from "../training/learn-session.ts";
 import type { ActiveTimeContext } from "../training/session-time.ts";
 import { TrainerDatabase } from "./indexeddb.ts";
@@ -196,15 +197,42 @@ describe("DurableLearnSession", () => {
         snapshot,
       );
       await session.finish(snapshot);
+      const offeredAssessment = evaluateAdvancementEvidence(
+        state,
+        {
+          abandoned: false,
+          perCharacterResults: [
+            ...Array.from({ length: 16 }, () => ({
+              character: "K",
+              correct: true,
+            })),
+            ...Array.from({ length: 8 }, () => ({
+              character: "M",
+              correct: true,
+            })),
+          ],
+        },
+        undefined,
+        {
+          charWpmBand: 20,
+          effectiveWpmBand: 12,
+        },
+      );
 
-      const accepted = await session.acceptAdvancement({
-        type: "character-unlocked",
-        character: "U",
-      });
-      const retried = await session.acceptAdvancement({
-        type: "character-unlocked",
-        character: "U",
-      });
+      const accepted = await session.acceptAdvancement(
+        {
+          type: "character-unlocked",
+          character: "U",
+        },
+        offeredAssessment,
+      );
+      const retried = await session.acceptAdvancement(
+        {
+          type: "character-unlocked",
+          character: "U",
+        },
+        offeredAssessment,
+      );
 
       expect(accepted.characters).toMatchObject([
         { character: "K", state: "mastered" },

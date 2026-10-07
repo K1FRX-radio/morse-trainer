@@ -417,6 +417,26 @@ describe("evaluateAdvancementEvidence", () => {
       speedBands: { charWpmBand: 25, effectiveWpmBand: 20 },
     });
   });
+
+  it("keeps readiness eligible when only effective speed changes", () => {
+    const assessment = evaluateAdvancementEvidence(
+      stateWith(),
+      stream([...observations("K", 16), ...observations("M", 8)]),
+      DEFAULT_ADVANCEMENT_CONFIG,
+      { charWpmBand: 20, effectiveWpmBand: 12 },
+    );
+
+    expect(
+      requireCurrentBandReacquisition(assessment, {
+        charWpmBand: 20,
+        effectiveWpmBand: 10,
+      }),
+    ).toMatchObject({
+      eligible: true,
+      reason: "READY",
+      speedBands: { charWpmBand: 20, effectiveWpmBand: 12 },
+    });
+  });
 });
 
 describe("acceptAdvancement", () => {

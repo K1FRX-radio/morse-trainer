@@ -20,6 +20,7 @@ import {
   acceptAdvancement as acceptAdvancementOffer,
   requireCurrentBandReacquisition,
   type AdvancementAcceptance,
+  type AdvancementAssessment,
 } from "../../training/advancement.ts";
 import {
   LearnSession,
@@ -85,6 +86,8 @@ type FinalizationWork = {
 type AdvancementWork = {
   persistence: LearnSessionPersistence;
   acceptance: AdvancementAcceptance;
+  assessment: AdvancementAssessment;
+  speedEpoch: number;
 };
 
 type StartIntent = {
@@ -183,6 +186,9 @@ export function useLearnSession() {
   );
   const [awaitingContinue, setAwaitingContinue] = useState(false);
   const [summary, setSummary] = useState<SessionSummary | undefined>(undefined);
+  const summarySpeedEpochRef = useRef<number | undefined>(undefined);
+  const speedEpochRef = useRef(0);
+  const previousCharWpmBandRef = useRef<number | undefined>(undefined);
   const [retryClassification, setRetryClassification] = useState<
     RetryClassification | undefined
   >(undefined);
@@ -397,6 +403,22 @@ export function useLearnSession() {
     () => ({ charWpm: settings.charWpm, effectiveWpm: settings.effectiveWpm }),
     [settings.charWpm, settings.effectiveWpm],
   );
+  const currentCharWpmBand = useMemo(
+    () => normalizeCharacterWpmBand(settings.charWpm),
+    [settings.charWpm],
+  );
+  const currentEffectiveWpmBand = useMemo(
+    () => normalizeEffectiveWpmBand(settings.effectiveWpm, currentCharWpmBand),
+    [currentCharWpmBand, settings.effectiveWpm],
+  );
+
+  useEffect(() => {
+    const previous = previousCharWpmBandRef.current;
+    if (previous !== undefined && previous !== currentCharWpmBand) {
+      speedEpochRef.current += 1;
+    }
+    previousCharWpmBandRef.current = currentCharWpmBand;
+  }, [currentCharWpmBand]);
 
   const play = useCallback(
     async (text: string) => {
@@ -493,6 +515,7 @@ export function useLearnSession() {
     if (!session) return;
     const completedSummary = session.end();
     setSummary(completedSummary);
+    summarySpeedEpochRef.current = speedEpochRef.current;
     setRetryClassification(undefined);
     const persistence = persistenceRef.current;
     if (persistence) {
@@ -669,6 +692,7 @@ export function useLearnSession() {
       completePersistenceOperation();
       introDoneToken.current = null;
       setSummary(undefined);
+      summarySpeedEpochRef.current = undefined;
       setRetryClassification(undefined);
       setPhase("exercise");
       const first = session.next();
@@ -727,20 +751,30 @@ export function useLearnSession() {
 
   const displayedSummary = useMemo(() => {
     if (!summary?.advancementAssessment) return summary;
-    const charWpmBand = normalizeCharacterWpmBand(settings.charWpm);
-    const effectiveWpmBand = normalizeEffectiveWpmBand(
-      settings.effectiveWpm,
-      charWpmBand,
-    );
     const nextAssessment = requireCurrentBandReacquisition(
       summary.advancementAssessment,
-      { charWpmBand, effectiveWpmBand },
+      {
+        charWpmBand: currentCharWpmBand,
+        effectiveWpmBand: currentEffectiveWpmBand,
+      },
     );
-    if (nextAssessment === summary.advancementAssessment) {
+    const summarySpeedEpoch = summarySpeedEpochRef.current;
+    const epochChanged =
+      summarySpeedEpoch !== undefined &&
+      summarySpeedEpoch !== speedEpochRef.current;
+    const forcedAssessment =
+      nextAssessment.eligible && epochChanged
+        ? {
+            ...nextAssessment,
+            eligible: false,
+            reason: "SPEED_REACQUISITION" as const,
+          }
+        : nextAssessment;
+    if (forcedAssessment === summary.advancementAssessment) {
       return summary;
     }
-    return { ...summary, advancementAssessment: nextAssessment };
-  }, [settings.charWpm, settings.effectiveWpm, summary]);
+    return { ...summary, advancementAssessment: forcedAssessment };
+  }, [currentCharWpmBand, currentEffectiveWpmBand, summary]);
 
   const retryRecommendation: RetryRecommendation | undefined = useMemo(() => {
     const assessment = displayedSummary?.advancementAssessment;
@@ -1038,7 +1072,15 @@ export function useLearnSession() {
       const token = ++persistenceOperation.current;
       beginPersistenceOperation("advancement", isRetry);
       try {
-        await work.persistence.acceptAdvancement(work.acceptance);
+        if (work.speedEpoch !== speedEpochRef.current) {
+          advancementRef.current = undefined;
+          completePersistenceOperation();
+          return;
+        }
+        await work.persistence.acceptAdvancement(
+          work.acceptance,
+          work.assessment,
+        );
         const canonicalState = await reconcileCurriculum();
         if (
           persistenceRef.current !== work.persistence ||
@@ -1084,8 +1126,8 @@ export function useLearnSession() {
 
   const acceptAdvancement = useCallback(() => {
     if (persistenceStatus !== "ready") return;
-    const assessment = summary?.advancementAssessment;
-    const result = summary?.continuousCopyResult;
+    const assessment = displayedSummary?.advancementAssessment;
+    const result = displayedSummary?.continuousCopyResult;
     const persistence = persistenceRef.current;
     if (!assessment || !result || !persistence || advancementRef.current) {
       return;
@@ -1098,10 +1140,15 @@ export function useLearnSession() {
       new Date().toISOString(),
     );
     if (!acceptance) return;
-    const work = { persistence, acceptance };
+    const work = {
+      persistence,
+      acceptance,
+      assessment,
+      speedEpoch: speedEpochRef.current,
+    };
     advancementRef.current = work;
     void persistAdvancement(work);
-  }, [persistAdvancement, persistenceStatus, summary]);
+  }, [displayedSummary, persistAdvancement, persistenceStatus]);
 
   const retryPersistence = useCallback(() => {
     if (failedOperationRef.current === "session-start") {
@@ -1116,6 +1163,10 @@ export function useLearnSession() {
     }
     const advancement = advancementRef.current;
     if (advancement) {
+      if (advancement.speedEpoch !== speedEpochRef.current) {
+        advancementRef.current = undefined;
+        return;
+      }
       setPersistenceRetrying(true);
       void persistAdvancement(advancement, true);
       return;
