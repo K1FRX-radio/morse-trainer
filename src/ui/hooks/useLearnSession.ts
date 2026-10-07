@@ -1165,6 +1165,7 @@ export function useLearnSession() {
     if (advancement) {
       if (advancement.speedEpoch !== speedEpochRef.current) {
         advancementRef.current = undefined;
+        completePersistenceOperation();
         return;
       }
       setPersistenceRetrying(true);
@@ -1188,6 +1189,7 @@ export function useLearnSession() {
   }, [
     finalizePersistence,
     persistAdvancement,
+    completePersistenceOperation,
     phase,
     startSession,
     timing,

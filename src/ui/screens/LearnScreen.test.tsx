@@ -2480,6 +2480,15 @@ describe("LearnScreen advancement", () => {
     await flush();
 
     expect(acceptAdvancement).toHaveBeenCalledTimes(1);
+    expect(
+      screen.queryByRole("button", { name: "Retry saving" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Practice long copy" }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Restart full lesson" }),
+    ).toBeEnabled();
   });
 
   it("reconciles advancement that commits after navigating away", async () => {
