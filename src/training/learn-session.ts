@@ -181,6 +181,65 @@ export type SessionSummary = {
   advancementAssessment?: AdvancementAssessment;
 };
 
+export type CharacterSchedulerPerformance = {
+  character: string;
+  attempts: number;
+  correct: number;
+  weightedAttempts: number;
+  weightedCorrect: number;
+};
+
+export type WeakRxDerivationInput = {
+  activeCharacters: readonly string[];
+  state: CurriculumState;
+  contrastMinAccuracy: number;
+  schedulerPerformance?: readonly CharacterSchedulerPerformance[];
+};
+
+/**
+ * Derives weak active RX characters for Learn scheduling.
+ *
+ * Current-band evidence is authoritative. Neighbor-band weighted evidence is a
+ * fallback only when same-band attempts are absent.
+ */
+export function deriveWeakRxCharacters(
+  input: WeakRxDerivationInput,
+): string[] {
+  const performanceByCharacter = new Map(
+    (input.schedulerPerformance ?? []).map((row) => [row.character, row]),
+  );
+
+  return input.activeCharacters.filter((character) => {
+    const row = performanceByCharacter.get(character);
+    if (row) {
+      const attempts = Math.max(0, row.attempts);
+      const correct = Math.max(0, Math.min(row.correct, attempts));
+      const weightedAttempts = Math.max(0, row.weightedAttempts);
+      const weightedCorrect = Math.max(
+        0,
+        Math.min(row.weightedCorrect, weightedAttempts),
+      );
+
+      if (attempts > 0) {
+        return correct / attempts < input.contrastMinAccuracy;
+      }
+      if (weightedAttempts > 0) {
+        return weightedCorrect / weightedAttempts < input.contrastMinAccuracy;
+      }
+      return false;
+    }
+
+    const progress = input.state.characters.find(
+      (candidate) => candidate.character === character,
+    );
+    if (!progress) return false;
+    return (
+      progress.rx.recentResults.length > 0 &&
+      recentAccuracy(progress.rx) < input.contrastMinAccuracy
+    );
+  });
+}
+
 type SessionOptions = {
   state: CurriculumState;
   mode?: LearnSessionMode;
@@ -196,6 +255,7 @@ type SessionOptions = {
   sessionConfig?: SessionConfig;
   continuousCopyDurationMs?: number;
   continuousCopyTiming?: TimingOptions;
+  schedulerPerformance?: readonly CharacterSchedulerPerformance[];
 };
 
 export class LearnSession {
@@ -270,13 +330,14 @@ export class LearnSession {
     this.reviewCharacters = [
       ...(options.review ?? reviewCharacters(options.state)),
     ];
-    this.weakCharacters = options.state.characters
-      .filter(
-        (character) =>
-          character.rx.recentResults.length > 0 &&
-          recentAccuracy(character.rx) < lessonConfig.contrastMinAccuracy,
-      )
-      .map((character) => character.character);
+    this.weakCharacters = deriveWeakRxCharacters({
+      activeCharacters: this.activeCharacters,
+      state: options.state,
+      contrastMinAccuracy: lessonConfig.contrastMinAccuracy,
+      ...(options.schedulerPerformance === undefined
+        ? {}
+        : { schedulerPerformance: options.schedulerPerformance }),
+    });
     this.wordEligibility = focusedWordEligibility(
       this.activeCharacters,
       lessonConfig,

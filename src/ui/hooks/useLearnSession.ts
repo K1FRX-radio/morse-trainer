@@ -25,6 +25,7 @@ import {
 import {
   LearnSession,
   MIN_RETRY_ISOLATED_OBSERVATIONS,
+  type CharacterSchedulerPerformance,
   type LessonEvent,
   type LessonNotification,
   type LessonTransition,
@@ -53,6 +54,7 @@ import { useContinuousCopy } from "./useContinuousCopy.ts";
 // Brief holds (ms). Introductions are paced only by completed audio and input.
 const HOLD_AFTER_CORRECT = 450;
 const HOLD_AFTER_MISS = 500;
+const CHARACTER_PROJECTION_LIMIT = 500;
 
 export type LearnPhase = "onboarding" | "exercise" | "summary";
 export type PersistenceStatus = "pending" | "ready" | "error";
@@ -122,6 +124,35 @@ function monotonicNowMs(): number {
   return Date.now();
 }
 
+async function buildLearnSchedulerPerformanceInput(options: {
+  activeCharacters: readonly string[];
+  charWpmBand: number;
+  listCharacterProjections: ReturnType<typeof useTrainingData>["listCharacterProjections"];
+}): Promise<CharacterSchedulerPerformance[]> {
+  if (options.activeCharacters.length === 0) return [];
+
+  const rows = await options.listCharacterProjections({
+    direction: "rx",
+    limit: CHARACTER_PROJECTION_LIMIT,
+  });
+  const rowsByCharacter = new Map(
+    rows.map((row) => [row.character, row] as const),
+  );
+
+  return options.activeCharacters.map((character) => {
+    const evidence = rowsByCharacter
+      .get(character)
+      ?.speedProficiencyBands?.find((band) => band.band === options.charWpmBand);
+    return {
+      character,
+      attempts: evidence?.attempts ?? 0,
+      correct: evidence?.correct ?? 0,
+      weightedAttempts: evidence?.weightedAttempts ?? 0,
+      weightedCorrect: evidence?.weightedCorrect ?? 0,
+    } satisfies CharacterSchedulerPerformance;
+  });
+}
+
 export function useLearnSession() {
   const { settings, update: updateSettings } = useSettings();
   const {
@@ -132,6 +163,7 @@ export function useLearnSession() {
     saveIntroductions,
     startLearnSessionPersistence,
     getRetryClassification,
+    listCharacterProjections,
   } = useTrainingData();
   const audio = useLearnAudio();
   const auto = settings.pacing === "auto";
@@ -657,6 +689,22 @@ export function useLearnSession() {
       await audio.cancel();
       await audio.unlock();
       if (startToken !== flowToken.current) return;
+
+      const activeCharacters = stateRef.current.characters.map(
+        (progress) => progress.character,
+      );
+      let schedulerPerformance: CharacterSchedulerPerformance[] = [];
+      try {
+        schedulerPerformance = await buildLearnSchedulerPerformanceInput({
+          activeCharacters,
+          charWpmBand: normalizeCharacterWpmBand(sessionTiming.charWpm),
+          listCharacterProjections,
+        });
+      } catch {
+        // Keep Learn available even if projections cannot be read right now.
+        schedulerPerformance = [];
+      }
+
       const session = new LearnSession({
         state: stateRef.current,
         mode,
@@ -664,6 +712,7 @@ export function useLearnSession() {
         introduced: loadIntroductions(),
         continuousCopyDurationMs: settings.continuousCopyDurationMs,
         continuousCopyTiming: sessionTiming,
+        schedulerPerformance,
       });
       let persistence: LearnSessionPersistence;
       try {
