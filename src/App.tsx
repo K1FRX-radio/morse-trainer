@@ -3,6 +3,7 @@ import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { NavigationGuardContext } from "./ui/navigation-guard-context.ts";
 import { LearnScreen } from "./ui/screens/LearnScreen.tsx";
 import { PracticeScreen } from "./ui/screens/PracticeScreen.tsx";
+import { PaddleTestScreen } from "./ui/screens/PaddleTestScreen.tsx";
 import { StatsHistoryScreen } from "./ui/screens/StatsHistoryScreen.tsx";
 import { SettingsScreen } from "./ui/screens/SettingsScreen.tsx";
 
@@ -68,6 +69,7 @@ export function App({
             <Route path="/" element={<Navigate to="/learn" replace />} />
             <Route path="/learn" element={<LearnScreen />} />
             <Route path="/practice" element={<PracticeScreen />} />
+            <Route path="/paddle-test" element={<PaddleTestScreen />} />
             <Route path="/history" element={<StatsHistoryScreen />} />
             <Route
               path="/progress"
