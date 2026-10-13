@@ -6,16 +6,16 @@ Part of #77.
 
 Reviewed all major user-facing surfaces and states in:
 
-- [src/App.tsx](/home/ofrias/personal/k1frx-morse-trainer/src/App.tsx)
-- [src/ui/app-root.tsx](/home/ofrias/personal/k1frx-morse-trainer/src/ui/app-root.tsx)
-- [src/ui/screens/LearnScreen.tsx](/home/ofrias/personal/k1frx-morse-trainer/src/ui/screens/LearnScreen.tsx)
-- [src/ui/screens/PracticeScreen.tsx](/home/ofrias/personal/k1frx-morse-trainer/src/ui/screens/PracticeScreen.tsx)
-- [src/ui/screens/CopyPractice.tsx](/home/ofrias/personal/k1frx-morse-trainer/src/ui/screens/CopyPractice.tsx)
-- [src/ui/screens/SendPractice.tsx](/home/ofrias/personal/k1frx-morse-trainer/src/ui/screens/SendPractice.tsx)
-- [src/ui/screens/ImportedTextPractice.tsx](/home/ofrias/personal/k1frx-morse-trainer/src/ui/screens/ImportedTextPractice.tsx)
-- [src/ui/screens/StatsHistoryScreen.tsx](/home/ofrias/personal/k1frx-morse-trainer/src/ui/screens/StatsHistoryScreen.tsx)
-- [src/ui/screens/SettingsScreen.tsx](/home/ofrias/personal/k1frx-morse-trainer/src/ui/screens/SettingsScreen.tsx)
-- [src/global.css](/home/ofrias/personal/k1frx-morse-trainer/src/global.css)
+- [App.tsx](../src/App.tsx)
+- [app-root.tsx](../src/ui/app-root.tsx)
+- [LearnScreen.tsx](../src/ui/screens/LearnScreen.tsx)
+- [PracticeScreen.tsx](../src/ui/screens/PracticeScreen.tsx)
+- [CopyPractice.tsx](../src/ui/screens/CopyPractice.tsx)
+- [SendPractice.tsx](../src/ui/screens/SendPractice.tsx)
+- [ImportedTextPractice.tsx](../src/ui/screens/ImportedTextPractice.tsx)
+- [StatsHistoryScreen.tsx](../src/ui/screens/StatsHistoryScreen.tsx)
+- [SettingsScreen.tsx](../src/ui/screens/SettingsScreen.tsx)
+- [global.css](../src/global.css)
 
 This includes first-run/loading/error startup states, Learn flow, Practice mode
 switching, History, Settings, data/storage notices, PWA update/offline notices,
@@ -33,7 +33,8 @@ and mobile vs desktop navigation behavior.
    - app title/tagline;
    - optional storage lifecycle notice;
    - optional PWA update/offline notice;
-   - main route + sticky bottom nav.
+   - main route + bottom nav that is sticky on narrow/mobile widths and static
+     on desktop (>=640px).
 
 ### B. Learn (first-run to session summary)
 
@@ -123,9 +124,12 @@ Single long page with mixed concerns:
 8. **Retry/error handling is consistent but repetitive**  
    Many screens expose local save states similarly; this is reliable but noisy.
 
-## 3) Proposed top-level IA
+## 3) Proposed top-level IA (proposal pending owner decision)
 
-Recommended top-level structure:
+This section is a proposal, not an approved direction yet. It depends on
+decision #1 in the "Decisions needing owner/product review" section below.
+
+Proposed top-level structure:
 
 1. **Train** (guided Learn path + long-copy readiness loop)
 2. **Practice** (self-directed Copy / Send / Text RX)
@@ -138,14 +142,15 @@ Rationale:
 - Preserves current behavior contracts while clarifying destination purpose.
 - Reduces concept switching between route labels and user goals.
 
-## 4) Navigation model proposal
+## 4) Navigation model proposal (proposals pending owner decision)
 
 ### Global model
 
 - Keep bottom navigation on mobile and standard nav on desktop.
 - Promote one clear primary destination per screen (single dominant CTA).
-- Move system notices into a dedicated top-level "System status" stack with
-  severity styling and optional "details" disclosure.
+- Proposal pending decision #6: move system notices into a dedicated top-level
+  "System status" stack with severity styling and optional "details"
+  disclosure.
 
 ### Focused training model
 
@@ -154,7 +159,8 @@ When user is actively copying (Learn card, continuous copy, imported text play):
 - collapse nonessential metadata;
 - reduce simultaneous actions (keep only task-critical controls);
 - keep "End session" available but visually secondary;
-- keep navigation protected/blocked consistently.
+- proposal pending decision #2: choose one focused-mode navigation policy
+  (hidden vs disabled vs visually de-emphasized) and apply it consistently.
 
 ### Practice navigation
 
@@ -243,6 +249,45 @@ When user is actively copying (Learn card, continuous copy, imported text play):
 └───────────────────────────────────┘
 ```
 
+### Mobile: Practice (mode selection + active exercise)
+
+```text
+┌───────────────────────────────────┐
+│ Practice                          │
+│ [Copy] [Send] [Text RX]           │
+│ mode helper text (1 line)         │
+├───────────────────────────────────┤
+│ Setup area (mode-specific)        │
+│ - content/scope OR target mode    │
+│ - primary action: Start / New     │
+├───────────────────────────────────┤
+│ Active task area                  │
+│ - prompt/target                   │
+│ - answer input or key surface     │
+│ - immediate feedback/status        │
+│ - secondary controls (Replay etc) │
+└───────────────────────────────────┘
+```
+
+### Mobile: Progress/History (summary first, analytics on demand)
+
+```text
+┌───────────────────────────────────┐
+│ Progress                          │
+│ Snapshot cards                    │
+│ - current character               │
+│ - streak                          │
+│ - RX/TX accuracy                  │
+│ - active time                     │
+├───────────────────────────────────┤
+│ [Trends] [Characters] [Confusions]│
+│ [Milestones] (collapsible groups) │
+│                                   │
+│ selected section list/details     │
+│ progressive disclosure             │
+└───────────────────────────────────┘
+```
+
 ### Desktop: shell
 
 ```text
@@ -271,7 +316,17 @@ When user is actively copying (Learn card, continuous copy, imported text play):
 6. **System notice model**: inline header notices vs dedicated dismissible
    status center.
 
-## Recommended follow-on implementation slices
+## Implementation handoff guardrails
+
+Until owner decisions above are recorded, follow-on issues (#79, #80, #81,
+#82, #83, #84) should treat the relevant IA/navigation items as proposals
+rather than settled requirements.
+
+- #79 should not lock in final shell notice architecture until decision #6.
+- #80 and #81 should not lock in focused-mode nav behavior until decision #2.
+- #79/#82 should not rename Learn/History to Train/Progress until decision #1.
+
+## Recommended follow-on implementation slices (decision-aware)
 
 For #79+#80+#81+#82+#83, prefer this order inside the sprint:
 
