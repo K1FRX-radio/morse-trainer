@@ -318,6 +318,72 @@ describe("usePracticeSession", () => {
     secondHook.unmount();
   });
 
+  it("releases reload safety after a failed finalization is retried to terminal success", async () => {
+    const session = persistence();
+    vi.mocked(session.interrupt)
+      .mockRejectedValueOnce(new Error("finalization failed"))
+      .mockResolvedValueOnce();
+
+    const hook = renderUsePracticeSession([session]);
+
+    await act(async () => {
+      await hook.result.current.start();
+    });
+
+    await act(async () => {
+      await expect(hook.result.current.interrupt()).rejects.toThrow(
+        "finalization failed",
+      );
+    });
+    expect(hook.reloadSafety.blocked).toBe(true);
+
+    await act(async () => {
+      await hook.result.current.retry();
+    });
+
+    expect(session.interrupt).toHaveBeenCalledTimes(2);
+    expect(hook.reloadSafety.blocked).toBe(false);
+    hook.unmount();
+  });
+
+  it("keeps reload safety blocked when retry recovers an attempt but the session remains active", async () => {
+    const session = persistence();
+    vi.mocked(session.recordAttempt).mockRejectedValueOnce(
+      new Error("attempt failed"),
+    );
+    const hook = renderUsePracticeSession([session]);
+
+    await act(async () => {
+      await hook.result.current.start();
+    });
+
+    await act(async () => {
+      await expect(
+        hook.result.current.recordAttempt({
+          exerciseType: "copy-character",
+          target: "K",
+          response: "K",
+          assisted: false,
+          replayed: false,
+        }),
+      ).rejects.toThrow("attempt failed");
+    });
+    expect(hook.reloadSafety.blocked).toBe(true);
+
+    await act(async () => {
+      await hook.result.current.retry();
+    });
+
+    expect(session.retry).toHaveBeenCalledOnce();
+    expect(hook.reloadSafety.blocked).toBe(true);
+
+    await act(async () => {
+      await hook.result.current.interrupt();
+    });
+    expect(hook.reloadSafety.blocked).toBe(false);
+    hook.unmount();
+  });
+
   it("keeps reload safety blocked until overlapping copy and send sessions both settle", async () => {
     const copySession = persistence();
     let resolveSendInterrupt: (() => void) | undefined;
