@@ -134,7 +134,6 @@ describe("StatsHistoryScreen", () => {
     await screen.findByRole("heading", { name: "History" });
 
     expect(screen.getByText("Current character")).toBeInTheDocument();
-    expect(screen.getByText("Current WPM")).toBeInTheDocument();
     expect(screen.getByText("Current RX band")).toBeInTheDocument();
     expect(screen.getByText("Eligible sessions")).toBeInTheDocument();
     expect(screen.getByText("Practice days")).toBeInTheDocument();
@@ -190,7 +189,7 @@ describe("StatsHistoryScreen", () => {
     });
     expect(list).toHaveTextContent("K");
     expect(list).toHaveTextContent("Same band 4/6 (67%)");
-    expect(list).toHaveTextContent("Transfer 5/8 (63%)");
+    expect(list).toHaveTextContent("Band-weighted 5/8 (63%)");
     expect(list).toHaveTextContent("M");
     expect(list).toHaveTextContent("Same band 0/0 (N/A)");
 
@@ -199,6 +198,26 @@ describe("StatsHistoryScreen", () => {
       characters: ["K", "M"],
       limit: 2,
     });
+  });
+
+  it("preserves fractional band-weighted evidence precision", async () => {
+    renderStats({
+      speedProficiency: [
+        {
+          character: "K",
+          band: 20,
+          attempts: 0,
+          correct: 0,
+          weightedAttempts: 7.5,
+          weightedCorrect: 5.25,
+        },
+      ],
+    });
+
+    const list = await screen.findByRole("list", {
+      name: "Current-band RX proficiency",
+    });
+    expect(list).toHaveTextContent("Band-weighted 5.25/7.5 (70%)");
   });
 
   it("shows empty state and neutral placeholders for missing accuracies", async () => {

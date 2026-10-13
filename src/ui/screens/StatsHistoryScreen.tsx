@@ -23,6 +23,11 @@ function formatWpm(value: number | null): string {
   return value.toFixed(1);
 }
 
+function formatEvidenceCount(value: number): string {
+  if (!Number.isFinite(value)) return "0";
+  return Number(value.toFixed(2)).toString();
+}
+
 export function StatsHistoryScreen() {
   const { settings } = useSettings();
   const currentCharWpmBand = normalizeCharacterWpmBand(settings.charWpm);
@@ -87,12 +92,6 @@ export function StatsHistoryScreen() {
         <article className="stats__card">
           <h3>Current character</h3>
           <p>{currentCharacter ?? "N/A"}</p>
-        </article>
-        <article className="stats__card">
-          <h3>Current WPM</h3>
-          <p>
-            {settings.charWpm} / {settings.effectiveWpm}
-          </p>
         </article>
         <article className="stats__card">
           <h3>Current RX band</h3>
@@ -214,8 +213,8 @@ export function StatsHistoryScreen() {
                 {formatAccuracy(row.accuracy)})
               </span>
               <span>
-                Transfer {Math.round(row.weightedCorrect)}/
-                {Math.round(row.weightedAttempts)} (
+                Band-weighted {formatEvidenceCount(row.weightedCorrect)}/
+                {formatEvidenceCount(row.weightedAttempts)} (
                 {formatAccuracy(row.weightedAccuracy)})
               </span>
             </li>
