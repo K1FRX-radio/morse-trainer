@@ -63,6 +63,7 @@ function trainingDataStub(
       async (query: { direction: "rx" | "tx" }) =>
         query.direction === "rx" ? rx : tx,
     ),
+    listCharacterSpeedProficiency: vi.fn(async () => []),
     listConfusionProjections: vi.fn(async () => confusions),
     listMilestones: vi.fn(async () => milestones),
   };

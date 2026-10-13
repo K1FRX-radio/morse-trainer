@@ -169,7 +169,10 @@ Reacquisition threshold:
 ## 6. Remediation and scheduler behavior
 
 - Scheduler prioritizes weakest active characters in current `charWpmBand`.
-- Nearby-band transfer contributes to tie-breaking confidence only.
+- Nearby-band transfer is a bootstrap fallback only when a character has no
+  same-band evidence yet at the current `charWpmBand`.
+- Once same-band evidence exists for a character, that same-band evidence is
+  authoritative for weakness classification.
 - Existing deterministic reason codes remain; an additional speed-aware reason
   can be introduced if needed in implementation (`SPEED_REACQUISITION`).
 

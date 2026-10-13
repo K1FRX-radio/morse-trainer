@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_CURRICULUM_CONFIG } from "../content/curriculum-data.ts";
 import { createInitialState, forceUnlockNext } from "../core/curriculum.ts";
 import { createRng } from "../core/rng.ts";
-import { LearnSession, type LessonEvent } from "./learn-session.ts";
+import {
+  LearnSession,
+  deriveWeakRxCharacters,
+  type LessonEvent,
+} from "./learn-session.ts";
 import {
   DEFAULT_LESSON_CONFIG,
   type LessonPhase,
@@ -587,6 +591,110 @@ describe("LearnSession adaptive acquisition", () => {
     expect(newest?.needsReview).toBe(true);
     expect(newest?.reviewStreak).toBe(0);
     expect(event?.phase).toBe("contrast");
+  });
+});
+
+describe("LearnSession speed-aware scheduling input", () => {
+  it("uses current-band weakness to influence contrast selection", () => {
+    const buildState = () => {
+      const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+      forceUnlockNext(state);
+      forceUnlockNext(state);
+      return state;
+    };
+
+    const collectContrastFocuses = (session: LearnSession): string[] => {
+      const focuses: string[] = [];
+      session.start(0);
+      let event = session.next();
+      while (
+        event &&
+        focuses.length < DEFAULT_LESSON_CONFIG.contrastMinAttempts
+      ) {
+        if (isExercise(event) && event.phase === "contrast") {
+          focuses.push(event.focus);
+        }
+        completeCorrect(session, event);
+        event = session.next();
+      }
+      return focuses;
+    };
+
+    const active = ["K", "M", "U", "R"];
+    const weakSession = new LearnSession({
+      state: buildState(),
+      rng: createRng(31),
+      introduced: active,
+      schedulerPerformance: active.map((character) => ({
+        character,
+        attempts: 12,
+        correct: character === "M" ? 6 : 11,
+        weightedAttempts: 12,
+        weightedCorrect: character === "M" ? 6 : 11,
+      })),
+    });
+    const strongSession = new LearnSession({
+      state: buildState(),
+      rng: createRng(31),
+      introduced: active,
+      schedulerPerformance: active.map((character) => ({
+        character,
+        attempts: 12,
+        correct: 11,
+        weightedAttempts: 12,
+        weightedCorrect: 11,
+      })),
+    });
+
+    const weakFocuses = collectContrastFocuses(weakSession);
+    const strongFocuses = collectContrastFocuses(strongSession);
+    const weakCount = weakFocuses.filter((focus) => focus === "M").length;
+    const baselineCount = strongFocuses.filter((focus) => focus === "M").length;
+
+    expect(weakCount).toBeGreaterThan(baselineCount);
+  });
+
+  it("uses neighboring-band transfer when same-band attempts are absent", () => {
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    forceUnlockNext(state);
+
+    expect(
+      deriveWeakRxCharacters({
+        activeCharacters: ["K", "M", "U"],
+        state,
+        contrastMinAccuracy: DEFAULT_LESSON_CONFIG.contrastMinAccuracy,
+        schedulerPerformance: [
+          {
+            character: "K",
+            attempts: 0,
+            correct: 0,
+            weightedAttempts: 8,
+            weightedCorrect: 4,
+          },
+        ],
+      }),
+    ).toContain("K");
+  });
+
+  it("does not let strong off-band evidence override weak current-band remediation", () => {
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+
+    const weak = deriveWeakRxCharacters({
+      activeCharacters: ["K", "M"],
+      state,
+      contrastMinAccuracy: DEFAULT_LESSON_CONFIG.contrastMinAccuracy,
+      schedulerPerformance: [
+        {
+          character: "K",
+          attempts: 10,
+          correct: 6,
+          weightedAttempts: 40,
+          weightedCorrect: 36,
+        },
+      ],
+    });
+
+    expect(weak).toContain("K");
   });
 });
 

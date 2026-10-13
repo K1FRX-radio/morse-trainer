@@ -97,6 +97,7 @@ function renderImportedTextPractice(noiseLevel = DEFAULT_SETTINGS.noiseLevel) {
             }),
           listDailyProjections: () => Promise.resolve([]),
           listCharacterProjections: () => Promise.resolve([]),
+          listCharacterSpeedProficiency: () => Promise.resolve([]),
           listConfusionProjections: () => Promise.resolve([]),
         }}
       >
@@ -145,6 +146,7 @@ function renderImportedTextPracticeWithSessions(
             }),
           listDailyProjections: () => Promise.resolve([]),
           listCharacterProjections: () => Promise.resolve([]),
+          listCharacterSpeedProficiency: () => Promise.resolve([]),
           listConfusionProjections: () => Promise.resolve([]),
         }}
       >
@@ -201,6 +203,7 @@ function renderWithSwitchHarness() {
             }),
           listDailyProjections: () => Promise.resolve([]),
           listCharacterProjections: () => Promise.resolve([]),
+          listCharacterSpeedProficiency: () => Promise.resolve([]),
           listConfusionProjections: () => Promise.resolve([]),
         }}
       >

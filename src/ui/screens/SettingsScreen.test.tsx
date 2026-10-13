@@ -35,6 +35,7 @@ function renderSettings(
     getRetryClassification: vi.fn(),
     listDailyProjections: vi.fn(),
     listCharacterProjections: vi.fn(),
+    listCharacterSpeedProficiency: vi.fn(),
     listConfusionProjections: vi.fn(),
     exportPortableBackup: vi.fn(),
     previewPortableBackup: vi.fn(),

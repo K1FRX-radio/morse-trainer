@@ -110,6 +110,7 @@ function renderPractice(
             }),
           listDailyProjections: () => Promise.resolve([]),
           listCharacterProjections,
+          listCharacterSpeedProficiency: () => Promise.resolve([]),
           listConfusionProjections: () => Promise.resolve([]),
         }}
       >

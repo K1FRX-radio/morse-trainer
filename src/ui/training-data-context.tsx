@@ -2,6 +2,8 @@ import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import type { CurriculumState } from "../core/curriculum.ts";
 import type { SpeedSuggestionAfterAttempts } from "../core/settings.ts";
 import type {
+  CharacterSpeedProficiencyQuery,
+  CharacterSpeedProficiencyRecord,
   CharacterProjectionQuery,
   ConfusionProjectionQuery,
   DashboardAggregateQuery,
@@ -60,6 +62,9 @@ type TrainingDataProviderProps = {
   listCharacterProjections: (
     query: CharacterProjectionQuery,
   ) => Promise<CharacterProjectionRecord[]>;
+  listCharacterSpeedProficiency: (
+    query: CharacterSpeedProficiencyQuery,
+  ) => Promise<CharacterSpeedProficiencyRecord[]>;
   listConfusionProjections: (
     query: ConfusionProjectionQuery,
   ) => Promise<ConfusionProjectionRecord[]>;
@@ -96,6 +101,7 @@ export function TrainingDataProvider({
   listDailyProjections,
   getDashboardAggregate,
   listCharacterProjections,
+  listCharacterSpeedProficiency,
   listConfusionProjections,
   listMilestones,
   exportPortableBackup,
@@ -242,6 +248,7 @@ export function TrainingDataProvider({
       listDailyProjections,
       ...(getDashboardAggregate ? { getDashboardAggregate } : {}),
       listCharacterProjections,
+      listCharacterSpeedProficiency,
       listConfusionProjections,
       ...(listMilestones ? { listMilestones } : {}),
       ...(exportPortableBackup ? { exportPortableBackup } : {}),
@@ -266,6 +273,7 @@ export function TrainingDataProvider({
       listDailyProjections,
       getDashboardAggregate,
       listCharacterProjections,
+      listCharacterSpeedProficiency,
       listConfusionProjections,
       listMilestones,
       exportPortableBackup,

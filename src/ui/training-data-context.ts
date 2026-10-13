@@ -2,6 +2,8 @@ import { createContext, useContext } from "react";
 import type { CurriculumState } from "../core/curriculum.ts";
 import type { SpeedSuggestionAfterAttempts } from "../core/settings.ts";
 import type {
+  CharacterSpeedProficiencyQuery,
+  CharacterSpeedProficiencyRecord,
   CharacterProjectionQuery,
   ConfusionProjectionQuery,
   DashboardAggregateQuery,
@@ -59,6 +61,9 @@ export type TrainingDataContextValue = {
   listCharacterProjections: (
     query: CharacterProjectionQuery,
   ) => Promise<CharacterProjectionRecord[]>;
+  listCharacterSpeedProficiency: (
+    query: CharacterSpeedProficiencyQuery,
+  ) => Promise<CharacterSpeedProficiencyRecord[]>;
   listConfusionProjections: (
     query: ConfusionProjectionQuery,
   ) => Promise<ConfusionProjectionRecord[]>;
