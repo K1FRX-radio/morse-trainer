@@ -30,14 +30,14 @@ function setVisibilityState(state: "visible" | "hidden") {
 type ReloadSafetyStore = {
   blocked: boolean;
   seq: number;
-  tokens: Map<string, number>;
+  tokens: Map<string, Set<number>>;
 };
 
 function createReloadSafetyStore(): ReloadSafetyStore {
   return {
     blocked: false,
     seq: 1,
-    tokens: new Map<string, number>(),
+    tokens: new Map<string, Set<number>>(),
   };
 }
 
@@ -53,21 +53,31 @@ function renderUsePracticeSession(
   );
 
   const updateReloadBlocked = () => {
-    reloadSafety.blocked = reloadSafety.tokens.size > 0;
+    let activeLeaseCount = 0;
+    for (const tokens of reloadSafety.tokens.values()) {
+      activeLeaseCount += tokens.size;
+    }
+    reloadSafety.blocked = activeLeaseCount > 0;
   };
 
   const acquireBlock = (source: string) => {
     const token = reloadSafety.seq++;
-    reloadSafety.tokens.set(source, token);
+    const tokens = reloadSafety.tokens.get(source) ?? new Set<number>();
+    tokens.add(token);
+    reloadSafety.tokens.set(source, tokens);
     updateReloadBlocked();
     return token;
   };
 
   const releaseBlock = (source: string, token: number) => {
-    if (reloadSafety.tokens.get(source) !== token) {
+    const tokens = reloadSafety.tokens.get(source);
+    if (!tokens || !tokens.has(token)) {
       return;
     }
-    reloadSafety.tokens.delete(source);
+    tokens.delete(token);
+    if (tokens.size === 0) {
+      reloadSafety.tokens.delete(source);
+    }
     updateReloadBlocked();
   };
 
@@ -78,7 +88,9 @@ function renderUsePracticeSession(
       return;
     }
     const token = reloadSafety.seq++;
-    reloadSafety.tokens.set("legacy", token);
+    const tokens = reloadSafety.tokens.get("legacy") ?? new Set<number>();
+    tokens.add(token);
+    reloadSafety.tokens.set("legacy", tokens);
     updateReloadBlocked();
   };
 
@@ -265,6 +277,42 @@ describe("usePracticeSession", () => {
       await secondHook.result.current.interrupt();
     });
     expect(secondHook.reloadSafety.blocked).toBe(false);
+    secondHook.unmount();
+  });
+
+  it("keeps reload safety blocked when a newer session settles before an older pending finalization", async () => {
+    let resolveFirstInterrupt: (() => void) | undefined;
+    const first: PracticeSessionPersistence = {
+      recordAttempt: vi.fn(() => Promise.resolve()),
+      finish: vi.fn(() => Promise.resolve()),
+      interrupt: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveFirstInterrupt = resolve;
+          }),
+      ),
+      retry: vi.fn(() => Promise.resolve()),
+    };
+    const second = persistence();
+    const sharedReloadSafety = createReloadSafetyStore();
+
+    const firstHook = renderUsePracticeSession([first], sharedReloadSafety);
+    await act(async () => {
+      await firstHook.result.current.start();
+    });
+    firstHook.unmount();
+    await waitFor(() => expect(first.interrupt).toHaveBeenCalledOnce());
+
+    const secondHook = renderUsePracticeSession([second], sharedReloadSafety);
+    await act(async () => {
+      await secondHook.result.current.start();
+      await secondHook.result.current.interrupt();
+    });
+
+    expect(secondHook.reloadSafety.blocked).toBe(true);
+
+    resolveFirstInterrupt?.();
+    await waitFor(() => expect(secondHook.reloadSafety.blocked).toBe(false));
     secondHook.unmount();
   });
 });

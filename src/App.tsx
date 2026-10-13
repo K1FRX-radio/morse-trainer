@@ -37,17 +37,23 @@ export function App({
 }) {
   const [navigationBlocked, setNavigationBlocked] = useState(false);
   const [reloadSafetyBlocked, setReloadSafetyBlocked] = useState(false);
-  const reloadSafetyTokensRef = useRef(new Map<string, number>());
+  const reloadSafetyTokensRef = useRef(new Map<string, Set<number>>());
   const reloadSafetySeqRef = useRef(1);
 
   const syncReloadSafetyBlocked = useCallback(() => {
-    setReloadSafetyBlocked(reloadSafetyTokensRef.current.size > 0);
+    let activeLeaseCount = 0;
+    for (const tokens of reloadSafetyTokensRef.current.values()) {
+      activeLeaseCount += tokens.size;
+    }
+    setReloadSafetyBlocked(activeLeaseCount > 0);
   }, []);
 
   const acquireReloadSafetyBlock = useCallback(
     (source: string): number => {
       const token = reloadSafetySeqRef.current++;
-      reloadSafetyTokensRef.current.set(source, token);
+      const tokens = reloadSafetyTokensRef.current.get(source) ?? new Set();
+      tokens.add(token);
+      reloadSafetyTokensRef.current.set(source, tokens);
       syncReloadSafetyBlocked();
       return token;
     },
@@ -56,10 +62,14 @@ export function App({
 
   const releaseReloadSafetyBlock = useCallback(
     (source: string, token: number): void => {
-      if (reloadSafetyTokensRef.current.get(source) !== token) {
+      const tokens = reloadSafetyTokensRef.current.get(source);
+      if (!tokens || !tokens.has(token)) {
         return;
       }
-      reloadSafetyTokensRef.current.delete(source);
+      tokens.delete(token);
+      if (tokens.size === 0) {
+        reloadSafetyTokensRef.current.delete(source);
+      }
       syncReloadSafetyBlocked();
     },
     [syncReloadSafetyBlocked],
@@ -74,7 +84,10 @@ export function App({
         return;
       }
       const token = reloadSafetySeqRef.current++;
-      reloadSafetyTokensRef.current.set(legacySource, token);
+      const tokens =
+        reloadSafetyTokensRef.current.get(legacySource) ?? new Set();
+      tokens.add(token);
+      reloadSafetyTokensRef.current.set(legacySource, tokens);
       syncReloadSafetyBlocked();
     },
     [syncReloadSafetyBlocked],
