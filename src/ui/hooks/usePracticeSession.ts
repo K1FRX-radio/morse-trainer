@@ -182,7 +182,11 @@ export function usePracticeSession(
     setStatus("pending");
     setError(undefined);
     try {
-      await workQueueRef.current!.retry();
+      const workQueue = workQueueRef.current!;
+      await workQueue.retry();
+      if (workQueue.isTerminal) {
+        releaseReloadSafety();
+      }
       setBlocked(false);
       if (mountedRef.current) setStatus("ready");
     } catch (cause) {
@@ -192,7 +196,7 @@ export function usePracticeSession(
         setError(cause instanceof Error ? cause.message : "Save retry failed.");
       }
     }
-  }, [setBlocked]);
+  }, [releaseReloadSafety, setBlocked]);
 
   const finish = useCallback(async (): Promise<void> => {
     holdReloadSafety();
