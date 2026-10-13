@@ -456,7 +456,7 @@ jobs:
           set -euo pipefail
           rm -rf .agent-context .agent-policy
 
-          if git diff --quiet && git diff --cached --quiet; then
+          if [[ -z "$(git status --porcelain)" ]]; then
             gh pr edit "$PR_NUMBER" \
               --repo "$GITHUB_REPOSITORY" \
               --remove-label "agent:working" \
