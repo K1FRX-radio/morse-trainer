@@ -74,10 +74,12 @@ The Codex Action is pinned to a reviewed commit rather than a floating tag.
 
 The workflow maintains these labels:
 
+- `review:pending`
 - `agent:working`
 - `review:changes-requested`
 - `review:approved`
 - `owner:decision`
+- `owner:merge-ready`
 
 Supervisor comments include a hidden machine marker so review rounds can be
 counted deterministically.
@@ -93,7 +95,9 @@ The owner is expected to intervene only when:
 - roadmap/acceptance/product intent changes;
 - final merge/release authority is needed.
 
-An approved PR still waits for CI and explicit merge authority.
+Approval is tied to the exact PR head SHA. The owner is mentioned only when that
+same head is both supervisor-approved and CI-green, at which point
+`owner:merge-ready` is applied. Merge authority remains explicit.
 
 ## Disabling or recovering the loop
 
