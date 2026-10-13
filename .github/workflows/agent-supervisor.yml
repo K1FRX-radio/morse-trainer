@@ -20,12 +20,84 @@ env:
   PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
 
 jobs:
+  prepare-state:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: read
+    outputs:
+      eligible: ${{ steps.state.outputs.eligible }}
+      head_sha: ${{ steps.state.outputs.head_sha }}
+
+    steps:
+      - name: Mark current head pending review
+        id: state
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ env.PR_NUMBER }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const issue_number = Number(process.env.PR_NUMBER);
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const { data: pr } = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number: issue_number,
+            });
+
+            const eligible =
+              pr.head.repo?.full_name === `${owner}/${repo}` && !pr.draft;
+            core.setOutput("eligible", String(eligible));
+            core.setOutput("head_sha", pr.head.sha);
+            if (!eligible) return;
+
+            const labels = [
+              { name: "review:pending", color: "bfdadc" },
+              { name: "agent:working", color: "1d76db" },
+              { name: "review:changes-requested", color: "d93f0b" },
+              { name: "review:approved", color: "0e8a16" },
+              { name: "owner:decision", color: "fbca04" },
+              { name: "owner:merge-ready", color: "5319e7" },
+            ];
+
+            for (const label of labels) {
+              try {
+                await github.rest.issues.createLabel({
+                  owner,
+                  repo,
+                  name: label.name,
+                  color: label.color,
+                });
+              } catch (error) {
+                if (error.status !== 422) throw error;
+              }
+            }
+
+            for (const label of labels) {
+              try {
+                await github.rest.issues.removeLabel({
+                  owner,
+                  repo,
+                  issue_number,
+                  name: label.name,
+                });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+            }
+
+            await github.rest.issues.addLabels({
+              owner,
+              repo,
+              issue_number,
+              labels: ["review:pending"],
+            });
+
   review:
-    if: >-
-      (github.event_name == 'workflow_dispatch' ||
-      github.event.pull_request.head.repo.full_name == github.repository) &&
-      (github.event_name == 'workflow_dispatch' ||
-      github.event.pull_request.draft == false)
+    needs: prepare-state
+    if: needs.prepare-state.outputs.eligible == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -124,7 +196,7 @@ jobs:
             when no blocking technical issue remains.
 
   route:
-    needs: review
+    needs: [prepare-state, review]
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -139,6 +211,7 @@ jobs:
         env:
           REVIEW_JSON: ${{ needs.review.outputs.review_json }}
           PR_NUMBER: ${{ env.PR_NUMBER }}
+          HEAD_SHA: ${{ needs.prepare-state.outputs.head_sha }}
           OWNER_LOGIN: frivolas
           MAX_REPAIR_ROUNDS: "5"
         with:
@@ -146,37 +219,27 @@ jobs:
           script: |
             const review = JSON.parse(process.env.REVIEW_JSON);
             const issue_number = Number(process.env.PR_NUMBER);
+            const headSha = process.env.HEAD_SHA;
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const ownerLogin = process.env.OWNER_LOGIN;
             const maxRounds = Number(process.env.MAX_REPAIR_ROUNDS);
 
             const labels = {
+              pending: { name: "review:pending", color: "bfdadc" },
               working: { name: "agent:working", color: "1d76db" },
               changes: { name: "review:changes-requested", color: "d93f0b" },
               approved: { name: "review:approved", color: "0e8a16" },
               owner: { name: "owner:decision", color: "fbca04" },
+              mergeReady: { name: "owner:merge-ready", color: "5319e7" },
             };
-
-            for (const label of Object.values(labels)) {
-              try {
-                await github.rest.issues.createLabel({
-                  owner,
-                  repo,
-                  name: label.name,
-                  color: label.color,
-                });
-              } catch (error) {
-                if (error.status !== 422) throw error;
-              }
-            }
 
             const comments = await github.paginate(
               github.rest.issues.listComments,
               { owner, repo, issue_number, per_page: 100 },
             );
             const priorRepairRounds = comments.filter((comment) =>
-              comment.body?.includes("<!-- agent-supervisor:changes_requested -->"),
+              comment.body?.includes("<!-- agent-supervisor:changes_requested"),
             ).length;
 
             let verdict = review.verdict;
@@ -235,7 +298,7 @@ jobs:
                 : "";
 
             const body = [
-              `<!-- agent-supervisor:${verdict} -->`,
+              `<!-- agent-supervisor:${verdict} head=${headSha} -->`,
               "## Automated supervisor review",
               "",
               `**Verdict:** \`${verdict}\``,
@@ -255,10 +318,39 @@ jobs:
               body,
             });
 
+            if (verdict === "approve") {
+              const greenMarker = `<!-- agent-ci:green head=${headSha} -->`;
+              const readyMarker = `<!-- owner-notify:merge-ready head=${headSha} -->`;
+              const ciGreen = comments.some((comment) =>
+                comment.body?.includes(greenMarker),
+              );
+              const alreadyNotified = comments.some((comment) =>
+                comment.body?.includes(readyMarker),
+              );
+
+              if (ciGreen) {
+                await github.rest.issues.addLabels({
+                  owner,
+                  repo,
+                  issue_number,
+                  labels: [labels.mergeReady.name],
+                });
+                if (!alreadyNotified) {
+                  await github.rest.issues.createComment({
+                    owner,
+                    repo,
+                    issue_number,
+                    body:
+                      `${readyMarker}\n@${ownerLogin}, this exact PR head is supervisor-approved and CI-green. It is ready for your merge decision.`,
+                  });
+                }
+              }
+            }
+
             core.setOutput("verdict", verdict);
 
   repair:
-    needs: [review, route]
+    needs: [prepare-state, review, route]
     if: needs.route.outputs.verdict == 'changes_requested'
     runs-on: ubuntu-latest
     permissions:
@@ -310,7 +402,7 @@ jobs:
 
           gh api \
             "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" \
-            | jq '[.[] | select(.body | contains("<!-- agent-supervisor:changes_requested -->"))] | last' \
+            | jq '[.[] | select(.body | contains("<!-- agent-supervisor:changes_requested"))] | last' \
             > .agent-context/latest-review.json
 
           gh pr edit "$PR_NUMBER" \
