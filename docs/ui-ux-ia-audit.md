@@ -179,6 +179,9 @@ When user is actively copying (Learn card, continuous copy, imported text play):
 
 ## 6) Low-fidelity wireframes (major flows)
 
+Wireframes below are illustrative sketches. Where a sketch reflects an
+unresolved owner/product decision, the assumption is called out inline.
+
 ### Mobile: first visit / onboarding
 
 ```text
@@ -196,6 +199,9 @@ When user is actively copying (Learn card, continuous copy, imported text play):
 │ Character map (collapsed preview) │
 └───────────────────────────────────┘
 ```
+
+Assumption note (pending decision #3): this sketch places long-copy launch in
+Train/Learn; final placement is not approved yet.
 
 ### Mobile: active copy focus mode
 
@@ -229,7 +235,7 @@ When user is actively copying (Learn card, continuous copy, imported text play):
 └───────────────────────────────────┘
 ```
 
-### Mobile: settings (grouped by intent)
+### Mobile: settings (illustrative one-page grouping assumption; pending decision #5)
 
 ```text
 ┌───────────────────────────────────┐
@@ -269,7 +275,7 @@ When user is actively copying (Learn card, continuous copy, imported text play):
 └───────────────────────────────────┘
 ```
 
-### Mobile: Progress/History (summary first, analytics on demand)
+### Mobile: Progress/History (illustrative summary-first assumption; pending decision #4)
 
 ```text
 ┌───────────────────────────────────┐
@@ -284,7 +290,7 @@ When user is actively copying (Learn card, continuous copy, imported text play):
 │ [Milestones] (collapsible groups) │
 │                                   │
 │ selected section list/details     │
-│ progressive disclosure             │
+│ detail disclosure pattern          │
 └───────────────────────────────────┘
 ```
 
@@ -325,13 +331,19 @@ rather than settled requirements.
 - #79 should not lock in final shell notice architecture until decision #6.
 - #80 and #81 should not lock in focused-mode nav behavior until decision #2.
 - #79/#82 should not rename Learn/History to Train/Progress until decision #1.
+- #80/#81 should not lock long-copy placement until decision #3.
+- #82 should not lock compact-summary vs deeper-analytics disclosure strategy
+  until decision #4.
+- #83 should not lock one-page grouped Settings vs Settings subroutes until
+  decision #5.
 
 ## Recommended follow-on implementation slices (decision-aware)
 
 For #79+#80+#81+#82+#83, prefer this order inside the sprint:
 
-1. Shell + information hierarchy primitives (status stack, primary CTA layout).
+1. Shell + information hierarchy primitives (status-notice patterns, primary
+   CTA layout).
 2. Focus-mode patterns for active copy screens.
 3. Practice mode IA + copy updates.
-4. Progress density reduction + progressive disclosure.
-5. Settings regrouping and danger-zone treatment.
+4. Progress information hierarchy and readability improvements.
+5. Settings information architecture and danger-zone treatment.
