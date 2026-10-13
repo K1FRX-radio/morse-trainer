@@ -1,0 +1,337 @@
+name: Agent supervisor loop
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to review
+        required: true
+        type: string
+
+concurrency:
+  group: agent-supervisor-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: true
+
+permissions: {}
+
+env:
+  PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+
+jobs:
+  review:
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      github.event.pull_request.head.repo.full_name == github.repository) &&
+      (github.event_name == 'workflow_dispatch' ||
+      github.event.pull_request.draft == false)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      review_json: ${{ steps.codex.outputs.final-message }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prepare PR and issue context
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .agent-context
+
+          gh pr view "$PR_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json number,title,body,author,baseRefName,baseRefOid,headRefName,headRefOid,isDraft,state,comments,reviews \
+            > .agent-context/pr.json
+
+          base_ref="$(jq -r '.baseRefName' .agent-context/pr.json)"
+          git fetch --no-tags origin \
+            "$base_ref" \
+            "+refs/pull/$PR_NUMBER/head:refs/remotes/origin/pr-$PR_NUMBER"
+          git checkout --detach "refs/remotes/origin/pr-$PR_NUMBER"
+
+          : > .agent-context/issues.jsonl
+          jq -r '.body // ""' .agent-context/pr.json \
+            | grep -oE '#[0-9]+' \
+            | tr -d '#' \
+            | sort -u \
+            | while read -r issue_number; do
+                gh issue view "$issue_number" \
+                  --repo "$GITHUB_REPOSITORY" \
+                  --json number,title,state,body \
+                  >> .agent-context/issues.jsonl 2>/dev/null || true
+              done
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run supervisor review
+        id: codex
+        uses: openai/codex-action@bdf19a4a223ec2549a3e2274a0cf61556bc07675
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          permission-profile: ":read-only"
+          allow-bots: true
+          output-schema-file: ".github/agent/review-schema.json"
+          prompt: |
+            You are the technical supervisor for this repository.
+
+            Read AGENTS.md, docs/REVIEW_POLICY.md, .agent-context/pr.json, and
+            .agent-context/issues.jsonl. Review the complete pull request against
+            its base and the issue acceptance criteria. Re-check prior review
+            feedback recorded in the PR context.
+
+            Do not edit files. Do not merge. Do not invent product decisions.
+
+            Return exactly the structured review object required by
+            .github/agent/review-schema.json. Use owner_decision only for choices
+            that genuinely require product/roadmap/acceptance-criteria judgment.
+            Use changes_requested for actionable implementation defects. Approve
+            when no blocking technical issue remains.
+
+  route:
+    needs: review
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    outputs:
+      verdict: ${{ steps.route.outputs.verdict }}
+
+    steps:
+      - name: Publish supervisor state
+        id: route
+        uses: actions/github-script@v7
+        env:
+          REVIEW_JSON: ${{ needs.review.outputs.review_json }}
+          PR_NUMBER: ${{ env.PR_NUMBER }}
+          OWNER_LOGIN: frivolas
+          MAX_REPAIR_ROUNDS: "5"
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const review = JSON.parse(process.env.REVIEW_JSON);
+            const issue_number = Number(process.env.PR_NUMBER);
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const ownerLogin = process.env.OWNER_LOGIN;
+            const maxRounds = Number(process.env.MAX_REPAIR_ROUNDS);
+
+            const labels = {
+              working: { name: "agent:working", color: "1d76db" },
+              changes: { name: "review:changes-requested", color: "d93f0b" },
+              approved: { name: "review:approved", color: "0e8a16" },
+              owner: { name: "owner:decision", color: "fbca04" },
+            };
+
+            for (const label of Object.values(labels)) {
+              try {
+                await github.rest.issues.createLabel({
+                  owner,
+                  repo,
+                  name: label.name,
+                  color: label.color,
+                });
+              } catch (error) {
+                if (error.status !== 422) throw error;
+              }
+            }
+
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              { owner, repo, issue_number, per_page: 100 },
+            );
+            const priorRepairRounds = comments.filter((comment) =>
+              comment.body?.includes("<!-- agent-supervisor:changes_requested -->"),
+            ).length;
+
+            let verdict = review.verdict;
+            let escalation = "";
+            if (
+              verdict === "changes_requested" &&
+              priorRepairRounds >= maxRounds
+            ) {
+              verdict = "owner_decision";
+              escalation =
+                `\n\nAutomatic repair limit (${maxRounds}) reached. @${ownerLogin}, please decide how to proceed.`;
+            }
+
+            for (const label of Object.values(labels)) {
+              try {
+                await github.rest.issues.removeLabel({
+                  owner,
+                  repo,
+                  issue_number,
+                  name: label.name,
+                });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+            }
+
+            const stateLabel =
+              verdict === "approve"
+                ? labels.approved.name
+                : verdict === "changes_requested"
+                  ? labels.changes.name
+                  : labels.owner.name;
+
+            await github.rest.issues.addLabels({
+              owner,
+              repo,
+              issue_number,
+              labels: [stateLabel],
+            });
+
+            const findings =
+              review.findings.length === 0
+                ? "_No additional findings._"
+                : review.findings
+                    .map((finding) => {
+                      const location = finding.path
+                        ? ` (\`${finding.path}\`)`
+                        : "";
+                      return `- **${finding.severity}: ${finding.title}**${location}\n  ${finding.detail}`;
+                    })
+                    .join("\n");
+
+            const ownerMention =
+              verdict === "owner_decision"
+                ? `\n\n@${ownerLogin}, owner input is required before the loop continues.`
+                : "";
+
+            const body = [
+              `<!-- agent-supervisor:${verdict} -->`,
+              "## Automated supervisor review",
+              "",
+              `**Verdict:** \`${verdict}\``,
+              "",
+              review.summary,
+              "",
+              "### Findings",
+              findings,
+              ownerMention,
+              escalation,
+            ].join("\n");
+
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number,
+              body,
+            });
+
+            core.setOutput("verdict", verdict);
+
+  repair:
+    needs: [review, route]
+    if: needs.route.outputs.verdict == 'changes_requested'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: write
+      issues: write
+      pull-requests: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check out PR branch and capture latest review
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .agent-context
+
+          gh pr view "$PR_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json number,title,body,author,baseRefName,baseRefOid,headRefName,headRefOid \
+            > .agent-context/pr.json
+
+          head_ref="$(jq -r '.headRefName' .agent-context/pr.json)"
+          echo "HEAD_REF=$head_ref" >> "$GITHUB_ENV"
+
+          git fetch --no-tags origin \
+            "+refs/pull/$PR_NUMBER/head:refs/remotes/origin/pr-$PR_NUMBER"
+          git checkout -B "$head_ref" "refs/remotes/origin/pr-$PR_NUMBER"
+
+          gh api \
+            --repo "$GITHUB_REPOSITORY" \
+            "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" \
+            | jq '[.[] | select(.body | contains("<!-- agent-supervisor:changes_requested -->"))] | last' \
+            > .agent-context/latest-review.json
+
+          gh issue edit "$PR_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --remove-label "review:changes-requested" \
+            --add-label "agent:working"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run repair agent
+        id: repair_codex
+        uses: openai/codex-action@bdf19a4a223ec2549a3e2274a0cf61556bc07675
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          permission-profile: ":workspace"
+          allow-bots: true
+          prompt: |
+            You are the implementation agent for this repository.
+
+            Read AGENTS.md, docs/REVIEW_POLICY.md, .agent-context/pr.json, and
+            .agent-context/latest-review.json.
+
+            Address every blocking finding in the latest supervisor review with
+            the smallest coherent production change. Preserve product intent,
+            roadmap priority, persisted-data compatibility, and architecture
+            boundaries. Do not weaken tests. Add regression coverage for bugs.
+
+            Do not merge, push, or change issue acceptance criteria. Do not make
+            product decisions that belong to the owner.
+
+            Run the repository validation commands from AGENTS.md. Leave the
+            working tree containing the reviewed repair. Do not create a commit.
+
+      - name: Commit, push, and request fresh review
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf .agent-context
+
+          if git diff --quiet && git diff --cached --quiet; then
+            gh issue edit "$PR_NUMBER" \
+              --repo "$GITHUB_REPOSITORY" \
+              --remove-label "agent:working" \
+              --add-label "owner:decision"
+            gh pr comment "$PR_NUMBER" \
+              --repo "$GITHUB_REPOSITORY" \
+              --body "<!-- agent-supervisor:owner_decision --> Automated repair produced no changes for a requested-change review. @frivolas, owner input is required."
+            exit 1
+          fi
+
+          git add -A
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -m "fix: address automated supervisor review"
+
+          gh auth setup-git
+          git -c core.hooksPath=/dev/null push origin "HEAD:$HEAD_REF"
+
+          gh workflow run agent-supervisor.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            -f pr_number="$PR_NUMBER"
