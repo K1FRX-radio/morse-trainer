@@ -18,7 +18,7 @@ The automated loop is:
    - `owner:decision`;
 4. requested changes launch a bounded repair agent on the same PR branch;
 5. the repair agent validates, commits, and pushes;
-6. the workflow explicitly dispatches a fresh supervisor review;
+6. the workflow explicitly dispatches fresh CI and a fresh supervisor review;
 7. the loop stops on approval, owner escalation, or the repair-round limit.
 
 The workflow never merges.
@@ -27,8 +27,14 @@ The workflow never merges.
 
 GitHub suppresses most workflow recursion for events created with the repository
 `GITHUB_TOKEN`. Automated repair pushes therefore explicitly invoke
-`workflow_dispatch` for the next supervisor pass rather than assuming the push
-will create another run.
+`workflow_dispatch` for both:
+
+- trusted CI validation of the repaired PR head; and
+- the next supervisor pass.
+
+The normal CI workflow accepts a PR number only for this trusted manual-dispatch
+path and checks out `refs/pull/<number>/head`. Deployment remains limited to a
+real push to `main`.
 
 ## Required secret
 
@@ -46,12 +52,19 @@ Do not place the key in repository files, variables, PR text, prompts, or logs.
 
 The model-bearing jobs run only for same-repository PRs.
 
+The workflow re-checks the PR head repository before exposing the model
+credential, including manually dispatched runs.
+
 The supervisor uses Codex's read-only permission profile.
 
 The repair agent uses the workspace permission profile. It does not receive a
 GitHub token while Codex is running. Git credentials are not persisted by
 checkout. A later fixed shell step commits/pushes the resulting workspace with
 Git hooks disabled.
+
+Supervisor and repair policy files are copied from the trusted base branch before
+the PR head is checked out. A PR therefore cannot weaken its own review schema,
+review policy, or implementation instructions for that automation run.
 
 Fork PRs are intentionally excluded from this loop.
 
