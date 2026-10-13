@@ -41,6 +41,88 @@ jobs:
       - run: npm test
       - run: npm run build
 
+  report-pr-state:
+    needs: verify
+    if: >-
+      needs.verify.result == 'success' &&
+      (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: read
+    steps:
+      - name: Record green CI and notify only when review also approves this head
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+          OWNER_LOGIN: frivolas
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const issue_number = Number(process.env.PR_NUMBER);
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const ownerLogin = process.env.OWNER_LOGIN;
+            const { data: pr } = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number: issue_number,
+            });
+            const headSha = pr.head.sha;
+
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              { owner, repo, issue_number, per_page: 100 },
+            );
+            const greenMarker = `<!-- agent-ci:green head=${headSha} -->`;
+            const approveMarker = `<!-- agent-supervisor:approve head=${headSha} -->`;
+            const readyMarker = `<!-- owner-notify:merge-ready head=${headSha} -->`;
+
+            if (!comments.some((comment) => comment.body?.includes(greenMarker))) {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body: `${greenMarker}\nAutomated CI is green for \`${headSha.slice(0, 8)}\`.`,
+              });
+            }
+
+            const approved = comments.some((comment) =>
+              comment.body?.includes(approveMarker),
+            );
+            const alreadyNotified = comments.some((comment) =>
+              comment.body?.includes(readyMarker),
+            );
+            if (!approved) return;
+
+            try {
+              await github.rest.issues.createLabel({
+                owner,
+                repo,
+                name: "owner:merge-ready",
+                color: "5319e7",
+              });
+            } catch (error) {
+              if (error.status !== 422) throw error;
+            }
+
+            await github.rest.issues.addLabels({
+              owner,
+              repo,
+              issue_number,
+              labels: ["owner:merge-ready"],
+            });
+
+            if (!alreadyNotified) {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body:
+                  `${readyMarker}\n@${ownerLogin}, this exact PR head is supervisor-approved and CI-green. It is ready for your merge decision.`,
+              });
+            }
+
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: verify
