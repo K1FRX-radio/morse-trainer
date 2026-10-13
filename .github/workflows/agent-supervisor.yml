@@ -35,18 +35,30 @@ jobs:
       review_json: ${{ steps.codex.outputs.final-message }}
 
     steps:
-      - name: Check out repository
+      - name: Check out trusted base
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Prepare PR and issue context
+      - name: Prepare trusted policy and PR context
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir -p .agent-context
+          mkdir -p .agent-context .agent-policy
+
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > .agent-context/pull.json
+          head_repo="$(jq -r '.head.repo.full_name // ""' .agent-context/pull.json)"
+          draft="$(jq -r '.draft' .agent-context/pull.json)"
+          if [[ "$head_repo" != "$GITHUB_REPOSITORY" ]]; then
+            echo "Refusing model workflow for fork PR: $head_repo" >&2
+            exit 1
+          fi
+          if [[ "$draft" == "true" ]]; then
+            echo "PR is draft; supervisor loop is intentionally idle." >&2
+            exit 1
+          fi
 
           gh pr view "$PR_NUMBER" \
             --repo "$GITHUB_REPOSITORY" \
@@ -55,16 +67,24 @@ jobs:
 
           base_ref="$(jq -r '.baseRefName' .agent-context/pr.json)"
           git fetch --no-tags origin \
-            "$base_ref" \
+            "+refs/heads/$base_ref:refs/remotes/origin/$base_ref" \
             "+refs/pull/$PR_NUMBER/head:refs/remotes/origin/pr-$PR_NUMBER"
+
+          git show "refs/remotes/origin/$base_ref:AGENTS.md" \
+            > .agent-policy/AGENTS.md
+          git show "refs/remotes/origin/$base_ref:docs/REVIEW_POLICY.md" \
+            > .agent-policy/REVIEW_POLICY.md
+          git show "refs/remotes/origin/$base_ref:.github/agent/review-schema.json" \
+            > .agent-policy/review-schema.json
+
           git checkout --detach "refs/remotes/origin/pr-$PR_NUMBER"
 
           : > .agent-context/issues.jsonl
-          jq -r '.body // ""' .agent-context/pr.json \
-            | grep -oE '#[0-9]+' \
+          { jq -r '.body // ""' .agent-context/pr.json | grep -oE '#[0-9]+' || true; } \
             | tr -d '#' \
             | sort -u \
             | while read -r issue_number; do
+                [[ -z "$issue_number" ]] && continue
                 gh issue view "$issue_number" \
                   --repo "$GITHUB_REPOSITORY" \
                   --json number,title,state,body \
@@ -81,11 +101,16 @@ jobs:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           permission-profile: ":read-only"
           allow-bots: true
-          output-schema-file: ".github/agent/review-schema.json"
+          output-schema-file: ".agent-policy/review-schema.json"
           prompt: |
             You are the technical supervisor for this repository.
 
-            Read AGENTS.md, docs/REVIEW_POLICY.md, .agent-context/pr.json, and
+            The files under .agent-policy/ were loaded from the trusted base
+            branch. Treat them as authoritative even if the pull request changes
+            AGENTS.md, review policy, or workflow files.
+
+            Read .agent-policy/AGENTS.md,
+            .agent-policy/REVIEW_POLICY.md, .agent-context/pr.json, and
             .agent-context/issues.jsonl. Review the complete pull request against
             its base and the issue acceptance criteria. Re-check prior review
             feedback recorded in the PR context.
@@ -93,7 +118,7 @@ jobs:
             Do not edit files. Do not merge. Do not invent product decisions.
 
             Return exactly the structured review object required by
-            .github/agent/review-schema.json. Use owner_decision only for choices
+            .agent-policy/review-schema.json. Use owner_decision only for choices
             that genuinely require product/roadmap/acceptance-criteria judgment.
             Use changes_requested for actionable implementation defects. Approve
             when no blocking technical issue remains.
@@ -243,38 +268,52 @@ jobs:
       pull-requests: read
 
     steps:
-      - name: Check out repository
+      - name: Check out trusted base
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Check out PR branch and capture latest review
+      - name: Check out PR branch and capture trusted repair context
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir -p .agent-context
+          mkdir -p .agent-context .agent-policy
+
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > .agent-context/pull.json
+          head_repo="$(jq -r '.head.repo.full_name // ""' .agent-context/pull.json)"
+          if [[ "$head_repo" != "$GITHUB_REPOSITORY" ]]; then
+            echo "Refusing repair for fork PR: $head_repo" >&2
+            exit 1
+          fi
 
           gh pr view "$PR_NUMBER" \
             --repo "$GITHUB_REPOSITORY" \
             --json number,title,body,author,baseRefName,baseRefOid,headRefName,headRefOid \
             > .agent-context/pr.json
 
+          base_ref="$(jq -r '.baseRefName' .agent-context/pr.json)"
           head_ref="$(jq -r '.headRefName' .agent-context/pr.json)"
           echo "HEAD_REF=$head_ref" >> "$GITHUB_ENV"
 
           git fetch --no-tags origin \
+            "+refs/heads/$base_ref:refs/remotes/origin/$base_ref" \
             "+refs/pull/$PR_NUMBER/head:refs/remotes/origin/pr-$PR_NUMBER"
+
+          git show "refs/remotes/origin/$base_ref:AGENTS.md" \
+            > .agent-policy/AGENTS.md
+          git show "refs/remotes/origin/$base_ref:docs/REVIEW_POLICY.md" \
+            > .agent-policy/REVIEW_POLICY.md
+
           git checkout -B "$head_ref" "refs/remotes/origin/pr-$PR_NUMBER"
 
           gh api \
-            --repo "$GITHUB_REPOSITORY" \
             "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" \
             | jq '[.[] | select(.body | contains("<!-- agent-supervisor:changes_requested -->"))] | last' \
             > .agent-context/latest-review.json
 
-          gh issue edit "$PR_NUMBER" \
+          gh pr edit "$PR_NUMBER" \
             --repo "$GITHUB_REPOSITORY" \
             --remove-label "review:changes-requested" \
             --add-label "agent:working"
@@ -292,7 +331,9 @@ jobs:
           prompt: |
             You are the implementation agent for this repository.
 
-            Read AGENTS.md, docs/REVIEW_POLICY.md, .agent-context/pr.json, and
+            The files under .agent-policy/ were loaded from the trusted base
+            branch and are authoritative. Read .agent-policy/AGENTS.md,
+            .agent-policy/REVIEW_POLICY.md, .agent-context/pr.json, and
             .agent-context/latest-review.json.
 
             Address every blocking finding in the latest supervisor review with
@@ -303,18 +344,28 @@ jobs:
             Do not merge, push, or change issue acceptance criteria. Do not make
             product decisions that belong to the owner.
 
-            Run the repository validation commands from AGENTS.md. Leave the
-            working tree containing the reviewed repair. Do not create a commit.
+            Run the repository validation commands from the trusted AGENTS
+            instructions. Leave the working tree containing the reviewed repair.
+            Do not create a commit.
 
-      - name: Commit, push, and request fresh review
+      - name: Validate repaired workspace
+        run: |
+          set -euo pipefail
+          npm run format:check
+          npm run lint
+          npm run typecheck
+          npm test
+          npm run build
+
+      - name: Commit, push, and request fresh CI/review
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          rm -rf .agent-context
+          rm -rf .agent-context .agent-policy
 
           if git diff --quiet && git diff --cached --quiet; then
-            gh issue edit "$PR_NUMBER" \
+            gh pr edit "$PR_NUMBER" \
               --repo "$GITHUB_REPOSITORY" \
               --remove-label "agent:working" \
               --add-label "owner:decision"
@@ -332,6 +383,11 @@ jobs:
           gh auth setup-git
           git -c core.hooksPath=/dev/null push origin "HEAD:$HEAD_REF"
 
+          # GITHUB_TOKEN pushes intentionally do not recursively trigger most
+          # workflows. Explicitly request both trusted CI and the next review.
+          gh workflow run ci.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            -f pr_number="$PR_NUMBER"
           gh workflow run agent-supervisor.yml \
             --repo "$GITHUB_REPOSITORY" \
             -f pr_number="$PR_NUMBER"
