@@ -7,7 +7,7 @@ only which issue should be implemented next and what follows it.
 
 ## Next
 
-None. Awaiting explicit prioritization from Queue or Later/stretch items.
+#52 — Phase 5 kickoff: installable PWA foundation, offline shell, and safe updates
 
 ## Queue
 
@@ -29,7 +29,6 @@ None.
 
 ## Recently completed
 
-- #52 — Phase 5 kickoff: installable PWA foundation, offline shell, and safe updates
 - #60 — Design speed-aware CW proficiency with discrete global WPM bands
 - #51 — Checkpoint 4: audit and close Persistence & Analytics milestone
 - #58 — Milestone 4 blocker: finish IndexedDB lifecycle hardening and browser acceptance checks

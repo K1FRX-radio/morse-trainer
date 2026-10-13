@@ -337,24 +337,15 @@ export function AppRoot({ dependencies }: AppRootProps) {
           resetPortableData={() => bootstrap.repository.resetPortableData()}
         >
           <LearnAudioProvider>
-            {pwaStatus.updateReady && (
-              <div role="alert" className="feedback feedback--neutral">
-                <span>A new app version is ready.</span>
-                <button
-                  type="button"
-                  onClick={() => void applyUpdate()}
-                  disabled={activatingUpdate}
-                >
-                  {activatingUpdate ? "Updating..." : "Update now"}
-                </button>
-              </div>
-            )}
-            {!pwaStatus.updateReady && pwaStatus.offlineReady && (
-              <p className="feedback feedback--neutral">
-                Offline shell is ready after this online visit.
-              </p>
-            )}
-            <App {...(storageNotice ? { storageNotice } : {})} />
+            <App
+              {...(storageNotice ? { storageNotice } : {})}
+              pwaNotice={{
+                offlineReady: pwaStatus.offlineReady,
+                updateReady: pwaStatus.updateReady,
+                activatingUpdate,
+                applyUpdate: () => void applyUpdate(),
+              }}
+            />
           </LearnAudioProvider>
         </TrainingDataProvider>
       </SettingsProvider>

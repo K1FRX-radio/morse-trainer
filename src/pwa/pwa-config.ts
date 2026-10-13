@@ -1,9 +1,32 @@
 import type { VitePWAOptions } from "vite-plugin-pwa";
 
-const APP_NAME = "K1FRX Morse Trainer";
-const APP_SHORT_NAME = "K1FRX CW";
-const APP_DESCRIPTION =
-  "Web-first CW trainer with Koch progression and offline-capable lessons.";
+export type PwaBranding = {
+  name: string;
+  shortName: string;
+  description: string;
+  themeColor: string;
+  backgroundColor: string;
+  anyIconSrc: string;
+  maskableIconSrc: string;
+};
+
+export const DEFAULT_PWA_BRANDING: PwaBranding = {
+  name: "K1FRX Morse Trainer",
+  shortName: "K1FRX CW",
+  description:
+    "Web-first CW trainer with Koch progression and offline-capable lessons.",
+  themeColor: "#0e1116",
+  backgroundColor: "#0e1116",
+  anyIconSrc: "pwa-icon.svg",
+  maskableIconSrc: "maskable-icon.svg",
+};
+
+function resolveBranding(overrides?: Partial<PwaBranding>): PwaBranding {
+  return {
+    ...DEFAULT_PWA_BRANDING,
+    ...overrides,
+  };
+}
 
 function normalizedBasePath(base: string): string {
   const trimmed = base.trim();
@@ -14,32 +37,39 @@ function normalizedBasePath(base: string): string {
     : `${withLeadingSlash}/`;
 }
 
-export function buildPwaOptions(base: string): Partial<VitePWAOptions> {
+export function buildPwaOptions(
+  base: string,
+  brandingOverrides?: Partial<PwaBranding>,
+): Partial<VitePWAOptions> {
   const scope = normalizedBasePath(base);
+  const branding = resolveBranding(brandingOverrides);
+  const includeAssets = Array.from(
+    new Set([branding.anyIconSrc, branding.maskableIconSrc]),
+  );
 
   return {
     registerType: "prompt",
     injectRegister: false,
     strategies: "generateSW",
-    includeAssets: ["pwa-icon.svg", "maskable-icon.svg"],
+    includeAssets,
     manifest: {
-      name: APP_NAME,
-      short_name: APP_SHORT_NAME,
-      description: APP_DESCRIPTION,
+      name: branding.name,
+      short_name: branding.shortName,
+      description: branding.description,
       start_url: scope,
       scope,
       display: "standalone",
-      background_color: "#0e1116",
-      theme_color: "#0e1116",
+      background_color: branding.backgroundColor,
+      theme_color: branding.themeColor,
       icons: [
         {
-          src: "pwa-icon.svg",
+          src: branding.anyIconSrc,
           sizes: "any",
           type: "image/svg+xml",
           purpose: "any",
         },
         {
-          src: "maskable-icon.svg",
+          src: branding.maskableIconSrc,
           sizes: "any",
           type: "image/svg+xml",
           purpose: "maskable",

@@ -10,11 +10,10 @@ has durable Learn and Practice workflows with explicit persistence recovery.
 Issue #60 (speed-aware CW proficiency with discrete global WPM bands) is
 complete, including bounded speed-aware projections, Learn reacquisition
 integration, and current-band History surfacing.
-Issue #52 (Phase 5 kickoff) is complete, including installable manifest
+Issue #52 (Phase 5 kickoff) is in progress, with installable manifest
 metadata, offline app-shell service-worker integration, controlled update
-notification/activation, and concise install guidance.
-No queue-prioritized item is currently active; later/stretch work remains
-available for explicit prioritization.
+notification/activation, and install guidance implemented. Remaining work is
+focused on update-safety gating and production-base CI/build verification.
 
 ## Completed in repository
 
@@ -66,6 +65,11 @@ available for explicit prioritization.
   - install guidance for Android/Chrome and iPhone/Safari in Settings;
   - explicit service-worker cache ownership boundaries that exclude IndexedDB
     learner data.
+
+## Active next work
+
+- Issue #52 remains the roadmap `Next` item until reviewer blocker comments are
+  fully resolved.
 
 ## Checkpoint 4 audit status
 

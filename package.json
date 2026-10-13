@@ -9,7 +9,9 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && npm run build:root && npm run build:github-pages",
+    "build:root": "vite build",
+    "build:github-pages": "VITE_BASE=/morse-trainer/ vite build --outDir dist-morse-trainer && node scripts/validate-pwa-base-build.mjs dist-morse-trainer",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",

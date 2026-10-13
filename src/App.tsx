@@ -20,10 +20,19 @@ export type StorageLifecycleNotice = {
   onAction?: () => void;
 };
 
+export type AppPwaNotice = {
+  offlineReady: boolean;
+  updateReady: boolean;
+  activatingUpdate: boolean;
+  applyUpdate: () => void;
+};
+
 export function App({
   storageNotice,
+  pwaNotice,
 }: {
   storageNotice?: StorageLifecycleNotice;
+  pwaNotice?: AppPwaNotice;
 }) {
   const [navigationBlocked, setNavigationBlocked] = useState(false);
 
@@ -60,6 +69,29 @@ export function App({
                 </button>
               )}
             </div>
+          )}
+          {pwaNotice?.updateReady && (
+            <div
+              className="feedback feedback--neutral app__notice"
+              role="alert"
+            >
+              <p>A new app version is ready.</p>
+              {navigationBlocked && (
+                <p>Finish or save current training before updating.</p>
+              )}
+              <button
+                type="button"
+                onClick={pwaNotice.applyUpdate}
+                disabled={pwaNotice.activatingUpdate || navigationBlocked}
+              >
+                {pwaNotice.activatingUpdate ? "Updating..." : "Update now"}
+              </button>
+            </div>
+          )}
+          {!pwaNotice?.updateReady && pwaNotice?.offlineReady && (
+            <p className="feedback feedback--neutral app__notice">
+              Offline shell is ready after this online visit.
+            </p>
           )}
         </header>
 

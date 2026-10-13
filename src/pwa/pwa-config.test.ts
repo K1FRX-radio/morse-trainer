@@ -32,4 +32,26 @@ describe("buildPwaOptions", () => {
       "**/*.{js,css,html,svg,png,ico,json,txt,woff2}",
     );
   });
+
+  it("supports branding overrides without code edits", () => {
+    const options = buildPwaOptions("/", {
+      name: "Trainer Preview",
+      shortName: "CW Preview",
+      anyIconSrc: "preview-icon.svg",
+      maskableIconSrc: "preview-maskable.svg",
+    });
+    const manifest = requireManifest(options);
+
+    expect(manifest.name).toBe("Trainer Preview");
+    expect(manifest.short_name).toBe("CW Preview");
+    expect(manifest.icons).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ src: "preview-icon.svg" }),
+        expect.objectContaining({ src: "preview-maskable.svg" }),
+      ]),
+    );
+    expect(options.includeAssets).toEqual(
+      expect.arrayContaining(["preview-icon.svg", "preview-maskable.svg"]),
+    );
+  });
 });

@@ -12,7 +12,7 @@ export function registerPwaServiceWorker(): void {
     },
     onNeedRefresh() {
       markPwaUpdateReady(async () => {
-        await updateServiceWorker(true);
+        await updateServiceWorker(false);
       });
     },
   });
