@@ -11,6 +11,7 @@ import {
 import { encodeCharacter } from "../../core/morse.ts";
 import { sanitizeCopyInput } from "../copy-input.ts";
 import { useLearnSession } from "../hooks/useLearnSession.ts";
+import { useReloadSafety } from "../reload-safety-context.ts";
 
 const PROMPTS: Record<string, string> = {
   "copy-character": "Copy the character you hear",
@@ -27,6 +28,7 @@ const FAMILIARITY_LABELS = {
 
 export function LearnScreen() {
   const learn = useLearnSession();
+  const { setBlocked: setReloadSafetyBlocked } = useReloadSafety();
   const {
     exercise,
     feedback,
@@ -123,6 +125,18 @@ export function LearnScreen() {
         {learn.persistenceRetrying ? "Retrying save..." : "Saving session..."}
       </p>
     ) : null;
+
+  const blocksReload =
+    learn.phase === "exercise" ||
+    (learn.phase !== "onboarding" && learn.persistenceStatus === "pending") ||
+    (learn.phase === "summary" && learn.persistenceStatus !== "ready");
+
+  useEffect(() => {
+    setReloadSafetyBlocked(blocksReload);
+    return () => {
+      setReloadSafetyBlocked(false);
+    };
+  }, [blocksReload, setReloadSafetyBlocked]);
 
   // Clear the field for each new practice prompt.
   useEffect(() => {

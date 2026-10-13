@@ -17,6 +17,7 @@ import { DEFAULT_LESSON_CONFIG } from "../../training/lesson-plan.ts";
 import { useSettings } from "../settings-context.ts";
 import { useAudioEngine } from "../hooks/useAudioEngine.ts";
 import { usePracticeSession } from "../hooks/usePracticeSession.ts";
+import { useReloadSafety } from "../reload-safety-context.ts";
 import { useTrainingData } from "../training-data-context.ts";
 
 type SendExerciseMode = "character" | "group-2" | "group-3" | "word";
@@ -107,6 +108,7 @@ export function SendPractice() {
   const { settings } = useSettings();
   const { loadCurriculum, listCharacterProjections } = useTrainingData();
   const { engine, unlock } = useAudioEngine();
+  const { setBlocked: setReloadSafetyBlocked } = useReloadSafety();
   const practice = usePracticeSession("send-practice", settings);
   const rng = useRef<Rng>(createRng(Date.now() >>> 0));
 
@@ -125,9 +127,17 @@ export function SendPractice() {
   const [decoded, setDecoded] = useState("");
   const [exerciseMode, setExerciseMode] =
     useState<SendExerciseMode>("character");
+  const [sessionActive, setSessionActive] = useState(false);
   const [target, setTarget] = useState<string | undefined>(undefined);
   const [targetError, setTargetError] = useState<string | undefined>(undefined);
   targetRef.current = target;
+
+  useEffect(() => {
+    setReloadSafetyBlocked(sessionActive || practice.status === "pending");
+    return () => {
+      setReloadSafetyBlocked(false);
+    };
+  }, [practice.status, sessionActive, setReloadSafetyBlocked]);
 
   const chooseTarget = useCallback(
     async (mode: SendExerciseMode): Promise<void> => {
@@ -193,7 +203,12 @@ export function SendPractice() {
           keyRef.current?.reset();
           return;
         }
-        void practice.start().catch(() => undefined);
+        void practice
+          .start()
+          .then(() => {
+            setSessionActive(true);
+          })
+          .catch(() => undefined);
         void unlock();
         engine.startTone(settingsRef.current.toneHz);
       },

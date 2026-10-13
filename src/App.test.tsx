@@ -3,7 +3,7 @@ import { useEffect } from "react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App.tsx";
-import { useNavigationGuard } from "./ui/navigation-guard-context.ts";
+import { useReloadSafety } from "./ui/reload-safety-context.ts";
 
 type SessionState = "active" | "completed";
 
@@ -40,7 +40,7 @@ function GuardedScreen({
   session: "learn" | "copy" | "send";
   title: string;
 }) {
-  const { setBlocked } = useNavigationGuard();
+  const { setBlocked } = useReloadSafety();
 
   useEffect(() => {
     setBlocked(getSessionState(session) === "active");
@@ -156,4 +156,27 @@ describe("App PWA update safety", () => {
       expect(applyUpdate).toHaveBeenCalledTimes(1);
     });
   }
+
+  it("preserves ordinary navigation behavior while reload safety is active", async () => {
+    setSessionState("learn", "active");
+
+    render(
+      <MemoryRouter initialEntries={["/learn"]}>
+        <App
+          pwaNotice={{
+            offlineReady: false,
+            updateReady: true,
+            activatingUpdate: false,
+            applyUpdate: vi.fn(),
+          }}
+        />
+      </MemoryRouter>,
+    );
+
+    await screen.findByRole("button", { name: "Update now" });
+    expect(screen.getByRole("link", { name: "Practice" })).toHaveAttribute(
+      "aria-disabled",
+      "false",
+    );
+  });
 });

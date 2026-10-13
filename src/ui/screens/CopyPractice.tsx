@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { unlockedCharacters } from "../../core/curriculum.ts";
 import { createRng, type Rng } from "../../core/rng.ts";
 import {
@@ -14,6 +14,7 @@ import {
 import { useSettings } from "../settings-context.ts";
 import { useAudioEngine } from "../hooks/useAudioEngine.ts";
 import { usePracticeSession } from "../hooks/usePracticeSession.ts";
+import { useReloadSafety } from "../reload-safety-context.ts";
 import { useTrainingData } from "../training-data-context.ts";
 
 type Result = "correct" | "incorrect";
@@ -39,6 +40,7 @@ export function CopyPractice() {
   const { settings } = useSettings();
   const { loadCurriculum } = useTrainingData();
   const { engine, noise, unlock } = useAudioEngine();
+  const { setBlocked: setReloadSafetyBlocked } = useReloadSafety();
   const rng = useRef<Rng>(createRng(Date.now() >>> 0));
   const practice = usePracticeSession("copy-practice", settings);
   const replayed = useRef(false);
@@ -52,7 +54,15 @@ export function CopyPractice() {
   const [result, setResult] = useState<Result | undefined>(undefined);
   const [revealed, setRevealed] = useState(false);
   const [playing, setPlaying] = useState(false);
+  const [sessionActive, setSessionActive] = useState(false);
   const [unavailable, setUnavailable] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    setReloadSafetyBlocked(sessionActive || practice.status === "pending");
+    return () => {
+      setReloadSafetyBlocked(false);
+    };
+  }, [practice.status, sessionActive, setReloadSafetyBlocked]);
 
   const timing = useMemo(
     () => ({ charWpm: settings.charWpm, effectiveWpm: settings.effectiveWpm }),
@@ -90,10 +100,12 @@ export function CopyPractice() {
       setResult(undefined);
       setRevealed(false);
       setUnavailable(unavailableMessage(mode));
+      setSessionActive(false);
       return;
     }
     try {
       await practice.start();
+      setSessionActive(true);
     } catch {
       return;
     }

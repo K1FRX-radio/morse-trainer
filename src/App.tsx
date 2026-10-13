@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { NavigationGuardContext } from "./ui/navigation-guard-context.ts";
+import { ReloadSafetyContext } from "./ui/reload-safety-context.ts";
 import { LearnScreen } from "./ui/screens/LearnScreen.tsx";
 import { PracticeScreen } from "./ui/screens/PracticeScreen.tsx";
 import { StatsHistoryScreen } from "./ui/screens/StatsHistoryScreen.tsx";
@@ -35,6 +36,7 @@ export function App({
   pwaNotice?: AppPwaNotice;
 }) {
   const [navigationBlocked, setNavigationBlocked] = useState(false);
+  const [reloadSafetyBlocked, setReloadSafetyBlocked] = useState(false);
 
   useEffect(() => {
     if (!navigationBlocked) return;
@@ -49,83 +51,90 @@ export function App({
     <NavigationGuardContext.Provider
       value={{ blocked: navigationBlocked, setBlocked: setNavigationBlocked }}
     >
-      <div className="app">
-        <header className="app__header">
-          <h1 className="app__title">K1FRX Morse Trainer</h1>
-          <p className="app__tagline">Learn CW by ear.</p>
-          {storageNotice && (
-            <div
-              className="feedback feedback--neutral app__notice"
-              role="alert"
-            >
-              <p>{storageNotice.message}</p>
-              {storageNotice.onAction && storageNotice.actionLabel && (
+      <ReloadSafetyContext.Provider
+        value={{
+          blocked: reloadSafetyBlocked,
+          setBlocked: setReloadSafetyBlocked,
+        }}
+      >
+        <div className="app">
+          <header className="app__header">
+            <h1 className="app__title">K1FRX Morse Trainer</h1>
+            <p className="app__tagline">Learn CW by ear.</p>
+            {storageNotice && (
+              <div
+                className="feedback feedback--neutral app__notice"
+                role="alert"
+              >
+                <p>{storageNotice.message}</p>
+                {storageNotice.onAction && storageNotice.actionLabel && (
+                  <button
+                    type="button"
+                    onClick={storageNotice.onAction}
+                    disabled={storageNotice.actionDisabled}
+                  >
+                    {storageNotice.actionLabel}
+                  </button>
+                )}
+              </div>
+            )}
+            {pwaNotice?.updateReady && (
+              <div
+                className="feedback feedback--neutral app__notice"
+                role="alert"
+              >
+                <p>A new app version is ready.</p>
+                {reloadSafetyBlocked && (
+                  <p>Finish or save current training before updating.</p>
+                )}
                 <button
                   type="button"
-                  onClick={storageNotice.onAction}
-                  disabled={storageNotice.actionDisabled}
+                  onClick={pwaNotice.applyUpdate}
+                  disabled={pwaNotice.activatingUpdate || reloadSafetyBlocked}
                 >
-                  {storageNotice.actionLabel}
+                  {pwaNotice.activatingUpdate ? "Updating..." : "Update now"}
                 </button>
-              )}
-            </div>
-          )}
-          {pwaNotice?.updateReady && (
-            <div
-              className="feedback feedback--neutral app__notice"
-              role="alert"
-            >
-              <p>A new app version is ready.</p>
-              {navigationBlocked && (
-                <p>Finish or save current training before updating.</p>
-              )}
-              <button
-                type="button"
-                onClick={pwaNotice.applyUpdate}
-                disabled={pwaNotice.activatingUpdate || navigationBlocked}
+              </div>
+            )}
+            {!pwaNotice?.updateReady && pwaNotice?.offlineReady && (
+              <p className="feedback feedback--neutral app__notice">
+                Offline shell is ready after this online visit.
+              </p>
+            )}
+          </header>
+
+          <main className="app__main">
+            <Routes>
+              <Route path="/" element={<Navigate to="/learn" replace />} />
+              <Route path="/learn" element={<LearnScreen />} />
+              <Route path="/practice" element={<PracticeScreen />} />
+              <Route path="/history" element={<StatsHistoryScreen />} />
+              <Route
+                path="/progress"
+                element={<Navigate to="/history" replace />}
+              />
+              <Route path="/settings" element={<SettingsScreen />} />
+              <Route path="*" element={<Navigate to="/learn" replace />} />
+            </Routes>
+          </main>
+
+          <nav className="app__nav">
+            {NAV.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                aria-disabled={navigationBlocked}
+                onClick={(event) => {
+                  if (navigationBlocked) event.preventDefault();
+                }}
+                className={({ isActive }) => (isActive ? "is-active" : "")}
               >
-                {pwaNotice.activatingUpdate ? "Updating..." : "Update now"}
-              </button>
-            </div>
-          )}
-          {!pwaNotice?.updateReady && pwaNotice?.offlineReady && (
-            <p className="feedback feedback--neutral app__notice">
-              Offline shell is ready after this online visit.
-            </p>
-          )}
-        </header>
-
-        <main className="app__main">
-          <Routes>
-            <Route path="/" element={<Navigate to="/learn" replace />} />
-            <Route path="/learn" element={<LearnScreen />} />
-            <Route path="/practice" element={<PracticeScreen />} />
-            <Route path="/history" element={<StatsHistoryScreen />} />
-            <Route
-              path="/progress"
-              element={<Navigate to="/history" replace />}
-            />
-            <Route path="/settings" element={<SettingsScreen />} />
-            <Route path="*" element={<Navigate to="/learn" replace />} />
-          </Routes>
-        </main>
-
-        <nav className="app__nav">
-          {NAV.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              aria-disabled={navigationBlocked}
-              onClick={(event) => {
-                if (navigationBlocked) event.preventDefault();
-              }}
-              className={({ isActive }) => (isActive ? "is-active" : "")}
-            >
-              {item.label}
-            </NavLink>
-          ))}
-        </nav>
-      </div>
+                {item.label}
+              </NavLink>
+            ))}
+          </nav>
+        </div>
+      </ReloadSafetyContext.Provider>
     </NavigationGuardContext.Provider>
   );
 }
