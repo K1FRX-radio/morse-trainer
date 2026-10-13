@@ -6,6 +6,7 @@ import { createInitialState } from "../../core/curriculum.ts";
 import { DEFAULT_SETTINGS } from "../../core/settings.ts";
 import type { PracticeSessionPersistence } from "../../data/practice-persistence.ts";
 import { NavigationGuardContext } from "../navigation-guard-context.ts";
+import { ReloadSafetyContext } from "../reload-safety-context.ts";
 import { SettingsContext } from "../settings-context.ts";
 import { TrainingDataContext } from "../training-data-context.ts";
 import { ImportedTextPractice } from "./ImportedTextPractice.tsx";
@@ -49,10 +50,18 @@ afterEach(() => {
 
 function NavigationGuardHarness({ children }: { children: ReactNode }) {
   const [blocked, setBlocked] = useState(false);
+  const [reloadBlocked, setReloadBlocked] = useState(false);
   return (
     <NavigationGuardContext.Provider value={{ blocked, setBlocked }}>
-      <p aria-label="Guard state">{blocked ? "blocked" : "unblocked"}</p>
-      {children}
+      <ReloadSafetyContext.Provider
+        value={{ blocked: reloadBlocked, setBlocked: setReloadBlocked }}
+      >
+        <p aria-label="Guard state">{blocked ? "blocked" : "unblocked"}</p>
+        <p aria-label="Reload safety state">
+          {reloadBlocked ? "blocked" : "unblocked"}
+        </p>
+        {children}
+      </ReloadSafetyContext.Provider>
     </NavigationGuardContext.Provider>
   );
 }
@@ -455,6 +464,32 @@ describe("ImportedTextPractice", () => {
 
     await waitFor(() =>
       expect(screen.getByLabelText("Guard state")).toHaveTextContent(
+        "unblocked",
+      ),
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText("Reload safety state")).toHaveTextContent(
+        "unblocked",
+      ),
+    );
+  });
+
+  it("blocks reload safety during playback and releases after finalize", async () => {
+    renderImportedTextPractice();
+
+    fireEvent.change(screen.getByLabelText("Imported text"), {
+      target: { value: "A" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Reload safety state")).toHaveTextContent(
+        "blocked",
+      ),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Reload safety state")).toHaveTextContent(
         "unblocked",
       ),
     );

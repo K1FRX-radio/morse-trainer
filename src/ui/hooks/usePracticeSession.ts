@@ -11,6 +11,7 @@ import {
   PracticeSessionTimer,
 } from "../../training/practice-session.ts";
 import { useNavigationGuard } from "../navigation-guard-context.ts";
+import { useReloadSafety } from "../reload-safety-context.ts";
 import { useTrainingData } from "../training-data-context.ts";
 import { PracticeWorkQueue } from "./practice-work-queue.ts";
 
@@ -30,6 +31,11 @@ export function usePracticeSession(
   const unmountStatus = options.unmountStatus;
   const { loadCurriculum, startPracticeSessionPersistence } = useTrainingData();
   const { setBlocked } = useNavigationGuard();
+  const {
+    acquireBlock,
+    releaseBlock,
+    setBlocked: setReloadSafetyBlocked,
+  } = useReloadSafety();
   const timerRef = useRef(new PracticeSessionTimer());
   const completedCardsRef = useRef(0);
   const settingsRef = useRef(settings);
@@ -73,8 +79,41 @@ export function usePracticeSession(
   }, [createWorkQueue]);
 
   const mountedRef = useRef(true);
+  const reloadSafetyTokenRef = useRef<number | undefined>(undefined);
+  const reloadSafetySource = `practice:${source}`;
   const [status, setStatus] = useState<PracticePersistenceStatus>("ready");
   const [error, setError] = useState<string | undefined>(undefined);
+
+  const holdReloadSafety = useCallback(() => {
+    if (reloadSafetyTokenRef.current !== undefined) {
+      return reloadSafetyTokenRef.current;
+    }
+    if (acquireBlock) {
+      const token = acquireBlock(reloadSafetySource);
+      reloadSafetyTokenRef.current = token;
+      return token;
+    }
+    setReloadSafetyBlocked(true);
+    reloadSafetyTokenRef.current = 0;
+    return 0;
+  }, [acquireBlock, reloadSafetySource, setReloadSafetyBlocked]);
+
+  const releaseReloadSafety = useCallback(
+    (token = reloadSafetyTokenRef.current): void => {
+      if (token === undefined) {
+        return;
+      }
+      if (releaseBlock) {
+        releaseBlock(reloadSafetySource, token);
+      } else {
+        setReloadSafetyBlocked(false);
+      }
+      if (reloadSafetyTokenRef.current === token) {
+        reloadSafetyTokenRef.current = undefined;
+      }
+    },
+    [releaseBlock, reloadSafetySource, setReloadSafetyBlocked],
+  );
 
   const snapshot = useCallback((): PracticePersistenceSnapshot => {
     const activeTime = timerRef.current.snapshot();
@@ -86,6 +125,7 @@ export function usePracticeSession(
 
   const start = useCallback(async (): Promise<PracticeSessionPersistence> => {
     restartIfTerminal();
+    const token = holdReloadSafety();
     timerRef.current.recordActivity(currentActiveTimePoint());
     setStatus("pending");
     setError(undefined);
@@ -94,6 +134,7 @@ export function usePracticeSession(
       if (mountedRef.current) setStatus("ready");
       return persistence;
     } catch (cause) {
+      releaseReloadSafety(token);
       if (mountedRef.current) {
         setStatus("error");
         setError(
@@ -104,7 +145,7 @@ export function usePracticeSession(
       }
       throw cause;
     }
-  }, [restartIfTerminal]);
+  }, [holdReloadSafety, releaseReloadSafety, restartIfTerminal]);
 
   const recordActivity = useCallback(() => {
     timerRef.current.recordActivity(currentActiveTimePoint());
@@ -154,10 +195,12 @@ export function usePracticeSession(
   }, [setBlocked]);
 
   const finish = useCallback(async (): Promise<void> => {
+    holdReloadSafety();
     setStatus("pending");
     setError(undefined);
     try {
       await workQueueRef.current!.requestFinalization(snapshot(), "completed");
+      releaseReloadSafety();
       if (mountedRef.current) setStatus("ready");
     } catch (cause) {
       if (mountedRef.current) {
@@ -170,9 +213,10 @@ export function usePracticeSession(
       }
       throw cause;
     }
-  }, [snapshot]);
+  }, [holdReloadSafety, releaseReloadSafety, snapshot]);
 
   const interrupt = useCallback(async (): Promise<void> => {
+    holdReloadSafety();
     setStatus("pending");
     setError(undefined);
     try {
@@ -180,6 +224,7 @@ export function usePracticeSession(
         snapshot(),
         "interrupted",
       );
+      releaseReloadSafety();
       if (mountedRef.current) setStatus("ready");
     } catch (cause) {
       if (mountedRef.current) {
@@ -192,7 +237,7 @@ export function usePracticeSession(
       }
       throw cause;
     }
-  }, [snapshot]);
+  }, [holdReloadSafety, releaseReloadSafety, snapshot]);
 
   useEffect(() => {
     const onVisibility = () => {
@@ -214,16 +259,28 @@ export function usePracticeSession(
       const workQueue = workQueueRef.current;
       mountedRef.current = false;
       if (!workQueue?.hasStarted) return;
+      const token = holdReloadSafety();
       timer.finish(currentActiveTimePoint());
       const status =
         typeof unmountStatus === "function"
           ? unmountStatus()
           : (unmountStatus ?? "completed");
-      void workQueue.requestFinalization(snapshot(), status).catch(() => {
-        if (workQueue.hasPendingAttempts) setBlocked(true);
-      });
+      void workQueue
+        .requestFinalization(snapshot(), status)
+        .then(() => {
+          releaseReloadSafety(token);
+        })
+        .catch(() => {
+          if (workQueue.hasPendingAttempts) setBlocked(true);
+        });
     };
-  }, [setBlocked, snapshot, unmountStatus]);
+  }, [
+    holdReloadSafety,
+    releaseReloadSafety,
+    setBlocked,
+    snapshot,
+    unmountStatus,
+  ]);
 
   return {
     start,

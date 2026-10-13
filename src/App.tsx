@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { NavigationGuardContext } from "./ui/navigation-guard-context.ts";
 import { ReloadSafetyContext } from "./ui/reload-safety-context.ts";
@@ -37,6 +37,63 @@ export function App({
 }) {
   const [navigationBlocked, setNavigationBlocked] = useState(false);
   const [reloadSafetyBlocked, setReloadSafetyBlocked] = useState(false);
+  const reloadSafetyTokensRef = useRef(new Map<string, number>());
+  const reloadSafetySeqRef = useRef(1);
+
+  const syncReloadSafetyBlocked = useCallback(() => {
+    setReloadSafetyBlocked(reloadSafetyTokensRef.current.size > 0);
+  }, []);
+
+  const acquireReloadSafetyBlock = useCallback(
+    (source: string): number => {
+      const token = reloadSafetySeqRef.current++;
+      reloadSafetyTokensRef.current.set(source, token);
+      syncReloadSafetyBlocked();
+      return token;
+    },
+    [syncReloadSafetyBlocked],
+  );
+
+  const releaseReloadSafetyBlock = useCallback(
+    (source: string, token: number): void => {
+      if (reloadSafetyTokensRef.current.get(source) !== token) {
+        return;
+      }
+      reloadSafetyTokensRef.current.delete(source);
+      syncReloadSafetyBlocked();
+    },
+    [syncReloadSafetyBlocked],
+  );
+
+  const setLegacyReloadSafetyBlock = useCallback(
+    (blocked: boolean): void => {
+      const legacySource = "legacy";
+      if (!blocked) {
+        reloadSafetyTokensRef.current.delete(legacySource);
+        syncReloadSafetyBlocked();
+        return;
+      }
+      const token = reloadSafetySeqRef.current++;
+      reloadSafetyTokensRef.current.set(legacySource, token);
+      syncReloadSafetyBlocked();
+    },
+    [syncReloadSafetyBlocked],
+  );
+
+  const reloadSafetyValue = useMemo(
+    () => ({
+      blocked: reloadSafetyBlocked,
+      setBlocked: setLegacyReloadSafetyBlock,
+      acquireBlock: acquireReloadSafetyBlock,
+      releaseBlock: releaseReloadSafetyBlock,
+    }),
+    [
+      reloadSafetyBlocked,
+      setLegacyReloadSafetyBlock,
+      acquireReloadSafetyBlock,
+      releaseReloadSafetyBlock,
+    ],
+  );
 
   useEffect(() => {
     if (!navigationBlocked) return;
@@ -51,12 +108,7 @@ export function App({
     <NavigationGuardContext.Provider
       value={{ blocked: navigationBlocked, setBlocked: setNavigationBlocked }}
     >
-      <ReloadSafetyContext.Provider
-        value={{
-          blocked: reloadSafetyBlocked,
-          setBlocked: setReloadSafetyBlocked,
-        }}
-      >
+      <ReloadSafetyContext.Provider value={reloadSafetyValue}>
         <div className="app">
           <header className="app__header">
             <h1 className="app__title">K1FRX Morse Trainer</h1>

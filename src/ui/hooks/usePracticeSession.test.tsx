@@ -1,4 +1,4 @@
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type ReactNode } from "react";
 import { DEFAULT_CURRICULUM_CONFIG } from "../../content/curriculum-data.ts";
@@ -7,6 +7,7 @@ import { DEFAULT_SETTINGS } from "../../core/settings.ts";
 import type { PracticeSessionPersistence } from "../../data/practice-persistence.ts";
 import { PracticeSessionTimer } from "../../training/practice-session.ts";
 import { NavigationGuardContext } from "../navigation-guard-context.ts";
+import { ReloadSafetyContext } from "../reload-safety-context.ts";
 import { TrainingDataContext } from "../training-data-context.ts";
 import { usePracticeSession } from "./usePracticeSession.ts";
 
@@ -26,7 +27,24 @@ function setVisibilityState(state: "visible" | "hidden") {
   });
 }
 
-function renderUsePracticeSession(sessions: PracticeSessionPersistence[]) {
+type ReloadSafetyStore = {
+  blocked: boolean;
+  seq: number;
+  tokens: Map<string, number>;
+};
+
+function createReloadSafetyStore(): ReloadSafetyStore {
+  return {
+    blocked: false,
+    seq: 1,
+    tokens: new Map<string, number>(),
+  };
+}
+
+function renderUsePracticeSession(
+  sessions: PracticeSessionPersistence[],
+  reloadSafety = createReloadSafetyStore(),
+) {
   const curriculum = createInitialState(DEFAULT_CURRICULUM_CONFIG);
   const setBlocked = vi.fn();
   let index = 0;
@@ -34,32 +52,71 @@ function renderUsePracticeSession(sessions: PracticeSessionPersistence[]) {
     Promise.resolve(sessions[Math.min(index++, sessions.length - 1)]!),
   );
 
+  const updateReloadBlocked = () => {
+    reloadSafety.blocked = reloadSafety.tokens.size > 0;
+  };
+
+  const acquireBlock = (source: string) => {
+    const token = reloadSafety.seq++;
+    reloadSafety.tokens.set(source, token);
+    updateReloadBlocked();
+    return token;
+  };
+
+  const releaseBlock = (source: string, token: number) => {
+    if (reloadSafety.tokens.get(source) !== token) {
+      return;
+    }
+    reloadSafety.tokens.delete(source);
+    updateReloadBlocked();
+  };
+
+  const setReloadBlockedLegacy = (blocked: boolean) => {
+    if (!blocked) {
+      reloadSafety.tokens.delete("legacy");
+      updateReloadBlocked();
+      return;
+    }
+    const token = reloadSafety.seq++;
+    reloadSafety.tokens.set("legacy", token);
+    updateReloadBlocked();
+  };
+
   function Wrapper({ children }: { children: ReactNode }) {
     return (
       <NavigationGuardContext.Provider value={{ blocked: false, setBlocked }}>
-        <TrainingDataContext.Provider
+        <ReloadSafetyContext.Provider
           value={{
-            loadCurriculum: () => structuredClone(curriculum),
-            saveCurriculum: vi.fn(),
-            reconcileCurriculum: () => Promise.resolve(curriculum),
-            loadIntroductions: () => [],
-            saveIntroductions: vi.fn(),
-            startLearnSessionPersistence: () =>
-              Promise.reject(new Error("Learn persistence is not used here")),
-            startPracticeSessionPersistence,
-            getRetryClassification: () =>
-              Promise.resolve({
-                consecutiveAccuracyMisses: 0,
-                shouldSuggestSpacing: false,
-              }),
-            listDailyProjections: () => Promise.resolve([]),
-            listCharacterProjections: () => Promise.resolve([]),
-            listCharacterSpeedProficiency: () => Promise.resolve([]),
-            listConfusionProjections: () => Promise.resolve([]),
+            blocked: reloadSafety.blocked,
+            setBlocked: setReloadBlockedLegacy,
+            acquireBlock,
+            releaseBlock,
           }}
         >
-          {children}
-        </TrainingDataContext.Provider>
+          <TrainingDataContext.Provider
+            value={{
+              loadCurriculum: () => structuredClone(curriculum),
+              saveCurriculum: vi.fn(),
+              reconcileCurriculum: () => Promise.resolve(curriculum),
+              loadIntroductions: () => [],
+              saveIntroductions: vi.fn(),
+              startLearnSessionPersistence: () =>
+                Promise.reject(new Error("Learn persistence is not used here")),
+              startPracticeSessionPersistence,
+              getRetryClassification: () =>
+                Promise.resolve({
+                  consecutiveAccuracyMisses: 0,
+                  shouldSuggestSpacing: false,
+                }),
+              listDailyProjections: () => Promise.resolve([]),
+              listCharacterProjections: () => Promise.resolve([]),
+              listCharacterSpeedProficiency: () => Promise.resolve([]),
+              listConfusionProjections: () => Promise.resolve([]),
+            }}
+          >
+            {children}
+          </TrainingDataContext.Provider>
+        </ReloadSafetyContext.Provider>
       </NavigationGuardContext.Provider>
     );
   }
@@ -76,7 +133,12 @@ function renderUsePracticeSession(sessions: PracticeSessionPersistence[]) {
     { wrapper: Wrapper },
   );
 
-  return { ...hook, startPracticeSessionPersistence, setBlocked };
+  return {
+    ...hook,
+    startPracticeSessionPersistence,
+    setBlocked,
+    reloadSafety,
+  };
 }
 
 afterEach(() => {
@@ -134,5 +196,75 @@ describe("usePracticeSession", () => {
     expect(secondRunTimer).not.toBe(firstRunTimer);
     expect(resumeTimers[1]).toBe(secondRunTimer);
     expect(hook.startPracticeSessionPersistence).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps reload safety blocked until unmount finalization settles", async () => {
+    let resolveInterrupt: (() => void) | undefined;
+    const session: PracticeSessionPersistence = {
+      recordAttempt: vi.fn(() => Promise.resolve()),
+      finish: vi.fn(() => Promise.resolve()),
+      interrupt: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveInterrupt = resolve;
+          }),
+      ),
+      retry: vi.fn(() => Promise.resolve()),
+    };
+
+    const hook = renderUsePracticeSession([session]);
+
+    await act(async () => {
+      await hook.result.current.start();
+    });
+    expect(hook.reloadSafety.blocked).toBe(true);
+
+    hook.unmount();
+    expect(hook.reloadSafety.blocked).toBe(true);
+
+    await waitFor(() => expect(session.interrupt).toHaveBeenCalledOnce());
+
+    resolveInterrupt?.();
+    await waitFor(() => expect(hook.reloadSafety.blocked).toBe(false));
+  });
+
+  it("does not let stale finalization clear a newer session block", async () => {
+    let resolveFirstInterrupt: (() => void) | undefined;
+    const first: PracticeSessionPersistence = {
+      recordAttempt: vi.fn(() => Promise.resolve()),
+      finish: vi.fn(() => Promise.resolve()),
+      interrupt: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveFirstInterrupt = resolve;
+          }),
+      ),
+      retry: vi.fn(() => Promise.resolve()),
+    };
+    const second = persistence();
+    const sharedReloadSafety = createReloadSafetyStore();
+
+    const firstHook = renderUsePracticeSession([first], sharedReloadSafety);
+    await act(async () => {
+      await firstHook.result.current.start();
+    });
+    expect(firstHook.reloadSafety.blocked).toBe(true);
+
+    firstHook.unmount();
+    await waitFor(() => expect(first.interrupt).toHaveBeenCalledOnce());
+
+    const secondHook = renderUsePracticeSession([second], sharedReloadSafety);
+    await act(async () => {
+      await secondHook.result.current.start();
+    });
+    expect(secondHook.reloadSafety.blocked).toBe(true);
+
+    resolveFirstInterrupt?.();
+    await waitFor(() => expect(secondHook.reloadSafety.blocked).toBe(true));
+    await act(async () => {
+      await secondHook.result.current.interrupt();
+    });
+    expect(secondHook.reloadSafety.blocked).toBe(false);
+    secondHook.unmount();
   });
 });
