@@ -11,11 +11,10 @@ is not an implementation step and remains open until the sprint is complete.
 
 ## Next
 
-- #78 — UI/UX sprint: audit current flows and define information architecture
+- #74 — Define product naming, branding, and production app assets
 
 ## Queue
 
-- #74 — Define product naming, branding, and production app assets
 - #79 — UI/UX sprint: establish visual design system and redesign the app shell
 - #80 — UI/UX sprint: redesign the Learn experience for focused Morse copy
 - #81 — UI/UX sprint: redesign Practice and mode switching
@@ -44,6 +43,7 @@ full Send Practice integration.
 
 ## Recently completed
 
+- #78 — UI/UX sprint: audit current flows and define information architecture
 - #52 — Phase 5 kickoff: installable PWA foundation, offline shell, and safe updates
 - #60 — Design speed-aware CW proficiency with discrete global WPM bands
 - #51 — Checkpoint 4: audit and close Persistence & Analytics milestone
@@ -51,7 +51,6 @@ full Send Practice integration.
 - #57 — Milestone 4 blocker: complete Progress dashboard contract and analytics semantics
 - #50 — Milestone 4: publish data/metrics docs and 100k-history benchmark
 - #49 — Milestone 4: finish versioned backup, replace-import, and reset
-- #28 — Cleanup: remove dead 3-char notice delay configuration
 
 ## Maintenance contract
 
