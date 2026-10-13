@@ -15,7 +15,9 @@ import {
   type SessionWindowSummary,
   type StreakSummary,
 } from "../../data/analytics.ts";
+import type { CharacterSpeedProficiencyRecord } from "../../data/repository.ts";
 import type { DashboardAggregateRecord } from "../../data/repository.ts";
+import type { CharacterWpmBand } from "../../core/settings.ts";
 import { captureDateTime } from "../../data/time.ts";
 import { useTrainingData } from "../training-data-context.ts";
 
@@ -29,6 +31,16 @@ type CurrentCurriculumSummary = {
   activeCharacters: string[];
 };
 
+export type SpeedProficiencySummary = {
+  character: string;
+  attempts: number;
+  correct: number;
+  accuracy: number | null;
+  weightedAttempts: number;
+  weightedCorrect: number;
+  weightedAccuracy: number | null;
+};
+
 export type StatsHistoryState = {
   loading: boolean;
   error?: string;
@@ -38,6 +50,7 @@ export type StatsHistoryState = {
   trends: DailyTrendRow[];
   currentCharacter: string | null;
   activeCharacters: CharacterSummary[];
+  speedProficiency: SpeedProficiencySummary[];
   recentConfusions: ConfusionSummary[];
   milestones: MilestoneSummary[];
 };
@@ -90,6 +103,32 @@ function summarizeCurrentCurriculum(
         : (activeCharacters[activeCharacters.length - 1] ?? null),
     activeCharacters,
   };
+}
+
+function buildSpeedProficiencyRows(
+  activeCharacters: readonly string[],
+  rows: readonly CharacterSpeedProficiencyRecord[],
+): SpeedProficiencySummary[] {
+  const byCharacter = new Map(rows.map((row) => [row.character, row] as const));
+
+  return activeCharacters.map((character) => {
+    const row = byCharacter.get(character);
+    const attempts = row?.attempts ?? 0;
+    const correct = row?.correct ?? 0;
+    const weightedAttempts = row?.weightedAttempts ?? 0;
+    const weightedCorrect = row?.weightedCorrect ?? 0;
+
+    return {
+      character,
+      attempts,
+      correct,
+      accuracy: attempts === 0 ? null : correct / attempts,
+      weightedAttempts,
+      weightedCorrect,
+      weightedAccuracy:
+        weightedAttempts === 0 ? null : weightedCorrect / weightedAttempts,
+    };
+  });
 }
 
 function buildActiveCharacterRows(
@@ -199,7 +238,9 @@ function dashboardStreaksFromAggregate(
   };
 }
 
-export function useStatsHistory(): StatsHistoryState {
+export function useStatsHistory(
+  charWpmBand: CharacterWpmBand,
+): StatsHistoryState {
   const trainingData = useTrainingData();
   const statsRevision = trainingData.statsRevision ?? 0;
   const [state, setState] = useState<StatsHistoryState>({
@@ -210,6 +251,7 @@ export function useStatsHistory(): StatsHistoryState {
     trends: [],
     currentCharacter: null,
     activeCharacters: [],
+    speedProficiency: [],
     recentConfusions: [],
     milestones: [],
   });
@@ -221,6 +263,7 @@ export function useStatsHistory(): StatsHistoryState {
       try {
         const now = new Date();
         const { fromLocalDate, toLocalDate } = localDateWindow(now);
+        const curriculum = summarizeCurrentCurriculum(trainingData);
         const dashboardAggregatePromise = trainingData.getDashboardAggregate
           ? trainingData.getDashboardAggregate({ toLocalDate })
           : Promise.resolve<DashboardAggregateRecord | undefined>(undefined);
@@ -231,6 +274,7 @@ export function useStatsHistory(): StatsHistoryState {
           txCharacters,
           confusionRows,
           milestones,
+          speedProficiencyRows,
         ] = await Promise.all([
           trainingData.listDailyProjections({
             fromLocalDate,
@@ -252,6 +296,11 @@ export function useStatsHistory(): StatsHistoryState {
           trainingData.listMilestones
             ? trainingData.listMilestones({ limit: MILESTONE_LIMIT })
             : Promise.resolve([]),
+          trainingData.listCharacterSpeedProficiency({
+            charWpmBand,
+            characters: curriculum.activeCharacters,
+            limit: curriculum.activeCharacters.length,
+          }),
         ]);
 
         if (canceled) return;
@@ -270,10 +319,13 @@ export function useStatsHistory(): StatsHistoryState {
           ...rxCharacters,
           ...txCharacters,
         ]);
-        const curriculum = summarizeCurrentCurriculum(trainingData);
         const activeCharacters = buildActiveCharacterRows(
           characterSummaries,
           curriculum.activeCharacters,
+        );
+        const speedProficiency = buildSpeedProficiencyRows(
+          curriculum.activeCharacters,
+          speedProficiencyRows,
         );
         const recentConfusions = buildConfusionSummaries(confusionRows);
         const milestoneSummaries = buildMilestoneSummaries(milestones);
@@ -286,6 +338,7 @@ export function useStatsHistory(): StatsHistoryState {
           trends,
           currentCharacter: curriculum.currentCharacter,
           activeCharacters,
+          speedProficiency,
           recentConfusions,
           milestones: milestoneSummaries,
         });
@@ -305,7 +358,7 @@ export function useStatsHistory(): StatsHistoryState {
     return () => {
       canceled = true;
     };
-  }, [trainingData, statsRevision]);
+  }, [charWpmBand, trainingData, statsRevision]);
 
   return useMemo(() => state, [state]);
 }

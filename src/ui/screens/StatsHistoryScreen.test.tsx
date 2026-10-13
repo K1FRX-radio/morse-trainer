@@ -11,7 +11,10 @@ import type {
   DailyProjectionRecord,
   MilestoneRecord,
 } from "../../data/models.ts";
-import type { DashboardAggregateRecord } from "../../data/repository.ts";
+import type {
+  CharacterSpeedProficiencyRecord,
+  DashboardAggregateRecord,
+} from "../../data/repository.ts";
 import { SettingsContext } from "../settings-context.ts";
 import { TrainingDataContext } from "../training-data-context.ts";
 import { StatsHistoryScreen } from "./StatsHistoryScreen.tsx";
@@ -22,6 +25,7 @@ function trainingDataStub(
     rx?: CharacterProjectionRecord[];
     tx?: CharacterProjectionRecord[];
     confusions?: ConfusionProjectionRecord[];
+    speedProficiency?: CharacterSpeedProficiencyRecord[];
     milestones?: MilestoneRecord[];
     aggregate?: DashboardAggregateRecord;
     statsRevision?: number;
@@ -32,6 +36,7 @@ function trainingDataStub(
   const rx = overrides.rx ?? [];
   const tx = overrides.tx ?? [];
   const confusions = overrides.confusions ?? [];
+  const speedProficiency = overrides.speedProficiency ?? [];
   const milestones = overrides.milestones ?? [];
   const aggregate =
     overrides.aggregate ??
@@ -63,7 +68,7 @@ function trainingDataStub(
       async (query: { direction: "rx" | "tx" }) =>
         query.direction === "rx" ? rx : tx,
     ),
-    listCharacterSpeedProficiency: vi.fn(async () => []),
+    listCharacterSpeedProficiency: vi.fn(async () => speedProficiency),
     listConfusionProjections: vi.fn(async () => confusions),
     listMilestones: vi.fn(async () => milestones),
   };
@@ -130,6 +135,7 @@ describe("StatsHistoryScreen", () => {
 
     expect(screen.getByText("Current character")).toBeInTheDocument();
     expect(screen.getByText("Current WPM")).toBeInTheDocument();
+    expect(screen.getByText("Current RX band")).toBeInTheDocument();
     expect(screen.getByText("Eligible sessions")).toBeInTheDocument();
     expect(screen.getByText("Practice days")).toBeInTheDocument();
 
@@ -155,6 +161,44 @@ describe("StatsHistoryScreen", () => {
     const milestones = screen.getByRole("list", { name: "Latest milestones" });
     expect(milestones).toHaveTextContent("character-unlocked");
     expect(milestones).toHaveTextContent("Character M");
+  });
+
+  it("loads and renders current-band RX proficiency for active characters", async () => {
+    const context = renderStats({
+      speedProficiency: [
+        {
+          character: "K",
+          band: 20,
+          attempts: 6,
+          correct: 4,
+          weightedAttempts: 8,
+          weightedCorrect: 5,
+        },
+        {
+          character: "M",
+          band: 20,
+          attempts: 0,
+          correct: 0,
+          weightedAttempts: 2,
+          weightedCorrect: 1,
+        },
+      ],
+    });
+
+    const list = await screen.findByRole("list", {
+      name: "Current-band RX proficiency",
+    });
+    expect(list).toHaveTextContent("K");
+    expect(list).toHaveTextContent("Same band 4/6 (67%)");
+    expect(list).toHaveTextContent("Transfer 5/8 (63%)");
+    expect(list).toHaveTextContent("M");
+    expect(list).toHaveTextContent("Same band 0/0 (N/A)");
+
+    expect(context.listCharacterSpeedProficiency).toHaveBeenCalledWith({
+      charWpmBand: 20,
+      characters: ["K", "M"],
+      limit: 2,
+    });
   });
 
   it("shows empty state and neutral placeholders for missing accuracies", async () => {

@@ -1,5 +1,9 @@
 import { useStatsHistory } from "../hooks/useStatsHistory.ts";
 import { useSettings } from "../settings-context.ts";
+import {
+  normalizeCharacterWpmBand,
+  normalizeEffectiveWpmBand,
+} from "../../core/settings.ts";
 
 function formatAccuracy(value: number | null): string {
   if (value === null) return "N/A";
@@ -21,6 +25,11 @@ function formatWpm(value: number | null): string {
 
 export function StatsHistoryScreen() {
   const { settings } = useSettings();
+  const currentCharWpmBand = normalizeCharacterWpmBand(settings.charWpm);
+  const currentEffectiveWpmBand = normalizeEffectiveWpmBand(
+    settings.effectiveWpm,
+    currentCharWpmBand,
+  );
   const {
     loading,
     error,
@@ -30,9 +39,10 @@ export function StatsHistoryScreen() {
     trends,
     currentCharacter,
     activeCharacters,
+    speedProficiency,
     recentConfusions,
     milestones,
-  } = useStatsHistory();
+  } = useStatsHistory(currentCharWpmBand);
 
   if (loading) {
     return (
@@ -82,6 +92,12 @@ export function StatsHistoryScreen() {
           <h3>Current WPM</h3>
           <p>
             {settings.charWpm} / {settings.effectiveWpm}
+          </p>
+        </article>
+        <article className="stats__card">
+          <h3>Current RX band</h3>
+          <p>
+            {currentCharWpmBand} / {currentEffectiveWpmBand}
           </p>
         </article>
         <article className="stats__card">
@@ -180,6 +196,28 @@ export function StatsHistoryScreen() {
                   ({row.rxResponseTime.samples} samples)
                 </span>
               )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <h3>Current-band RX proficiency</h3>
+      {speedProficiency.length === 0 ? (
+        <p className="stats__note">No speed-band RX proficiency yet.</p>
+      ) : (
+        <ul className="stats__list" aria-label="Current-band RX proficiency">
+          {speedProficiency.map((row) => (
+            <li key={row.character} className="stats__list-row">
+              <strong>{row.character}</strong>
+              <span>
+                Same band {row.correct}/{row.attempts} (
+                {formatAccuracy(row.accuracy)})
+              </span>
+              <span>
+                Transfer {Math.round(row.weightedCorrect)}/
+                {Math.round(row.weightedAttempts)} (
+                {formatAccuracy(row.weightedAccuracy)})
+              </span>
             </li>
           ))}
         </ul>

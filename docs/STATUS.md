@@ -7,9 +7,11 @@ Milestone 4 (Persistence and analytics MVP) is complete.
 The app has moved from portable browser-only state to a versioned IndexedDB
 runtime data layer, exposes persisted analytics in the History screen, and now
 has durable Learn and Practice workflows with explicit persistence recovery.
-The next implementation item is issue #60 (speed-aware CW proficiency with
-discrete global WPM bands). Phase 5 (PWA/install/release polish) follows #60
-and has not started.
+Issue #60 (speed-aware CW proficiency with discrete global WPM bands) is
+complete, including bounded speed-aware projections, Learn reacquisition
+integration, and current-band History surfacing.
+The next implementation item is issue #52 (Phase 5 PWA/install/release polish),
+which has not started.
 
 ## Completed in repository
 
@@ -49,7 +51,9 @@ and has not started.
   - 30-day daily trend rows;
   - aggregate RX/TX summary metrics;
   - difficult-character summaries;
-  - recent directional confusion pairs.
+  - recent directional confusion pairs;
+  - current RX speed-band context and current-band RX proficiency detail for
+    active characters.
 - Audio and device behavior:
   - scheduled CW playback, anti-click handling, and replay safety;
   - output-device selection support where browser APIs permit it.
