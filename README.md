@@ -8,14 +8,16 @@ offers the next character, which is unlocked only when the learner accepts.
 
 ## Project status
 
-- Milestone 4 (Persistence and analytics MVP) is in progress.
+- Milestone 4 (Persistence and analytics MVP) is complete.
 - IndexedDB is the runtime source of truth via Dexie, with legacy
   localStorage migration on bootstrap.
 - Learn, Copy Practice, and Send Practice sessions persist finalized history,
   and interrupted sessions are recovered as `interrupted` records.
 - History analytics are live in-app (`/history`) with 30-day summaries,
   per-character difficulty, and recent confusion pairs.
-- PWA packaging and install/release work are not implemented yet (Milestone 5).
+- Phase 5 kickoff is complete: installable manifest metadata, offline app-shell
+  service-worker integration, controlled update notifications, and concise
+  install guidance are implemented.
 
 See [docs/STATUS.md](docs/STATUS.md) and
 [docs/K1FRX_MORSE_TRAINER_PROJECT_PLAN_AND_BUILD_PROMPT.md](docs/K1FRX_MORSE_TRAINER_PROJECT_PLAN_AND_BUILD_PROMPT.md)

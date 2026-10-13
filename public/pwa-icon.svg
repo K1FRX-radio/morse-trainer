@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="K1FRX Morse Trainer icon">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#122030" />
+      <stop offset="100%" stop-color="#0e1116" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="96" fill="url(#bg)" />
+  <circle cx="256" cy="224" r="120" fill="#1f8fce" opacity="0.18" />
+  <g fill="#f5f7fa">
+    <rect x="106" y="154" width="28" height="204" rx="12" />
+    <path d="M156 154h30v82l76-82h36l-78 84 84 120h-34l-70-100-14 14v86h-30V154z" />
+    <rect x="326" y="154" width="28" height="204" rx="12" />
+    <path d="M376 154h30v82l76-82h24l-76 83 80 121h-34l-66-99-4 5v94h-30V154z" />
+  </g>
+  <g fill="#4dd0ff">
+    <circle cx="156" cy="412" r="10" />
+    <circle cx="184" cy="412" r="10" />
+    <circle cx="212" cy="412" r="10" />
+    <rect x="238" y="404" width="48" height="16" rx="8" />
+    <circle cx="312" cy="412" r="10" />
+    <circle cx="340" cy="412" r="10" />
+  </g>
+</svg>

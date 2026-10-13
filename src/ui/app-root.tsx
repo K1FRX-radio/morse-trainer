@@ -16,6 +16,11 @@ import {
   subscribeStorageLifecycleEvents,
   type StorageLifecycleEvent,
 } from "../data/storage-lifecycle.ts";
+import {
+  activatePwaUpdate,
+  subscribePwaStatus,
+  type PwaStatusSnapshot,
+} from "../pwa/pwa-status.ts";
 import { LearnAudioProvider } from "./learn-audio.tsx";
 import { SettingsProvider } from "./settings-provider.tsx";
 import { TrainingDataProvider } from "./training-data-context.tsx";
@@ -36,6 +41,8 @@ type AppRootDependencies = {
   reloadPage: () => void;
   storage: LegacyStorage;
   tabId: string;
+  subscribePwa: (listener: (snapshot: PwaStatusSnapshot) => void) => () => void;
+  activateUpdate: () => Promise<boolean>;
 };
 
 export type AppRootProps = {
@@ -72,15 +79,24 @@ export function AppRoot({ dependencies }: AppRootProps) {
     dependencies?.createBootstrap ?? createTrainingDataBootstrap;
   const subscribeLifecycle =
     dependencies?.subscribeLifecycle ?? subscribeStorageLifecycleEvents;
-  const reloadPage =
-    dependencies?.reloadPage ?? (() => window.location.reload());
+  const reloadPage = useMemo(
+    () => dependencies?.reloadPage ?? (() => window.location.reload()),
+    [dependencies?.reloadPage],
+  );
   const storage = dependencies?.storage ?? localStorage;
   const tabIdRef = useRef(dependencies?.tabId ?? createLifecycleTabId());
+  const subscribePwa = dependencies?.subscribePwa ?? subscribePwaStatus;
+  const activateUpdate = dependencies?.activateUpdate ?? activatePwaUpdate;
 
   const [state, setState] = useState<StartupState>({ status: "loading" });
   const [upgradeBlocked, setUpgradeBlocked] = useState(false);
   const [possibleBlocker, setPossibleBlocker] = useState(false);
   const [reloadRequired, setReloadRequired] = useState(false);
+  const [pwaStatus, setPwaStatus] = useState<PwaStatusSnapshot>({
+    offlineReady: false,
+    updateReady: false,
+  });
+  const [activatingUpdate, setActivatingUpdate] = useState(false);
   const startInFlightRef = useRef<Promise<void> | undefined>(undefined);
   const upgradeBlockedRef = useRef(false);
 
@@ -102,6 +118,15 @@ export function AppRoot({ dependencies }: AppRootProps) {
       }
     });
   }, [subscribeLifecycle]);
+
+  useEffect(() => {
+    return subscribePwa((next) => {
+      setPwaStatus(next);
+      if (!next.updateReady) {
+        setActivatingUpdate(false);
+      }
+    });
+  }, [subscribePwa]);
 
   const start = useCallback((): Promise<void> => {
     if (startInFlightRef.current) {
@@ -178,6 +203,20 @@ export function AppRoot({ dependencies }: AppRootProps) {
     }
     return undefined;
   }, [upgradeBlocked, possibleBlocker]);
+
+  const applyUpdate = useCallback(async () => {
+    setActivatingUpdate(true);
+    try {
+      const activated = await activateUpdate();
+      if (activated) {
+        reloadPage();
+      } else {
+        setActivatingUpdate(false);
+      }
+    } catch {
+      setActivatingUpdate(false);
+    }
+  }, [activateUpdate, reloadPage]);
 
   if (reloadRequired) {
     return (
@@ -298,6 +337,23 @@ export function AppRoot({ dependencies }: AppRootProps) {
           resetPortableData={() => bootstrap.repository.resetPortableData()}
         >
           <LearnAudioProvider>
+            {pwaStatus.updateReady && (
+              <div role="alert" className="feedback feedback--neutral">
+                <span>A new app version is ready.</span>
+                <button
+                  type="button"
+                  onClick={() => void applyUpdate()}
+                  disabled={activatingUpdate}
+                >
+                  {activatingUpdate ? "Updating..." : "Update now"}
+                </button>
+              </div>
+            )}
+            {!pwaStatus.updateReady && pwaStatus.offlineReady && (
+              <p className="feedback feedback--neutral">
+                Offline shell is ready after this online visit.
+              </p>
+            )}
             <App {...(storageNotice ? { storageNotice } : {})} />
           </LearnAudioProvider>
         </TrainingDataProvider>

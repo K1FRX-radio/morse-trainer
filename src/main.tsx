@@ -1,7 +1,10 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { AppRoot } from "./ui/app-root.tsx";
+import { registerPwaServiceWorker } from "./pwa/register.ts";
 import "./global.css";
+
+registerPwaServiceWorker();
 
 const rootElement = document.getElementById("root");
 if (!rootElement) {
