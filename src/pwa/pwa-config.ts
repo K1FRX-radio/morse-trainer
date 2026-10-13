@@ -11,6 +11,7 @@ export type PwaBranding = {
 };
 
 export const DEFAULT_PWA_BRANDING: PwaBranding = {
+  // Provisional defaults pending final branding decision in issue #74.
   name: "K1FRX Morse Trainer",
   shortName: "K1FRX CW",
   description:
