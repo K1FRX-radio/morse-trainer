@@ -44,6 +44,8 @@ function createReloadSafetyStore(): ReloadSafetyStore {
 function renderUsePracticeSession(
   sessions: PracticeSessionPersistence[],
   reloadSafety = createReloadSafetyStore(),
+  source:
+    "copy-practice" | "send-practice" | "imported-text-rx" = "imported-text-rx",
 ) {
   const curriculum = createInitialState(DEFAULT_CURRICULUM_CONFIG);
   const setBlocked = vi.fn();
@@ -136,7 +138,7 @@ function renderUsePracticeSession(
   const hook = renderHook(
     () =>
       usePracticeSession(
-        "imported-text-rx",
+        source,
         { ...DEFAULT_SETTINGS },
         {
           unmountStatus: "interrupted",
@@ -314,5 +316,57 @@ describe("usePracticeSession", () => {
     resolveFirstInterrupt?.();
     await waitFor(() => expect(secondHook.reloadSafety.blocked).toBe(false));
     secondHook.unmount();
+  });
+
+  it("keeps reload safety blocked until overlapping copy and send sessions both settle", async () => {
+    const copySession = persistence();
+    let resolveSendInterrupt: (() => void) | undefined;
+    const sendSession: PracticeSessionPersistence = {
+      recordAttempt: vi.fn(() => Promise.resolve()),
+      finish: vi.fn(() => Promise.resolve()),
+      interrupt: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveSendInterrupt = resolve;
+          }),
+      ),
+      retry: vi.fn(() => Promise.resolve()),
+    };
+
+    const sharedReloadSafety = createReloadSafetyStore();
+    const copyHook = renderUsePracticeSession(
+      [copySession],
+      sharedReloadSafety,
+      "copy-practice",
+    );
+    const sendHook = renderUsePracticeSession(
+      [sendSession],
+      sharedReloadSafety,
+      "send-practice",
+    );
+
+    await act(async () => {
+      await copyHook.result.current.start();
+      await sendHook.result.current.start();
+    });
+
+    expect(sharedReloadSafety.blocked).toBe(true);
+
+    act(() => {
+      void sendHook.result.current.interrupt();
+    });
+    await waitFor(() => expect(sendSession.interrupt).toHaveBeenCalledOnce());
+    expect(sharedReloadSafety.blocked).toBe(true);
+
+    resolveSendInterrupt?.();
+    await waitFor(() => expect(sharedReloadSafety.blocked).toBe(true));
+
+    await act(async () => {
+      await copyHook.result.current.interrupt();
+    });
+    expect(sharedReloadSafety.blocked).toBe(false);
+
+    copyHook.unmount();
+    sendHook.unmount();
   });
 });
