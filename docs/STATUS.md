@@ -10,8 +10,10 @@ has durable Learn and Practice workflows with explicit persistence recovery.
 Issue #60 (speed-aware CW proficiency with discrete global WPM bands) is
 complete, including bounded speed-aware projections, Learn reacquisition
 integration, and current-band History surfacing.
-The next implementation item is issue #52 (Phase 5 PWA/install/release polish),
-which has not started.
+Issue #52 (Phase 5 kickoff) is in progress, with installable manifest
+metadata, offline app-shell service-worker integration, controlled update
+notification/activation, and install guidance implemented. Remaining work is
+focused on update-safety gating and production-base CI/build verification.
 
 ## Completed in repository
 
@@ -57,6 +59,17 @@ which has not started.
 - Audio and device behavior:
   - scheduled CW playback, anti-click handling, and replay safety;
   - output-device selection support where browser APIs permit it.
+- Phase 5 kickoff PWA foundation:
+  - Vite PWA build integration with manifest and app-shell caching;
+  - controlled update-ready notification and explicit activation path;
+  - install guidance for Android/Chrome and iPhone/Safari in Settings;
+  - explicit service-worker cache ownership boundaries that exclude IndexedDB
+    learner data.
+
+## Active next work
+
+- Issue #52 remains the roadmap `Next` item until reviewer blocker comments are
+  fully resolved.
 
 ## Checkpoint 4 audit status
 
@@ -66,9 +79,8 @@ which has not started.
 
 Implementation order is tracked separately in `docs/ROADMAP.md`.
 
-## Phase 5 and later (not started)
+## Phase 5 and later
 
-- PWA manifest/service worker and installability flow.
 - Production release polish for mobile standalone usage.
 - Capacitor feasibility and Android alpha work.
 - Hardware-input expansion where appropriate, including external CW paddle

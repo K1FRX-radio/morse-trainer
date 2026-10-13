@@ -8,6 +8,7 @@ node_modules
 
 # Build output
 dist
+dist-morse-trainer
 dist-ssr
 coverage
 
@@ -25,3 +26,6 @@ coverage
 
 # Plans folder
 /.plans
+
+# GitHub metadata
+/.github

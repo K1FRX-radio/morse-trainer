@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { NavigationGuardContext } from "./ui/navigation-guard-context.ts";
+import { ReloadSafetyContext } from "./ui/reload-safety-context.ts";
 import { LearnScreen } from "./ui/screens/LearnScreen.tsx";
 import { PracticeScreen } from "./ui/screens/PracticeScreen.tsx";
 import { StatsHistoryScreen } from "./ui/screens/StatsHistoryScreen.tsx";
@@ -20,12 +21,92 @@ export type StorageLifecycleNotice = {
   onAction?: () => void;
 };
 
+export type AppPwaNotice = {
+  offlineReady: boolean;
+  updateReady: boolean;
+  activatingUpdate: boolean;
+  applyUpdate: () => void;
+};
+
 export function App({
   storageNotice,
+  pwaNotice,
 }: {
   storageNotice?: StorageLifecycleNotice;
+  pwaNotice?: AppPwaNotice;
 }) {
   const [navigationBlocked, setNavigationBlocked] = useState(false);
+  const [reloadSafetyBlocked, setReloadSafetyBlocked] = useState(false);
+  const reloadSafetyTokensRef = useRef(new Map<string, Set<number>>());
+  const reloadSafetySeqRef = useRef(1);
+
+  const syncReloadSafetyBlocked = useCallback(() => {
+    let activeLeaseCount = 0;
+    for (const tokens of reloadSafetyTokensRef.current.values()) {
+      activeLeaseCount += tokens.size;
+    }
+    setReloadSafetyBlocked(activeLeaseCount > 0);
+  }, []);
+
+  const acquireReloadSafetyBlock = useCallback(
+    (source: string): number => {
+      const token = reloadSafetySeqRef.current++;
+      const tokens = reloadSafetyTokensRef.current.get(source) ?? new Set();
+      tokens.add(token);
+      reloadSafetyTokensRef.current.set(source, tokens);
+      syncReloadSafetyBlocked();
+      return token;
+    },
+    [syncReloadSafetyBlocked],
+  );
+
+  const releaseReloadSafetyBlock = useCallback(
+    (source: string, token: number): void => {
+      const tokens = reloadSafetyTokensRef.current.get(source);
+      if (!tokens || !tokens.has(token)) {
+        return;
+      }
+      tokens.delete(token);
+      if (tokens.size === 0) {
+        reloadSafetyTokensRef.current.delete(source);
+      }
+      syncReloadSafetyBlocked();
+    },
+    [syncReloadSafetyBlocked],
+  );
+
+  const setLegacyReloadSafetyBlock = useCallback(
+    (blocked: boolean): void => {
+      const legacySource = "legacy";
+      if (!blocked) {
+        reloadSafetyTokensRef.current.delete(legacySource);
+        syncReloadSafetyBlocked();
+        return;
+      }
+      const token = reloadSafetySeqRef.current++;
+      const tokens =
+        reloadSafetyTokensRef.current.get(legacySource) ?? new Set();
+      tokens.add(token);
+      reloadSafetyTokensRef.current.set(legacySource, tokens);
+      syncReloadSafetyBlocked();
+    },
+    [syncReloadSafetyBlocked],
+  );
+
+  const reloadSafetyValue = useMemo(
+    () => ({
+      blocked: reloadSafetyBlocked,
+      setBlocked: setLegacyReloadSafetyBlock,
+      acquireBlock: acquireReloadSafetyBlock,
+      releaseBlock: releaseReloadSafetyBlock,
+    }),
+    [
+      reloadSafetyBlocked,
+      setLegacyReloadSafetyBlock,
+      acquireReloadSafetyBlock,
+      releaseReloadSafetyBlock,
+    ],
+  );
 
   useEffect(() => {
     if (!navigationBlocked) return;
@@ -40,60 +121,85 @@ export function App({
     <NavigationGuardContext.Provider
       value={{ blocked: navigationBlocked, setBlocked: setNavigationBlocked }}
     >
-      <div className="app">
-        <header className="app__header">
-          <h1 className="app__title">K1FRX Morse Trainer</h1>
-          <p className="app__tagline">Learn CW by ear.</p>
-          {storageNotice && (
-            <div
-              className="feedback feedback--neutral app__notice"
-              role="alert"
-            >
-              <p>{storageNotice.message}</p>
-              {storageNotice.onAction && storageNotice.actionLabel && (
+      <ReloadSafetyContext.Provider value={reloadSafetyValue}>
+        <div className="app">
+          <header className="app__header">
+            <h1 className="app__title">K1FRX Morse Trainer</h1>
+            <p className="app__tagline">Learn CW by ear.</p>
+            {storageNotice && (
+              <div
+                className="feedback feedback--neutral app__notice"
+                role="alert"
+              >
+                <p>{storageNotice.message}</p>
+                {storageNotice.onAction && storageNotice.actionLabel && (
+                  <button
+                    type="button"
+                    onClick={storageNotice.onAction}
+                    disabled={storageNotice.actionDisabled}
+                  >
+                    {storageNotice.actionLabel}
+                  </button>
+                )}
+              </div>
+            )}
+            {pwaNotice?.updateReady && (
+              <div
+                className="feedback feedback--neutral app__notice"
+                role="alert"
+              >
+                <p>A new app version is ready.</p>
+                {reloadSafetyBlocked && (
+                  <p>Finish or save current training before updating.</p>
+                )}
                 <button
                   type="button"
-                  onClick={storageNotice.onAction}
-                  disabled={storageNotice.actionDisabled}
+                  onClick={pwaNotice.applyUpdate}
+                  disabled={pwaNotice.activatingUpdate || reloadSafetyBlocked}
                 >
-                  {storageNotice.actionLabel}
+                  {pwaNotice.activatingUpdate ? "Updating..." : "Update now"}
                 </button>
-              )}
-            </div>
-          )}
-        </header>
+              </div>
+            )}
+            {!pwaNotice?.updateReady && pwaNotice?.offlineReady && (
+              <p className="feedback feedback--neutral app__notice">
+                Offline shell is ready after this online visit.
+              </p>
+            )}
+          </header>
 
-        <main className="app__main">
-          <Routes>
-            <Route path="/" element={<Navigate to="/learn" replace />} />
-            <Route path="/learn" element={<LearnScreen />} />
-            <Route path="/practice" element={<PracticeScreen />} />
-            <Route path="/history" element={<StatsHistoryScreen />} />
-            <Route
-              path="/progress"
-              element={<Navigate to="/history" replace />}
-            />
-            <Route path="/settings" element={<SettingsScreen />} />
-            <Route path="*" element={<Navigate to="/learn" replace />} />
-          </Routes>
-        </main>
+          <main className="app__main">
+            <Routes>
+              <Route path="/" element={<Navigate to="/learn" replace />} />
+              <Route path="/learn" element={<LearnScreen />} />
+              <Route path="/practice" element={<PracticeScreen />} />
+              <Route path="/history" element={<StatsHistoryScreen />} />
+              <Route
+                path="/progress"
+                element={<Navigate to="/history" replace />}
+              />
+              <Route path="/settings" element={<SettingsScreen />} />
+              <Route path="*" element={<Navigate to="/learn" replace />} />
+            </Routes>
+          </main>
 
-        <nav className="app__nav">
-          {NAV.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              aria-disabled={navigationBlocked}
-              onClick={(event) => {
-                if (navigationBlocked) event.preventDefault();
-              }}
-              className={({ isActive }) => (isActive ? "is-active" : "")}
-            >
-              {item.label}
-            </NavLink>
-          ))}
-        </nav>
-      </div>
+          <nav className="app__nav">
+            {NAV.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                aria-disabled={navigationBlocked}
+                onClick={(event) => {
+                  if (navigationBlocked) event.preventDefault();
+                }}
+                className={({ isActive }) => (isActive ? "is-active" : "")}
+              >
+                {item.label}
+              </NavLink>
+            ))}
+          </nav>
+        </div>
+      </ReloadSafetyContext.Provider>
     </NavigationGuardContext.Provider>
   );
 }

@@ -283,6 +283,15 @@ export function SettingsScreen() {
     <section>
       <h2>Settings</h2>
 
+      <section aria-label="Install guidance" className="settings__group">
+        <h3>Install app</h3>
+        <p>
+          Android/Chrome: open the browser menu and choose Install app or Add to
+          Home screen.
+        </p>
+        <p>iPhone/Safari: use Share, then choose Add to Home Screen.</p>
+      </section>
+
       <label className="field">
         <span className="field__label">Character speed</span>
         <select

@@ -90,6 +90,18 @@ function mockStoragePersistenceApi(options: {
 }
 
 describe("SettingsScreen continuous copy", () => {
+  it("shows concise install guidance for Android/Chrome and iPhone/Safari", () => {
+    renderSettings();
+
+    expect(screen.getByText("Install app")).toBeInTheDocument();
+    expect(screen.getByText(/Android\/Chrome:/)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /iPhone\/Safari: use Share, then choose Add to Home Screen\./,
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("applies the one-minute default to migrated partial settings", () => {
     renderSettings(normalizeSettings({ charWpm: 18 }));
 

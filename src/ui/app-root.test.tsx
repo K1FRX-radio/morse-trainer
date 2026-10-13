@@ -8,6 +8,7 @@ import type {
 import type { LegacyStorage } from "../data/legacy-migration.ts";
 import type { StorageLifecycleEvent } from "../data/storage-lifecycle.ts";
 import { AppRoot } from "./app-root.tsx";
+import type { PwaStatusSnapshot } from "../pwa/pwa-status.ts";
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -122,6 +123,51 @@ function bootstrapFixture(): TrainingDataBootstrap {
 }
 
 describe("AppRoot lifecycle integration", () => {
+  it("surfaces update-ready state before controlled activation and reload", async () => {
+    let pwaSubscriber: ((snapshot: PwaStatusSnapshot) => void) | undefined;
+    const reloadPage = vi.fn();
+    const activateUpdate = vi.fn(async () => true);
+
+    render(
+      <AppRoot
+        dependencies={{
+          createBootstrap: vi.fn(async () => bootstrapFixture()),
+          subscribeLifecycle: () => () => undefined,
+          subscribePwa: (subscriber) => {
+            pwaSubscriber = subscriber;
+            return () => undefined;
+          },
+          activateUpdate,
+          reloadPage,
+          storage: memoryStorage(),
+          tabId: "tab-self",
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("link", { name: "Learn" })).toBeInTheDocument();
+    });
+
+    act(() => {
+      pwaSubscriber?.({ offlineReady: false, updateReady: true });
+    });
+
+    const updateButton = await screen.findByRole("button", {
+      name: "Update now",
+    });
+    expect(reloadPage).toHaveBeenCalledTimes(0);
+
+    act(() => {
+      updateButton.click();
+    });
+
+    await waitFor(() => {
+      expect(activateUpdate).toHaveBeenCalledTimes(1);
+      expect(reloadPage).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("renders blocked-upgrade guidance while startup is pending", async () => {
     let lifecycleEventHandler:
       ((event: "upgrade-blocked" | "reload-required") => void) | undefined;

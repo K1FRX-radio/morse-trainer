@@ -9,7 +9,9 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && npm run build:root && npm run build:github-pages",
+    "build:root": "vite build",
+    "build:github-pages": "VITE_BASE=/morse-trainer/ vite build --outDir dist-morse-trainer && node scripts/validate-pwa-base-build.mjs dist-morse-trainer",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
@@ -44,6 +46,7 @@
     "typescript": "~5.9.0",
     "typescript-eslint": "^8.11.0",
     "vite": "^7.0.0",
+    "vite-plugin-pwa": "^2.0.0",
     "vitest": "^3.0.0"
   }
 }
