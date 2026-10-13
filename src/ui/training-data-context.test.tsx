@@ -138,6 +138,7 @@ describe("TrainingDataProvider stats revision", () => {
         })}
         listDailyProjections={async () => []}
         listCharacterProjections={async () => []}
+        listCharacterSpeedProficiency={async () => []}
         listConfusionProjections={async () => []}
       >
         <Reader />
@@ -222,6 +223,7 @@ describe("TrainingDataProvider stats revision", () => {
         })}
         listDailyProjections={async () => []}
         listCharacterProjections={async () => []}
+        listCharacterSpeedProficiency={async () => []}
         listConfusionProjections={async () => []}
         replacePortableBackup={async () => "applied"}
         resetPortableData={async () => undefined}
@@ -273,6 +275,7 @@ describe("TrainingDataProvider stats revision", () => {
         })}
         listDailyProjections={async () => []}
         listCharacterProjections={async () => []}
+        listCharacterSpeedProficiency={async () => []}
         listConfusionProjections={async () => []}
       >
         <Reader />
@@ -297,5 +300,63 @@ describe("TrainingDataProvider stats revision", () => {
 
     expect(learn.retrySpy).toHaveBeenCalledTimes(1);
     expect(practice.retrySpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes through listCharacterSpeedProficiency", async () => {
+    const curriculum = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    const listCharacterSpeedProficiency = vi.fn(async () => [
+      {
+        character: "K",
+        band: 20 as const,
+        attempts: 8,
+        correct: 6,
+        weightedAttempts: 10,
+        weightedCorrect: 7,
+      },
+    ]);
+    let latest: TrainingDataContextValue | undefined;
+
+    function Reader() {
+      latest = useTrainingData();
+      return null;
+    }
+
+    render(
+      <TrainingDataProvider
+        initialCurriculum={curriculum}
+        initialIntroductions={[]}
+        loadPersistedCurriculum={async () => structuredClone(curriculum)}
+        startLearnSessionPersistence={async () => noOpLearnPersistence()}
+        startPracticeSessionPersistence={async () => noOpPracticePersistence()}
+        getRetryClassification={async () => ({
+          consecutiveAccuracyMisses: 0,
+          shouldSuggestSpacing: false,
+        })}
+        listDailyProjections={async () => []}
+        listCharacterProjections={async () => []}
+        listCharacterSpeedProficiency={listCharacterSpeedProficiency}
+        listConfusionProjections={async () => []}
+      >
+        <Reader />
+      </TrainingDataProvider>,
+    );
+
+    await expect(
+      latest!.listCharacterSpeedProficiency({
+        charWpmBand: 20 as const,
+        limit: 1,
+        characters: ["K"],
+      }),
+    ).resolves.toEqual([
+      {
+        character: "K",
+        band: 20 as const,
+        attempts: 8,
+        correct: 6,
+        weightedAttempts: 10,
+        weightedCorrect: 7,
+      },
+    ]);
+    expect(listCharacterSpeedProficiency).toHaveBeenCalledTimes(1);
   });
 });

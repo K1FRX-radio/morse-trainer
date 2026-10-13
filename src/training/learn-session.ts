@@ -202,9 +202,7 @@ export type WeakRxDerivationInput = {
  * Current-band evidence is authoritative. Neighbor-band weighted evidence is a
  * fallback only when same-band attempts are absent.
  */
-export function deriveWeakRxCharacters(
-  input: WeakRxDerivationInput,
-): string[] {
+export function deriveWeakRxCharacters(input: WeakRxDerivationInput): string[] {
   const performanceByCharacter = new Map(
     (input.schedulerPerformance ?? []).map((row) => [row.character, row]),
   );

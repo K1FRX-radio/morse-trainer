@@ -9,6 +9,7 @@ import {
   normalizeCharacterWpmBand,
   normalizeEffectiveWpmBand,
   recommendedContinuousCopyDurationMs,
+  type CharacterWpmBand,
 } from "../../core/settings.ts";
 import type { CharacterProgress } from "../../core/types.ts";
 import type {
@@ -126,23 +127,29 @@ function monotonicNowMs(): number {
 
 async function buildLearnSchedulerPerformanceInput(options: {
   activeCharacters: readonly string[];
-  charWpmBand: number;
-  listCharacterProjections: ReturnType<typeof useTrainingData>["listCharacterProjections"];
+  charWpmBand: CharacterWpmBand;
+  listCharacterSpeedProficiency: ReturnType<
+    typeof useTrainingData
+  >["listCharacterSpeedProficiency"];
 }): Promise<CharacterSchedulerPerformance[]> {
   if (options.activeCharacters.length === 0) return [];
 
-  const rows = await options.listCharacterProjections({
-    direction: "rx",
-    limit: CHARACTER_PROJECTION_LIMIT,
+  const characters = options.activeCharacters.slice(
+    0,
+    CHARACTER_PROJECTION_LIMIT,
+  );
+
+  const rows = await options.listCharacterSpeedProficiency({
+    charWpmBand: options.charWpmBand,
+    characters,
+    limit: characters.length,
   });
   const rowsByCharacter = new Map(
     rows.map((row) => [row.character, row] as const),
   );
 
-  return options.activeCharacters.map((character) => {
-    const evidence = rowsByCharacter
-      .get(character)
-      ?.speedProficiencyBands?.find((band) => band.band === options.charWpmBand);
+  return characters.map((character) => {
+    const evidence = rowsByCharacter.get(character);
     return {
       character,
       attempts: evidence?.attempts ?? 0,
@@ -163,7 +170,7 @@ export function useLearnSession() {
     saveIntroductions,
     startLearnSessionPersistence,
     getRetryClassification,
-    listCharacterProjections,
+    listCharacterSpeedProficiency,
   } = useTrainingData();
   const audio = useLearnAudio();
   const auto = settings.pacing === "auto";
@@ -698,12 +705,13 @@ export function useLearnSession() {
         schedulerPerformance = await buildLearnSchedulerPerformanceInput({
           activeCharacters,
           charWpmBand: normalizeCharacterWpmBand(sessionTiming.charWpm),
-          listCharacterProjections,
+          listCharacterSpeedProficiency,
         });
       } catch {
         // Keep Learn available even if projections cannot be read right now.
         schedulerPerformance = [];
       }
+      if (startToken !== flowToken.current) return;
 
       const session = new LearnSession({
         state: stateRef.current,
@@ -762,6 +770,7 @@ export function useLearnSession() {
       settings.toneHz,
       timing,
       loadIntroductions,
+      listCharacterSpeedProficiency,
       startLearnSessionPersistence,
       persistenceSnapshot,
       setPersistenceFailed,

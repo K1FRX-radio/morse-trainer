@@ -254,6 +254,7 @@ function TrainingDataFixture({
           (() => Promise.resolve(retryClassification)),
         listDailyProjections: () => Promise.resolve([]),
         listCharacterProjections: () => Promise.resolve([]),
+        listCharacterSpeedProficiency: () => Promise.resolve([]),
         listConfusionProjections: () => Promise.resolve([]),
       }}
     >

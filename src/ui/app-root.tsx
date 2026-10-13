@@ -279,6 +279,9 @@ export function AppRoot({ dependencies }: AppRootProps) {
           listCharacterProjections={(query) =>
             bootstrap.repository.listCharacterProjections(query)
           }
+          listCharacterSpeedProficiency={(query) =>
+            bootstrap.repository.listCharacterSpeedProficiency(query)
+          }
           listConfusionProjections={(query) =>
             bootstrap.repository.listConfusionProjections(query)
           }

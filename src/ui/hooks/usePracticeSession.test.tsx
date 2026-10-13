@@ -54,6 +54,7 @@ function renderUsePracticeSession(sessions: PracticeSessionPersistence[]) {
               }),
             listDailyProjections: () => Promise.resolve([]),
             listCharacterProjections: () => Promise.resolve([]),
+            listCharacterSpeedProficiency: () => Promise.resolve([]),
             listConfusionProjections: () => Promise.resolve([]),
           }}
         >

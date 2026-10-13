@@ -68,6 +68,7 @@ function bootstrapFixture(): TrainingDataBootstrap {
       longestStreakDays: 0,
     })),
     listCharacterProjections: vi.fn(async () => []),
+    listCharacterSpeedProficiency: vi.fn(async () => []),
     listConfusionProjections: vi.fn(async () => []),
     listMilestones: vi.fn(async () => []),
     exportPortableBackup: vi.fn(async () => ({})),
