@@ -16,7 +16,12 @@ only which issue should be implemented next and what follows it.
 ## Later / stretch
 
 - #61 — Architecture review: modularize oversized files and reduce structural coupling
-- #43 — Add external CW paddle support via USB HID/MIDI
+- #70 — External paddle compatibility spike: validate keyboard HID on desktop and Android
+- #43 — Add external CW paddle support via USB HID/MIDI (depends on #70 compatibility evidence)
+
+External paddle work is intentionally later than the current Phase 5 kickoff. The
+compatibility spike should be run against the established mobile/PWA runtime
+before the full Send Practice integration is implemented.
 
 ## Blocked / awaiting decision
 
