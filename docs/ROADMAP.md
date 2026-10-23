@@ -16,6 +16,7 @@ is not an implementation step and remains open until the sprint is complete.
 ## Queue
 
 - #79 — UI/UX sprint: establish visual design system and redesign the app shell
+- #87 — Define the first-contact CW curriculum: from characters to a real QSO
 - #80 — UI/UX sprint: redesign the Learn experience for focused Morse copy
 - #81 — UI/UX sprint: redesign Practice and mode switching
 - #82 — UI/UX sprint: redesign History and Progress for useful, low-clutter feedback
@@ -23,8 +24,14 @@ is not an implementation step and remains open until the sprint is complete.
 - #84 — UI/UX sprint: responsive, accessibility, interaction-state, and visual QA pass
 
 The sequence intentionally starts with UX/IA (#78), then resolves product naming
-and branding (#74) before the shared visual system (#79). Screen-specific
-redesigns follow on top of that foundation, with whole-app QA (#84) last.
+and branding (#74) before the shared visual system (#79). Before the
+screen-specific Learn and Practice redesigns, #87 defines the near-term
+curriculum path from structured Morse learning toward a first real CW contact.
+This avoids polishing today's training surfaces before the next product shape is
+defined. #87 may create bounded implementation slices that should be explicitly
+placed before #80/#81 when that design work is complete; do not silently insert
+or reorder them. Screen-specific redesigns then follow, with whole-app QA (#84)
+last.
 
 ## Later / stretch
 
