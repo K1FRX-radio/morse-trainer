@@ -3,11 +3,10 @@ import type { Schedule } from "../../core/timing.ts";
 import type { ContinuousCopyResult } from "../../training/continuous-copy.ts";
 import type { RxAudio } from "../learn-audio-context.ts";
 
-export const CONTINUOUS_COPY_GRACE_MS = 2000;
 const TIMER_INTERVAL_MS = 100;
 
 export type ContinuousCopyStage =
-  "idle" | "playing" | "paused" | "finishing" | "result";
+  "idle" | "playing" | "paused" | "awaiting-submission" | "result";
 
 type CompleteContinuousCopy = (
   typed: string,
@@ -132,11 +131,8 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
   const totalMsRef = useRef(0);
   const completedRef = useRef(false);
   const intervalRef = useRef<number | undefined>(undefined);
-  const graceRef = useRef<number | undefined>(undefined);
+  const awaitingSubmissionRef = useRef(false);
   const onCompleteRef = useRef(onComplete);
-  const completeCurrentRef = useRef<
-    (abandoned: boolean) => ContinuousCopyResult | undefined
-  >(() => undefined);
   onCompleteRef.current = onComplete;
 
   const [stage, setStage] = useState<ContinuousCopyStage>("idle");
@@ -151,10 +147,6 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
     if (intervalRef.current !== undefined) {
       window.clearInterval(intervalRef.current);
       intervalRef.current = undefined;
-    }
-    if (graceRef.current !== undefined) {
-      window.clearTimeout(graceRef.current);
-      graceRef.current = undefined;
     }
   }, []);
 
@@ -181,12 +173,17 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
       const canComplete =
         playback !== undefined ||
         resumeRef.current !== undefined ||
-        graceRef.current !== undefined;
-      if (!canComplete || completedRef.current) {
+        awaitingSubmissionRef.current;
+      if (
+        !canComplete ||
+        completedRef.current ||
+        (!abandoned && !awaitingSubmissionRef.current)
+      ) {
         return undefined;
       }
 
       completedRef.current = true;
+      awaitingSubmissionRef.current = false;
       generationRef.current += 1;
       clearTimers();
 
@@ -227,7 +224,6 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
     },
     [clearTimers],
   );
-  completeCurrentRef.current = completeCurrent;
 
   const startPlayback = useCallback(
     (playback: ContinuousCopyPlayback) => {
@@ -259,11 +255,8 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
         playbackRef.current = undefined;
         resumeRef.current = undefined;
         setRemainingMs(0);
-        setStage("finishing");
-        graceRef.current = window.setTimeout(
-          () => completeCurrentRef.current(false),
-          CONTINUOUS_COPY_GRACE_MS,
-        );
+        awaitingSubmissionRef.current = true;
+        setStage("awaiting-submission");
       });
     },
     [audio, toneHz, clearTimers, updateRemaining],
@@ -273,6 +266,7 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
     (playback: ContinuousCopyPlayback) => {
       clearTimers();
       completedRef.current = false;
+      awaitingSubmissionRef.current = false;
       textRef.current = "";
       progressMsRef.current = 0;
       runOffsetMsRef.current = 0;
@@ -320,8 +314,13 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
   const resume = useCallback(() => {
     if (stage !== "paused") return false;
     const resumePlan = resumeRef.current;
-    if (!resumePlan || resumePlan.playback.durationMs <= 0) {
-      completeCurrent(false);
+    if (!resumePlan) return false;
+    if (resumePlan.playback.durationMs <= 0) {
+      resumeRef.current = undefined;
+      progressMsRef.current = totalMsRef.current;
+      awaitingSubmissionRef.current = true;
+      setRemainingMs(0);
+      setStage("awaiting-submission");
       return true;
     }
 
@@ -335,7 +334,7 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
     runFloorMsRef.current = progressMsRef.current;
     startPlayback(resumePlan.playback);
     return true;
-  }, [completeCurrent, stage, startPlayback]);
+  }, [stage, startPlayback]);
 
   const setText = useCallback((value: string) => {
     textRef.current = value;
@@ -352,6 +351,7 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
     playbackRef.current = undefined;
     resumeRef.current = undefined;
     completedRef.current = false;
+    awaitingSubmissionRef.current = false;
     progressMsRef.current = 0;
     runOffsetMsRef.current = 0;
     runFloorMsRef.current = 0;
@@ -369,6 +369,7 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
       generationRef.current += 1;
       clearTimers();
       playbackRef.current = undefined;
+      awaitingSubmissionRef.current = false;
     },
     [clearTimers],
   );
@@ -379,7 +380,7 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
     remainingMs,
     totalMs,
     result,
-    active: stage === "playing" || stage === "finishing",
+    active: stage === "playing" || stage === "awaiting-submission",
     start,
     pause,
     resume,

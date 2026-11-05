@@ -2150,7 +2150,7 @@ describe("LearnScreen audio sequencing", () => {
     expect(fake.pending[0]?.schedule?.totalMs).toBeGreaterThanOrEqual(180000);
   });
 
-  it("keeps input through the grace period and then shows aligned results", async () => {
+  it("keeps copy editable without a timeout and evaluates the submitted text", async () => {
     const fake = makeFakeAudio();
     renderLearn(fake.audio);
     await toContinuousCopyTransition(fake);
@@ -2158,23 +2158,117 @@ describe("LearnScreen audio sequencing", () => {
     await flush();
 
     const input = screen.getByLabelText("Continuous copy");
+    const target = fake.pending[0]?.text ?? "";
+    expect(target.length).toBeGreaterThan(1);
+    expect(
+      screen.queryByRole("button", { name: "Evaluate Copy" }),
+    ).not.toBeInTheDocument();
     fireEvent.change(input, { target: { value: "KM" } });
     await resolvePlay(fake);
-    expect(screen.getByRole("status")).toHaveTextContent("Finishing…");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Transmission complete",
+    );
     expect(input).toBeEnabled();
     expect(input).toHaveValue("KM");
+    expect(input).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Evaluate Copy" })).toBeEnabled();
 
-    await tick(2000);
+    await tick(600000);
+    expect(
+      screen.queryByRole("heading", { name: "Copy complete" }),
+    ).not.toBeInTheDocument();
+    fireEvent.change(input, { target: { value: target[0] } });
+    fireEvent.click(screen.getByRole("button", { name: "Evaluate Copy" }));
+    await flush();
     expect(
       screen.getByRole("heading", { name: "Copy complete" }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/aligned accuracy/)).toBeInTheDocument();
+    expect(screen.getByText(/aligned accuracy/)).toHaveTextContent(
+      `${Math.round((1 / target.length) * 100)}% aligned accuracy`,
+    );
+    expect(screen.getByText(/1 correct/)).toHaveTextContent(
+      `1 correct · 0 extra · ${target.length - 1} missed · 0 changed`,
+    );
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     await flush();
     expect(
       screen.getByRole("heading", { name: "Session complete" }),
     ).toBeInTheDocument();
   });
+
+  it.each(["submit", "end", "leave"])(
+    "handles %s after transmission without premature or duplicate grading",
+    async (action) => {
+      seedUnlockedCharacters(2);
+      const fake = makeFakeAudio();
+      const recordAttempt = vi.fn<LearnSessionPersistence["recordAttempt"]>(
+        () => Promise.resolve(),
+      );
+      const interrupt = vi.fn<LearnSessionPersistence["interrupt"]>(() =>
+        Promise.resolve(),
+      );
+      const finish = vi.fn<LearnSessionPersistence["finish"]>(() =>
+        Promise.resolve(),
+      );
+      const persistence: LearnSessionPersistence = {
+        recordAttempt,
+        interrupt,
+        finish,
+        acceptAdvancement: () => Promise.resolve(testCurriculum()),
+        retry: () => Promise.resolve(),
+      };
+      const view = renderLearn(
+        fake.audio,
+        {},
+        {
+          startLearnSessionPersistence: () => Promise.resolve(persistence),
+        },
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Start long copy" }));
+      await flush();
+      const durationMs = fake.pending[0]?.schedule?.totalMs;
+      await resolvePlay(fake);
+      await tick(60000);
+      fireEvent.change(screen.getByLabelText("Continuous copy"), {
+        target: { value: "U" },
+      });
+      expect(recordAttempt).not.toHaveBeenCalled();
+      expect(finish).not.toHaveBeenCalled();
+      expect(interrupt).not.toHaveBeenCalled();
+
+      if (action === "leave") {
+        view.unmount();
+        await flush();
+        expect(interrupt).toHaveBeenCalledOnce();
+        expect(recordAttempt).not.toHaveBeenCalled();
+        expect(finish).not.toHaveBeenCalled();
+      } else {
+        const button = screen.getByRole("button", {
+          name: action === "submit" ? "Evaluate Copy" : "End session",
+        });
+        fireEvent.click(button);
+        fireEvent.click(button);
+        await flush();
+        expect(recordAttempt).toHaveBeenCalledOnce();
+        expect(recordAttempt.mock.calls[0]?.[0]).toMatchObject({
+          exerciseType: "continuous-copy",
+          response: "U",
+          abandoned: action === "end",
+          durationMs,
+        });
+        expect(
+          screen.getByRole("heading", {
+            name: action === "submit" ? "Copy complete" : "Session complete",
+          }),
+        ).toBeInTheDocument();
+        if (action === "submit") {
+          expect(screen.getByText(/aligned accuracy/)).toHaveTextContent(
+            "0% aligned accuracy",
+          );
+        }
+      }
+    },
+  );
 
   it("discards an intentionally ended stream from practice", async () => {
     const fake = makeFakeAudio();
@@ -3001,7 +3095,8 @@ describe("LearnScreen advancement", () => {
     await flush();
 
     await resolvePlay(fake);
-    await tick(2000);
+    fireEvent.click(screen.getByRole("button", { name: "Evaluate Copy" }));
+    await flush();
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     await flush();
 
@@ -3199,7 +3294,8 @@ describe("LearnScreen advancement", () => {
       },
     });
     await resolvePlay(fake);
-    await tick(2000);
+    fireEvent.click(screen.getByRole("button", { name: "Evaluate Copy" }));
+    await flush();
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     await flush();
 
