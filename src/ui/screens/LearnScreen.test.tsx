@@ -2109,7 +2109,7 @@ describe("LearnScreen audio sequencing", () => {
     expect(fake.playCount()).toBe(1);
   });
 
-  it("starts one continuous schedule and keeps copy input active during playback", async () => {
+  it("counts 3, 2, 1 before starting one full continuous schedule", async () => {
     const fake = makeFakeAudio();
     renderLearn(fake.audio);
     await toContinuousCopyTransition(fake);
@@ -2124,6 +2124,21 @@ describe("LearnScreen audio sequencing", () => {
     fireEvent.click(screen.getByRole("button", { name: "Go" }));
     await flush();
 
+    const timeRemaining = screen.getByLabelText("Time remaining").textContent;
+    for (const remaining of [3, 2, 1]) {
+      expect(screen.getByRole("status")).toHaveTextContent(
+        `Starting in ${remaining}`,
+      );
+      expect(fake.playCount()).toBe(0);
+      expect(screen.getByLabelText("Continuous copy")).toBeDisabled();
+      expect(screen.getByLabelText("Time remaining").textContent).toBe(
+        timeRemaining,
+      );
+      expect(
+        screen.queryByRole("button", { name: "Evaluate Copy" }),
+      ).not.toBeInTheDocument();
+      await tick(1000);
+    }
     expect(fake.playCount()).toBe(1);
     expect(fake.pending[0]?.schedule?.totalMs).toBeGreaterThanOrEqual(60000);
     expect(screen.getByRole("status")).toHaveTextContent("Listening…");
@@ -2131,6 +2146,7 @@ describe("LearnScreen audio sequencing", () => {
       "Continuous copy",
     ) as HTMLTextAreaElement;
     expect(input).toBeEnabled();
+    expect(input).toHaveFocus();
     fireEvent.change(input, { target: { value: "KM KM" } });
     expect(input).toHaveValue("KM KM");
     expect(
@@ -2147,7 +2163,88 @@ describe("LearnScreen audio sequencing", () => {
     expect(screen.getByText(/Selected: 3 minutes/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Go" }));
     await flush();
+    await tick(3000);
     expect(fake.pending[0]?.schedule?.totalMs).toBeGreaterThanOrEqual(180000);
+  });
+
+  it.each(["end", "unmount"])(
+    "cancels preparation on %s without counting preparation as practice",
+    async (action) => {
+      const fake = makeFakeAudio();
+      const recordAttempt = vi.fn<LearnSessionPersistence["recordAttempt"]>(
+        () => Promise.resolve(),
+      );
+      const finish = vi.fn<LearnSessionPersistence["finish"]>(() =>
+        Promise.resolve(),
+      );
+      const interrupt = vi.fn<LearnSessionPersistence["interrupt"]>(() =>
+        Promise.resolve(),
+      );
+      const persistence: LearnSessionPersistence = {
+        recordAttempt,
+        finish,
+        interrupt,
+        acceptAdvancement: () => Promise.resolve(testCurriculum()),
+        retry: () => Promise.resolve(),
+      };
+      const view = renderLearn(
+        fake.audio,
+        {},
+        {
+          startLearnSessionPersistence: () => Promise.resolve(persistence),
+        },
+      );
+      await toContinuousCopyTransition(fake);
+      const activeBeforeCountdown =
+        recordAttempt.mock.calls.at(-1)?.[1].activeMs;
+      expect(activeBeforeCountdown).toBeDefined();
+      fireEvent.click(screen.getByRole("button", { name: "Go" }));
+      await flush();
+      await tick(2500);
+      if (action === "end") {
+        fireEvent.click(screen.getByRole("button", { name: "End session" }));
+      } else {
+        view.unmount();
+      }
+      await flush();
+      await tick(10000);
+      expect(fake.playCount()).toBe(0);
+      expect(
+        recordAttempt.mock.calls.filter(
+          ([evidence]) => evidence.exerciseType === "continuous-copy",
+        ),
+      ).toHaveLength(0);
+      const snapshot = (action === "end" ? finish : interrupt).mock
+        .calls[0]?.[0];
+      expect(snapshot?.activeMs).toBeLessThan(
+        (activeBeforeCountdown ?? 0) + 1000,
+      );
+    },
+  );
+
+  it("pauses preparation when hidden and restarts it only on Resume", async () => {
+    const fake = makeFakeAudio();
+    renderLearn(fake.audio);
+    await toContinuousCopyTransition(fake);
+    fireEvent.click(screen.getByRole("button", { name: "Go" }));
+    await flush();
+    await tick(1000);
+    const visibility = vi.spyOn(document, "visibilityState", "get");
+    visibility.mockReturnValue("hidden");
+    fireEvent(document, new Event("visibilitychange"));
+    await flush();
+    await tick(10000);
+    expect(screen.getByRole("status")).toHaveTextContent("Paused");
+    expect(fake.playCount()).toBe(0);
+    visibility.mockReturnValue("visible");
+    fireEvent(document, new Event("visibilitychange"));
+    fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+    await flush();
+    expect(screen.getByRole("status")).toHaveTextContent("Starting in 3");
+    await tick(3000);
+    expect(fake.playCount()).toBe(1);
+    expect(screen.getByLabelText("Continuous copy")).toBeEnabled();
+    visibility.mockRestore();
   });
 
   it("keeps copy editable without a timeout and evaluates the submitted text", async () => {
@@ -2156,6 +2253,7 @@ describe("LearnScreen audio sequencing", () => {
     await toContinuousCopyTransition(fake);
     fireEvent.click(screen.getByRole("button", { name: "Go" }));
     await flush();
+    await tick(3000);
 
     const input = screen.getByLabelText("Continuous copy");
     const target = fake.pending[0]?.text ?? "";
@@ -2276,6 +2374,7 @@ describe("LearnScreen audio sequencing", () => {
     await toContinuousCopyTransition(fake);
     fireEvent.click(screen.getByRole("button", { name: "Go" }));
     await flush();
+    await tick(3000);
     fireEvent.change(screen.getByLabelText("Continuous copy"), {
       target: { value: "KM" },
     });
@@ -2334,6 +2433,7 @@ describe("LearnScreen audio sequencing", () => {
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Go" }));
     await flush();
+    await tick(3000);
     expect(fake.pending[0]?.schedule?.totalMs).toBeGreaterThanOrEqual(60000);
   });
 });
@@ -2990,6 +3090,7 @@ describe("LearnScreen advancement", () => {
     await toContinuousCopyTransition(fake);
     fireEvent.click(screen.getByRole("button", { name: "Go" }));
     await flush();
+    await tick(3000);
 
     const input = screen.getByLabelText(
       "Continuous copy",
@@ -3026,6 +3127,7 @@ describe("LearnScreen advancement", () => {
     await toContinuousCopyTransition(fake);
     fireEvent.click(screen.getByRole("button", { name: "Go" }));
     await flush();
+    await tick(3000);
     fireEvent.change(screen.getByLabelText("Continuous copy"), {
       target: { value: "KM" },
     });

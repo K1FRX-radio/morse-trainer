@@ -137,8 +137,13 @@ export function LearnScreen() {
   }, [answerReady, exercise, isCopy]);
 
   useEffect(() => {
-    if (learn.continuousCopy.active) continuousInputRef.current?.focus();
-  }, [learn.continuousCopy.active]);
+    if (
+      learn.continuousCopy.stage === "playing" ||
+      learn.continuousCopy.stage === "awaiting-submission"
+    ) {
+      continuousInputRef.current?.focus();
+    }
+  }, [learn.continuousCopy.stage]);
 
   useEffect(() => {
     if (!selectedFamiliarity) return;
@@ -704,11 +709,13 @@ export function LearnScreen() {
         </div>
         <div className="practice">
           <p className="field__label" role="status">
-            {stage === "playing"
-              ? "Listening…"
-              : stage === "paused"
-                ? "Paused"
-                : "Transmission complete. Finish typing, then evaluate your copy."}
+            {stage === "countdown"
+              ? `Starting in ${learn.continuousCopy.countdown}`
+              : stage === "playing"
+                ? "Listening…"
+                : stage === "paused"
+                  ? "Paused"
+                  : "Transmission complete. Finish typing, then evaluate your copy."}
           </p>
           {stage === "paused" && (
             <p className="field__label">
@@ -722,6 +729,7 @@ export function LearnScreen() {
             autoComplete="off"
             autoCapitalize="characters"
             spellCheck={false}
+            disabled={learn.continuousCopy.countdown !== undefined}
             value={learn.continuousCopy.text}
             onChange={(event) => updateContinuousCopy(event.target.value)}
             onBlur={retainContinuousFocus}
