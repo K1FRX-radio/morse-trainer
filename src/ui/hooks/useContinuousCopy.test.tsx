@@ -60,10 +60,11 @@ function setup() {
       ) => ContinuousCopyResult
     >()
     .mockReturnValue(result);
+  const onPlaybackStart = vi.fn();
   const hook = renderHook(() =>
-    useContinuousCopy({ audio, toneHz: 600, onComplete }),
+    useContinuousCopy({ audio, toneHz: 600, onComplete, onPlaybackStart }),
   );
-  return { ...hook, audio, playback, onComplete };
+  return { ...hook, audio, playback, onComplete, onPlaybackStart };
 }
 
 function tokenStarts(schedule: Schedule): number[] {
@@ -83,6 +84,81 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
 describe("useContinuousCopy", () => {
+  it("counts 3, 2, 1 silently before starting the full playback duration", () => {
+    const hook = setup();
+    act(() => hook.result.current.start(playback, true));
+    expect(hook.result.current.stage).toBe("countdown");
+    expect(hook.result.current.countdown).toBe(3);
+    act(() => hook.result.current.finish());
+    for (const remaining of [2, 1]) {
+      act(() => vi.advanceTimersByTime(1000));
+      expect(hook.result.current.countdown).toBe(remaining);
+      expect(hook.result.current.remainingMs).toBe(schedule.totalMs);
+      expect(hook.audio.playSchedule).not.toHaveBeenCalled();
+      expect(hook.onComplete).not.toHaveBeenCalled();
+      expect(hook.onPlaybackStart).not.toHaveBeenCalled();
+    }
+    act(() => vi.advanceTimersByTime(999));
+    expect(hook.audio.playSchedule).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(1));
+    expect(hook.audio.playSchedule).toHaveBeenCalledExactlyOnceWith(schedule, {
+      toneHz: 600,
+    });
+    expect(hook.result.current.stage).toBe("playing");
+    expect(hook.result.current.countdown).toBeUndefined();
+    expect(hook.result.current.remainingMs).toBe(schedule.totalMs);
+    expect(hook.onPlaybackStart).toHaveBeenCalledOnce();
+    act(() => vi.advanceTimersByTime(500));
+    act(() => hook.result.current.abandon());
+    expect(hook.onComplete).toHaveBeenCalledExactlyOnceWith("", 500, true);
+  });
+
+  it.each(["abandon", "reset", "unmount"] as const)(
+    "cancels the countdown on %s without recording copy performance",
+    (action) => {
+      const hook = setup();
+      act(() => hook.result.current.start(playback, true));
+      act(() => vi.advanceTimersByTime(1500));
+      if (action === "unmount") hook.unmount();
+      else act(() => hook.result.current[action]());
+      act(() => vi.advanceTimersByTime(10000));
+      expect(hook.audio.playSchedule).not.toHaveBeenCalled();
+      expect(hook.onComplete).not.toHaveBeenCalled();
+      expect(hook.onPlaybackStart).not.toHaveBeenCalled();
+    },
+  );
+
+  it("ignores an old countdown after rapid re-entry", () => {
+    const hook = setup();
+    act(() => hook.result.current.start(playback, true));
+    act(() => vi.advanceTimersByTime(2500));
+    act(() => hook.result.current.start(multiTokenPlayback, true));
+    act(() => vi.advanceTimersByTime(500));
+    expect(hook.audio.playSchedule).not.toHaveBeenCalled();
+    expect(hook.result.current.countdown).toBe(3);
+    act(() => vi.advanceTimersByTime(2500));
+    expect(hook.audio.playSchedule).toHaveBeenCalledExactlyOnceWith(
+      multiTokenSchedule,
+      { toneHz: 600 },
+    );
+  });
+
+  it("restarts preparation after a paused countdown without background playback", () => {
+    const hook = setup();
+    act(() => hook.result.current.start(playback, true));
+    act(() => vi.advanceTimersByTime(1500));
+    act(() => hook.result.current.pause());
+    act(() => vi.advanceTimersByTime(10000));
+    expect(hook.result.current.stage).toBe("paused");
+    expect(hook.audio.playSchedule).not.toHaveBeenCalled();
+    act(() => hook.result.current.resume());
+    expect(hook.result.current.countdown).toBe(3);
+    act(() => vi.advanceTimersByTime(3000));
+    expect(hook.audio.playSchedule).toHaveBeenCalledOnce();
+    expect(hook.result.current.remainingMs).toBe(schedule.totalMs);
+    expect(hook.onComplete).not.toHaveBeenCalled();
+  });
+
   it("keeps input active after playback until explicitly submitted", async () => {
     const hook = setup();
     act(() => hook.result.current.start(playback));

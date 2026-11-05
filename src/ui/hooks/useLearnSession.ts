@@ -487,6 +487,7 @@ export function useLearnSession() {
     audio,
     toneHz: settings.toneHz,
     onComplete: recordContinuousCopy,
+    onPlaybackStart: () => sessionRef.current?.resume(),
   });
 
   const timing = useMemo(
@@ -673,10 +674,14 @@ export function useLearnSession() {
         setExercise(undefined);
         setTransition(undefined);
         setNotification(undefined);
-        continuousCopy.start({
-          schedule: event.plan.schedule,
-          durationMs: event.plan.scheduledDurationMs,
-        });
+        sessionRef.current?.pause();
+        continuousCopy.start(
+          {
+            schedule: event.plan.schedule,
+            durationMs: event.plan.scheduledDurationMs,
+          },
+          true,
+        );
         return;
       }
       setTransition(undefined);
@@ -1179,7 +1184,7 @@ export function useLearnSession() {
 
   const resumeContinuousCopy = useCallback(() => {
     if (!continuousCopy.resume()) return;
-    sessionRef.current?.resume();
+    if (continuousCopy.countdown === undefined) sessionRef.current?.resume();
   }, [continuousCopy]);
 
   const persistAdvancement = useCallback(
@@ -1360,14 +1365,20 @@ export function useLearnSession() {
       const session = sessionRef.current;
       if (!session) return;
       if (document.visibilityState === "hidden") {
-        if (continuousCopy.stage === "playing") {
+        if (
+          continuousCopy.stage === "playing" ||
+          continuousCopy.stage === "countdown"
+        ) {
           pauseContinuousCopy();
           return;
         }
         session.pause();
         return;
       }
-      if (continuousCopy.stage !== "paused") {
+      if (
+        continuousCopy.stage !== "paused" &&
+        continuousCopy.stage !== "countdown"
+      ) {
         session.resume();
       }
     };
@@ -1417,6 +1428,7 @@ export function useLearnSession() {
     notification,
     continuousCopy: {
       stage: continuousCopy.stage,
+      countdown: continuousCopy.countdown,
       text: continuousCopy.text,
       remainingMs: continuousCopy.remainingMs,
       totalMs: continuousCopy.totalMs,

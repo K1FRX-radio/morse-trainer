@@ -14,19 +14,18 @@ visual identity decisions as part of functional PRs.
 
 ## Next
 
-- #89 — Add 3-2-1 countdown before continuous copy begins
+- #92 — Clarify continuous-copy timer after transmission completes
 
 ## Queue
 
-- #92 — Clarify continuous-copy timer after transmission completes
 - #87 — Define the first-contact CW curriculum: from characters to a real QSO
 - #61 — Architecture review: modularize oversized files and reduce structural coupling
 - #70 — External paddle compatibility spike: validate keyboard HID on desktop and Android
 - #43 — Add external CW paddle support via USB HID/MIDI (depends on #70 compatibility evidence)
 
-#89 improves the transition into continuous copy. #92 then cleans up the
-post-playback timer display and completion state. Both must preserve #90's
-explicit submission behavior: playback ending must not force grading; the
+#92 cleans up the post-playback timer display and completion state. Preserve
+#89's preparation countdown and #90's explicit submission behavior:
+playback ending must not force grading; the
 learner explicitly submits their finished transcription. #92 is presentation
 polish only and must not change scoring, timing, or persistence.
 
@@ -72,6 +71,7 @@ Do not silently promote paused work into the active queue.
 
 ## Recently completed
 
+- #89 — Add 3-2-1 countdown before continuous copy begins
 - #90 — Keep continuous copy open for transcription after CW playback ends
 - #78 — UI/UX sprint: audit current flows and define information architecture
 - #52 — Phase 5 kickoff: installable PWA foundation, offline shell, and safe updates
@@ -79,7 +79,6 @@ Do not silently promote paused work into the active queue.
 - #51 — Checkpoint 4: audit and close Persistence & Analytics milestone
 - #58 — Milestone 4 blocker: finish IndexedDB lifecycle hardening and browser acceptance checks
 - #57 — Milestone 4 blocker: complete Progress dashboard contract and analytics semantics
-- #50 — Milestone 4: publish data/metrics docs and 100k-history benchmark
 
 ## Maintenance contract
 
