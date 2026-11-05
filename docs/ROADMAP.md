@@ -18,14 +18,17 @@ visual identity decisions as part of functional PRs.
 
 ## Queue
 
+- #92 — Clarify continuous-copy timer after transmission completes
 - #87 — Define the first-contact CW curriculum: from characters to a real QSO
 - #61 — Architecture review: modularize oversized files and reduce structural coupling
 - #70 — External paddle compatibility spike: validate keyboard HID on desktop and Android
 - #43 — Add external CW paddle support via USB HID/MIDI (depends on #70 compatibility evidence)
 
-#89 improves the transition into continuous copy. Preserve #90's explicit
-submission behavior: playback ending must not force grading; the learner
-explicitly submits their finished transcription.
+#89 improves the transition into continuous copy. #92 then cleans up the
+post-playback timer display and completion state. Both must preserve #90's
+explicit submission behavior: playback ending must not force grading; the
+learner explicitly submits their finished transcription. #92 is presentation
+polish only and must not change scoring, timing, or persistence.
 
 #87 is independent of branding. It should define a staged path from character
 recognition toward on-air vocabulary, callsigns, structured exchanges, and
