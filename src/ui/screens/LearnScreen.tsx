@@ -708,7 +708,7 @@ export function LearnScreen() {
               ? "Listening…"
               : stage === "paused"
                 ? "Paused"
-                : "Finishing…"}
+                : "Transmission complete. Finish typing, then evaluate your copy."}
           </p>
           {stage === "paused" && (
             <p className="field__label">
@@ -738,9 +738,9 @@ export function LearnScreen() {
                 Resume
               </button>
             )}
-            {stage === "finishing" && (
+            {stage === "awaiting-submission" && (
               <button type="button" onClick={() => finishContinuousCopy()}>
-                Finish
+                Evaluate Copy
               </button>
             )}
           </div>

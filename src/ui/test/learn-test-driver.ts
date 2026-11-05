@@ -111,7 +111,8 @@ export function createLearnTestDriver(options: LearnDriverOptions) {
       target: { value: answer(currentTarget) },
     });
     await options.audio.resolveNext();
-    await options.advanceTime(2000);
+    fireEvent.click(screen.getByRole("button", { name: "Evaluate Copy" }));
+    await options.flush();
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     await options.flush();
     return currentTarget;

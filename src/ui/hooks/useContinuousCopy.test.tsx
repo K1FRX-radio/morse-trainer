@@ -3,10 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildSchedule, type Schedule } from "../../core/timing.ts";
 import type { ContinuousCopyResult } from "../../training/continuous-copy.ts";
 import type { LearnAudio } from "../learn-audio-context.ts";
-import {
-  CONTINUOUS_COPY_GRACE_MS,
-  useContinuousCopy,
-} from "./useContinuousCopy.ts";
+import { useContinuousCopy } from "./useContinuousCopy.ts";
 
 function deferred() {
   let resolve = () => {};
@@ -86,7 +83,7 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
 describe("useContinuousCopy", () => {
-  it("keeps input active during playback and completes after the grace period", async () => {
+  it("keeps input active after playback until explicitly submitted", async () => {
     const hook = setup();
     act(() => hook.result.current.start(playback));
 
@@ -98,15 +95,20 @@ describe("useContinuousCopy", () => {
     act(() => hook.result.current.setText("K MKM"));
     await act(async () => hook.playback.resolve());
 
-    expect(hook.result.current.stage).toBe("finishing");
+    expect(hook.result.current.stage).toBe("awaiting-submission");
     expect(hook.result.current.active).toBe(true);
-    await act(async () => vi.advanceTimersByTime(CONTINUOUS_COPY_GRACE_MS));
+    await act(async () => vi.advanceTimersByTime(600000));
+    expect(hook.onComplete).not.toHaveBeenCalled();
+    expect(hook.result.current.text).toBe("K MKM");
+    expect(hook.result.current.remainingMs).toBe(0);
+    act(() => hook.result.current.setText("KM"));
+    act(() => {
+      hook.result.current.finish();
+      hook.result.current.finish();
+    });
 
-    expect(hook.onComplete).toHaveBeenCalledWith(
-      "K MKM",
-      schedule.totalMs,
-      false,
-    );
+    expect(hook.onComplete).toHaveBeenCalledWith("KM", schedule.totalMs, false);
+    expect(hook.onComplete).toHaveBeenCalledTimes(1);
     expect(hook.result.current.stage).toBe("result");
     expect(hook.result.current.result).toBe(result);
   });
@@ -120,8 +122,51 @@ describe("useContinuousCopy", () => {
     expect(hook.onComplete).toHaveBeenCalledWith("", 500, true);
     expect(hook.result.current.stage).toBe("idle");
     await act(async () => hook.playback.resolve());
-    await act(async () => vi.advanceTimersByTime(CONTINUOUS_COPY_GRACE_MS));
+    await act(async () => vi.advanceTimersByTime(10000));
     expect(hook.onComplete).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects submission during playback and while paused", () => {
+    const hook = setup();
+    act(() => hook.result.current.start(playback));
+    act(() => hook.result.current.finish());
+    expect(hook.result.current.stage).toBe("playing");
+    act(() => hook.result.current.pause());
+    act(() => hook.result.current.finish());
+    expect(hook.result.current.stage).toBe("paused");
+    expect(hook.onComplete).not.toHaveBeenCalled();
+  });
+
+  it("abandons finished playback without submitting and excludes typing time", async () => {
+    const hook = setup();
+    act(() => hook.result.current.start(playback));
+    await act(async () => hook.playback.resolve());
+    act(() => vi.advanceTimersByTime(60000));
+    act(() => hook.result.current.setText("K"));
+    act(() => hook.result.current.abandon());
+    act(() => hook.result.current.finish());
+    expect(hook.onComplete).toHaveBeenCalledExactlyOnceWith(
+      "K",
+      schedule.totalMs,
+      true,
+    );
+    expect(hook.result.current.stage).toBe("idle");
+  });
+
+  it("waits for submission when resuming a pause at the end of playback", () => {
+    const hook = setup();
+    act(() => hook.result.current.start(playback));
+    act(() => vi.advanceTimersByTime(schedule.totalMs));
+    act(() => hook.result.current.pause());
+    act(() => hook.result.current.resume());
+    expect(hook.result.current.stage).toBe("awaiting-submission");
+    expect(hook.onComplete).not.toHaveBeenCalled();
+    act(() => hook.result.current.finish());
+    expect(hook.onComplete).toHaveBeenCalledExactlyOnceWith(
+      "",
+      schedule.totalMs,
+      false,
+    );
   });
 
   it("pauses promptly, freezes countdown, and resumes with preserved text", async () => {
@@ -172,7 +217,8 @@ describe("useContinuousCopy", () => {
     expect(audio.playSchedule).toHaveBeenCalledTimes(2);
 
     await act(async () => secondPlayback.resolve());
-    await act(async () => vi.advanceTimersByTime(CONTINUOUS_COPY_GRACE_MS));
+    expect(onComplete).not.toHaveBeenCalled();
+    act(() => hook.result.current.finish());
 
     expect(onComplete).toHaveBeenCalledOnce();
     expect(onComplete.mock.calls.at(0)?.[0]).toBe("KM");
@@ -390,7 +436,8 @@ describe("useContinuousCopy", () => {
     );
 
     await act(async () => thirdPlayback.resolve());
-    await act(async () => vi.advanceTimersByTime(CONTINUOUS_COPY_GRACE_MS));
+    expect(onComplete).not.toHaveBeenCalled();
+    act(() => hook.result.current.finish());
 
     expect(onComplete).toHaveBeenCalledTimes(1);
     expect(onComplete).toHaveBeenCalledWith(
