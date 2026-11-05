@@ -674,14 +674,13 @@ export function useLearnSession() {
         setExercise(undefined);
         setTransition(undefined);
         setNotification(undefined);
-        const withCountdown = sessionRef.current?.summary().mode === "learn";
-        if (withCountdown) sessionRef.current?.pause();
+        sessionRef.current?.pause();
         continuousCopy.start(
           {
             schedule: event.plan.schedule,
             durationMs: event.plan.scheduledDurationMs,
           },
-          withCountdown,
+          true,
         );
         return;
       }

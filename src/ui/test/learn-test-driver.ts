@@ -109,6 +109,9 @@ export function createLearnTestDriver(options: LearnDriverOptions) {
     if (screen.queryByRole("button", { name: "Go" })) {
       await continueInterstitial();
     }
+    if (screen.queryByRole("status")?.textContent === "Starting in 3") {
+      await options.advanceTime(3000);
+    }
     const currentTarget = target();
     fireEvent.change(screen.getByLabelText("Continuous copy"), {
       target: { value: answer(currentTarget) },
