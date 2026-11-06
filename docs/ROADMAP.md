@@ -85,6 +85,7 @@ Do not silently promote paused work into the active queue.
 - #78 — UI/UX sprint: audit current flows and define information architecture
 - #52 — Phase 5 kickoff: installable PWA foundation, offline shell, and safe updates
 - #51 — Checkpoint 4: audit and close Persistence & Analytics milestone
+- #60 — Fix keyboard input state race during fast key-up sequences
 
 ## Maintenance contract
 

@@ -19,6 +19,8 @@ export type CorpusWord = {
   text: string;
   tags: readonly WordTag[];
   stages?: readonly OnAirVocabularyStage[];
+  /** True when this token represents a joined prosign transmission. */
+  joinedProsign?: boolean;
 };
 
 /** Short, common words plus ham/QSO terms, all uppercase A-Z/0-9. */
@@ -162,18 +164,36 @@ export const WORD_CORPUS: readonly CorpusWord[] = [
   },
   {
     text: "BK",
+    tags: ["ham", "qso"],
+    stages: ["courtesy-flow"],
+  },
+  {
+    text: "BK",
     tags: ["ham", "qso", "prosign"],
+    stages: ["courtesy-flow"],
+    joinedProsign: true,
+  },
+  {
+    text: "KN",
+    tags: ["ham", "qso"],
     stages: ["courtesy-flow"],
   },
   {
     text: "KN",
     tags: ["ham", "qso", "prosign"],
     stages: ["courtesy-flow"],
+    joinedProsign: true,
+  },
+  {
+    text: "AR",
+    tags: ["ham", "qso"],
+    stages: ["courtesy-flow", "wrap-up"],
   },
   {
     text: "AR",
     tags: ["ham", "qso", "prosign"],
     stages: ["courtesy-flow", "wrap-up"],
+    joinedProsign: true,
   },
   {
     text: "73",
@@ -187,8 +207,14 @@ export const WORD_CORPUS: readonly CorpusWord[] = [
   },
   {
     text: "SK",
+    tags: ["ham", "qso"],
+    stages: ["wrap-up"],
+  },
+  {
+    text: "SK",
     tags: ["ham", "qso", "prosign"],
     stages: ["wrap-up"],
+    joinedProsign: true,
   },
   {
     text: "QSL",
@@ -226,6 +252,8 @@ export type WordSelectionOptions = {
   tags?: readonly WordTag[];
   /** Restrict to one staged on-air vocabulary track. */
   stage?: OnAirVocabularyStage;
+  /** Include joined prosign tokens (disabled until dedicated keying support exists). */
+  includeJoinedProsigns?: boolean;
 };
 
 function isEligible(
@@ -252,6 +280,9 @@ function isEligible(
     if (!word.stages?.includes(options.stage)) {
       return false;
     }
+  }
+  if (word.joinedProsign && !options.includeJoinedProsigns) {
+    return false;
   }
   return true;
 }

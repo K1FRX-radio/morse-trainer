@@ -68,6 +68,24 @@ describe("eligibleOnAirVocabulary", () => {
     const words = eligibleOnAirVocabulary(unlocked, "signal-report");
     expect(words.map((word) => word.text)).toEqual(["RST", "599", "559"]);
   });
+
+  it("excludes joined prosigns by default", () => {
+    const unlocked = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".split("");
+    const words = eligibleOnAirVocabulary(unlocked, "courtesy-flow");
+    expect(words.some((word) => word.joinedProsign)).toBe(false);
+  });
+
+  it("can include joined prosigns when explicitly requested", () => {
+    const unlocked = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".split("");
+    const words = eligibleWords(unlocked, {
+      stage: "wrap-up",
+      includeJoinedProsigns: true,
+    });
+    const joined = words.filter((word) => word.joinedProsign);
+    expect(joined.map((word) => word.text)).toEqual(
+      expect.arrayContaining(["AR", "SK"]),
+    );
+  });
 });
 
 describe("selectEligibleWord", () => {
