@@ -62,7 +62,10 @@ Terminology:
 - current band: the learner's normalized `charWpmBand`
 - valid session: source-aware valid session under existing session-validity
   policy
-- exact copy accuracy: normalized exact-match ratio for stage attempts
+- exact copy accuracy: session/window exact-match rate, where each graded
+  transcription attempt contributes `1` when
+  `normalizedTarget === normalizedResponse` and `0` otherwise; denominator is
+  the count of graded transcription attempts in scope
 - aligned character accuracy: `alignedCorrect / targetCharacters`
 
 ## Stage contract
@@ -76,11 +79,31 @@ Terminology:
 | OP-4     | Full simulated QSO flow      | OP-3 complete                                                                                                       | Last 3 OP-4 sessions valid; scenario completion >= 0.80; critical-field capture >= 0.90; comprehension score >= 0.80 | OP scenario sessions                            | Feeds #100                                           |
 | OP-5     | Realism-conditioned copy     | OP-4 complete                                                                                                       | For each enabled realism tier, 2 valid sessions with critical-field capture >= 0.85 and comprehension score >= 0.75  | OP realism-tier sessions                        | Feeds #101                                           |
 
+Stage-window interpretation:
+
+- "Last N sessions" means the most recent N valid sessions for that exact
+  stage within the same `charWpmBand`.
+- Unless explicitly stated otherwise, every session in the window must satisfy
+  every threshold listed for the stage.
+- A session that misses any required threshold causes the stage to remain
+  incomplete; qualification requires a fresh trailing window where all sessions
+  satisfy the criteria.
+
 ## Gate semantics
 
 - Gates are evaluated within current `charWpmBand`.
-- If `charWpmBand` changes, OP stage completion status becomes provisional until
-  at least one valid session at the new band is recorded for the active stage.
+- Stage qualification is tracked per stage and per `charWpmBand`.
+- If `charWpmBand` changes, prior-band OP completion remains historical evidence
+  only and does not count as current-band qualification.
+- After a band change, the active stage enters provisional status in the new
+  band and must satisfy its full stage completion criteria at that band to
+  restore qualification.
+- One valid new-band session can establish baseline evidence for the active
+  stage, but it cannot by itself override stage requirements that call for
+  two/three qualifying sessions.
+- Earlier stages do not require full re-qualification unless later policy says
+  otherwise; the active stage gate is the normative resume point after a band
+  change.
 - Provisional OP status does not alter Learn unlock state.
 
 ## 3. Grading contract by stage
@@ -97,6 +120,12 @@ signals.
 ## B. Exact transcription (OP-1 through OP-4)
 
 - Metric: exact copy accuracy (`normalizedTarget === normalizedResponse`).
+- Session exact-copy accuracy = exact matches / graded transcription attempts in
+  the session.
+- Window exact-copy accuracy (when needed for analytics) = exact matches /
+  graded transcription attempts across the stage window.
+- Sessions with zero graded transcription attempts are invalid for OP-stage
+  completion and do not satisfy window requirements.
 - Purpose: preserve disciplined copy quality before heavy realism.
 
 ## C. Critical-field capture (OP-2 through OP-5)
@@ -112,6 +141,9 @@ signals.
 Field-scoring rule:
 
 - field capture score = required fields captured correctly / required fields
+- For OP-3/OP-4 completion windows, each qualifying session must meet the
+  critical-field threshold using that session's own required fields.
+- Missing required fields count as uncaptured fields.
 
 ## D. QSO comprehension (OP-4 and OP-5)
 
@@ -120,6 +152,8 @@ Field-scoring rule:
   outcomes (for example: station identity, report exchange completion,
   acknowledgment, close).
 - comprehension score = completed required scenario intents / required intents
+- For OP-4/OP-5 completion windows, each qualifying session must meet the
+  comprehension threshold for its scenario template.
 
 ## 4. Persistence contract
 
