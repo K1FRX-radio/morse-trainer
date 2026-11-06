@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { createRng } from "../core/rng.ts";
-import { WORD_CORPUS, eligibleWords, selectEligibleWord } from "./words.ts";
+import {
+  ON_AIR_VOCABULARY_STAGES,
+  WORD_CORPUS,
+  eligibleOnAirVocabulary,
+  eligibleWords,
+  selectEligibleWord,
+  selectOnAirVocabularyWord,
+} from "./words.ts";
 
 describe("eligibleWords", () => {
   it("returns only words made of unlocked characters", () => {
@@ -35,6 +42,32 @@ describe("eligibleWords", () => {
       expect(word.tags).toContain("qso");
     }
   });
+
+  it("filters by staged on-air track", () => {
+    const unlocked = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".split("");
+    const words = eligibleWords(unlocked, { stage: "contact-setup" });
+    expect(words.length).toBeGreaterThan(0);
+    for (const word of words) {
+      expect(word.stages).toContain("contact-setup");
+    }
+  });
+});
+
+describe("eligibleOnAirVocabulary", () => {
+  it("returns only terms for the requested stage", () => {
+    const unlocked = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".split("");
+    const words = eligibleOnAirVocabulary(unlocked, "signal-report");
+    expect(words.length).toBeGreaterThan(0);
+    for (const word of words) {
+      expect(word.stages).toContain("signal-report");
+    }
+  });
+
+  it("respects unlocked-character filtering", () => {
+    const unlocked = ["R", "S", "T", "5", "9"];
+    const words = eligibleOnAirVocabulary(unlocked, "signal-report");
+    expect(words.map((word) => word.text)).toEqual(["RST", "599", "559"]);
+  });
 });
 
 describe("selectEligibleWord", () => {
@@ -65,7 +98,62 @@ describe("selectEligibleWord", () => {
 
   it("every corpus word is uppercase A-Z", () => {
     for (const word of WORD_CORPUS) {
-      expect(word.text).toMatch(/^[A-Z]+$/);
+      expect(word.text).toMatch(/^[A-Z0-9]+$/);
     }
+  });
+
+  it("supports deterministic staged on-air selection", () => {
+    const unlocked = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".split("");
+    const a = selectOnAirVocabularyWord(
+      unlocked,
+      createRng(42),
+      "courtesy-flow",
+    );
+    const b = selectOnAirVocabularyWord(
+      unlocked,
+      createRng(42),
+      "courtesy-flow",
+    );
+    expect(a).toEqual(b);
+  });
+
+  it("returns undefined for staged selection when nothing qualifies", () => {
+    expect(
+      selectOnAirVocabularyWord(["K", "M"], createRng(1), "contact-setup"),
+    ).toBeUndefined();
+  });
+});
+
+describe("on-air vocabulary stage coverage", () => {
+  const ALL = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".split("");
+
+  it("defines all expected stage names", () => {
+    expect(ON_AIR_VOCABULARY_STAGES).toEqual([
+      "contact-setup",
+      "signal-report",
+      "courtesy-flow",
+      "wrap-up",
+    ]);
+  });
+
+  it("includes required first-contact terms across stages", () => {
+    const byStage = new Map(
+      ON_AIR_VOCABULARY_STAGES.map((stage) => [
+        stage,
+        eligibleOnAirVocabulary(ALL, stage).map((word) => word.text),
+      ]),
+    );
+    const contactSetup = byStage.get("contact-setup") ?? [];
+    expect(contactSetup).toEqual(expect.arrayContaining(["CQ", "DE", "QRZ"]));
+    const signalReport = byStage.get("signal-report") ?? [];
+    expect(signalReport).toEqual(
+      expect.arrayContaining(["RST", "599", "QRM", "QRN", "QSB"]),
+    );
+    const courtesy = byStage.get("courtesy-flow") ?? [];
+    expect(courtesy).toEqual(
+      expect.arrayContaining(["PSE", "AGN", "TNX", "BK", "KN"]),
+    );
+    const wrapUp = byStage.get("wrap-up") ?? [];
+    expect(wrapUp).toEqual(expect.arrayContaining(["73", "88", "SK", "QRT"]));
   });
 });

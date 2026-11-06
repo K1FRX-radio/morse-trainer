@@ -6,12 +6,22 @@ import type { Rng } from "../core/rng.ts";
 
 export type WordTag = "general" | "ham" | "qso" | "prosign";
 
+export const ON_AIR_VOCABULARY_STAGES = [
+  "contact-setup",
+  "signal-report",
+  "courtesy-flow",
+  "wrap-up",
+] as const;
+
+export type OnAirVocabularyStage = (typeof ON_AIR_VOCABULARY_STAGES)[number];
+
 export type CorpusWord = {
   text: string;
   tags: readonly WordTag[];
+  stages?: readonly OnAirVocabularyStage[];
 };
 
-/** Short, common words plus ham/QSO terms, all uppercase A-Z. */
+/** Short, common words plus ham/QSO terms, all uppercase A-Z/0-9. */
 export const WORD_CORPUS: readonly CorpusWord[] = [
   { text: "AN", tags: ["general"] },
   { text: "AS", tags: ["general", "prosign"] },
@@ -45,23 +55,166 @@ export const WORD_CORPUS: readonly CorpusWord[] = [
   { text: "SMART", tags: ["general"] },
   { text: "STREAM", tags: ["general"] },
   { text: "MASTER", tags: ["general"] },
-  { text: "CQ", tags: ["ham", "qso"] },
-  { text: "DE", tags: ["ham", "qso"] },
-  { text: "RST", tags: ["ham", "qso"] },
-  { text: "QTH", tags: ["ham", "qso"] },
-  { text: "QSO", tags: ["ham", "qso"] },
-  { text: "QRP", tags: ["ham"] },
-  { text: "QRM", tags: ["ham"] },
-  { text: "QSL", tags: ["ham", "qso"] },
-  { text: "TU", tags: ["ham", "qso"] },
-  { text: "FB", tags: ["ham", "qso"] },
-  { text: "OM", tags: ["ham", "qso"] },
-  { text: "ES", tags: ["ham", "qso"] },
-  { text: "HR", tags: ["ham", "qso"] },
-  { text: "TNX", tags: ["ham", "qso"] },
-  { text: "AGN", tags: ["ham", "qso"] },
-  { text: "WX", tags: ["ham", "qso"] },
-  { text: "DX", tags: ["ham"] },
+  {
+    text: "CQ",
+    tags: ["ham", "qso"],
+    stages: ["contact-setup"],
+  },
+  {
+    text: "DE",
+    tags: ["ham", "qso"],
+    stages: ["contact-setup"],
+  },
+  {
+    text: "QRZ",
+    tags: ["ham", "qso"],
+    stages: ["contact-setup"],
+  },
+  {
+    text: "QSO",
+    tags: ["ham", "qso"],
+    stages: ["contact-setup", "courtesy-flow"],
+  },
+  {
+    text: "RST",
+    tags: ["ham", "qso"],
+    stages: ["signal-report"],
+  },
+  {
+    text: "599",
+    tags: ["ham", "qso"],
+    stages: ["signal-report"],
+  },
+  {
+    text: "579",
+    tags: ["ham", "qso"],
+    stages: ["signal-report"],
+  },
+  {
+    text: "559",
+    tags: ["ham", "qso"],
+    stages: ["signal-report"],
+  },
+  {
+    text: "QRM",
+    tags: ["ham"],
+    stages: ["signal-report"],
+  },
+  {
+    text: "QRN",
+    tags: ["ham"],
+    stages: ["signal-report"],
+  },
+  {
+    text: "QSB",
+    tags: ["ham"],
+    stages: ["signal-report"],
+  },
+  {
+    text: "WX",
+    tags: ["ham", "qso"],
+    stages: ["signal-report", "courtesy-flow"],
+  },
+  {
+    text: "QTH",
+    tags: ["ham", "qso"],
+    stages: ["courtesy-flow"],
+  },
+  {
+    text: "TU",
+    tags: ["ham", "qso"],
+    stages: ["courtesy-flow", "wrap-up"],
+  },
+  {
+    text: "TNX",
+    tags: ["ham", "qso"],
+    stages: ["courtesy-flow"],
+  },
+  {
+    text: "FB",
+    tags: ["ham", "qso"],
+    stages: ["courtesy-flow"],
+  },
+  {
+    text: "OM",
+    tags: ["ham", "qso"],
+    stages: ["courtesy-flow"],
+  },
+  {
+    text: "ES",
+    tags: ["ham", "qso"],
+    stages: ["courtesy-flow"],
+  },
+  {
+    text: "HR",
+    tags: ["ham", "qso"],
+    stages: ["courtesy-flow"],
+  },
+  {
+    text: "AGN",
+    tags: ["ham", "qso"],
+    stages: ["courtesy-flow"],
+  },
+  {
+    text: "PSE",
+    tags: ["ham", "qso"],
+    stages: ["courtesy-flow"],
+  },
+  {
+    text: "BK",
+    tags: ["ham", "qso", "prosign"],
+    stages: ["courtesy-flow"],
+  },
+  {
+    text: "KN",
+    tags: ["ham", "qso", "prosign"],
+    stages: ["courtesy-flow"],
+  },
+  {
+    text: "AR",
+    tags: ["ham", "qso", "prosign"],
+    stages: ["courtesy-flow", "wrap-up"],
+  },
+  {
+    text: "73",
+    tags: ["ham", "qso"],
+    stages: ["wrap-up"],
+  },
+  {
+    text: "88",
+    tags: ["ham", "qso"],
+    stages: ["wrap-up"],
+  },
+  {
+    text: "SK",
+    tags: ["ham", "qso", "prosign"],
+    stages: ["wrap-up"],
+  },
+  {
+    text: "QSL",
+    tags: ["ham", "qso"],
+    stages: ["wrap-up"],
+  },
+  {
+    text: "QRT",
+    tags: ["ham"],
+    stages: ["wrap-up"],
+  },
+  {
+    text: "QRP",
+    tags: ["ham"],
+    stages: ["signal-report"],
+  },
+  {
+    text: "QSY",
+    tags: ["ham"],
+    stages: ["courtesy-flow"],
+  },
+  {
+    text: "DX",
+    tags: ["ham"],
+    stages: ["contact-setup", "signal-report"],
+  },
 ];
 
 export type WordSelectionOptions = {
@@ -71,6 +224,8 @@ export type WordSelectionOptions = {
   newest?: string;
   /** Restrict to words carrying at least one of these tags. */
   tags?: readonly WordTag[];
+  /** Restrict to one staged on-air vocabulary track. */
+  stage?: OnAirVocabularyStage;
 };
 
 function isEligible(
@@ -93,6 +248,11 @@ function isEligible(
       return false;
     }
   }
+  if (options.stage !== undefined) {
+    if (!word.stages?.includes(options.stage)) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -103,6 +263,14 @@ export function eligibleWords(
 ): CorpusWord[] {
   const set = new Set(unlocked);
   return WORD_CORPUS.filter((word) => isEligible(word, set, options));
+}
+
+/** Returns staged on-air vocabulary that matches unlocked characters. */
+export function eligibleOnAirVocabulary(
+  unlocked: Iterable<string>,
+  stage: OnAirVocabularyStage,
+): CorpusWord[] {
+  return eligibleWords(unlocked, { stage });
 }
 
 /**
@@ -119,4 +287,13 @@ export function selectEligibleWord(
     return undefined;
   }
   return candidates[Math.floor(rng() * candidates.length)];
+}
+
+/** Deterministically selects one staged on-air term, if any are eligible. */
+export function selectOnAirVocabularyWord(
+  unlocked: Iterable<string>,
+  rng: Rng,
+  stage: OnAirVocabularyStage,
+): CorpusWord | undefined {
+  return selectEligibleWord(unlocked, rng, { stage });
 }
