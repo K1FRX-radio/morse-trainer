@@ -1,4 +1,9 @@
-import { eligibleWords, type CorpusWord } from "../content/words.ts";
+import {
+  eligibleOnAirVocabulary,
+  eligibleWords,
+  type CorpusWord,
+  type OnAirVocabularyStage,
+} from "../content/words.ts";
 
 export type FocusedWordEligibility = {
   eligible: boolean;
@@ -10,6 +15,10 @@ export type WordEligibilityOptions = {
   minimumLength: number;
   maximumLength: number;
   minimumPoolSize: number;
+};
+
+export type OnAirVocabularyEligibilityOptions = WordEligibilityOptions & {
+  stage: OnAirVocabularyStage;
 };
 
 export type WordSelectionWeights = {
@@ -28,6 +37,23 @@ export function evaluateWordEligibility(
   options: WordEligibilityOptions,
 ): FocusedWordEligibility {
   const candidates = eligibleWords(options.active).filter(
+    (word) =>
+      word.text.length >= options.minimumLength &&
+      word.text.length <= options.maximumLength,
+  );
+  return {
+    eligible: candidates.length >= options.minimumPoolSize,
+    candidates,
+  };
+}
+
+export function evaluateOnAirVocabularyEligibility(
+  options: OnAirVocabularyEligibilityOptions,
+): FocusedWordEligibility {
+  const candidates = eligibleOnAirVocabulary(
+    options.active,
+    options.stage,
+  ).filter(
     (word) =>
       word.text.length >= options.minimumLength &&
       word.text.length <= options.maximumLength,
