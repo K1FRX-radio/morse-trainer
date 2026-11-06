@@ -164,30 +164,15 @@ export const WORD_CORPUS: readonly CorpusWord[] = [
   },
   {
     text: "BK",
-    tags: ["ham", "qso"],
-    stages: ["courtesy-flow"],
-  },
-  {
-    text: "BK",
     tags: ["ham", "qso", "prosign"],
     stages: ["courtesy-flow"],
     joinedProsign: true,
   },
   {
     text: "KN",
-    tags: ["ham", "qso"],
-    stages: ["courtesy-flow"],
-  },
-  {
-    text: "KN",
     tags: ["ham", "qso", "prosign"],
     stages: ["courtesy-flow"],
     joinedProsign: true,
-  },
-  {
-    text: "AR",
-    tags: ["ham", "qso"],
-    stages: ["courtesy-flow", "wrap-up"],
   },
   {
     text: "AR",
@@ -202,11 +187,6 @@ export const WORD_CORPUS: readonly CorpusWord[] = [
   },
   {
     text: "88",
-    tags: ["ham", "qso"],
-    stages: ["wrap-up"],
-  },
-  {
-    text: "SK",
     tags: ["ham", "qso"],
     stages: ["wrap-up"],
   },

@@ -73,6 +73,18 @@ describe("eligibleOnAirVocabulary", () => {
     const unlocked = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".split("");
     const words = eligibleOnAirVocabulary(unlocked, "courtesy-flow");
     expect(words.some((word) => word.joinedProsign)).toBe(false);
+    const texts = words.map((word) => word.text);
+    expect(texts).not.toContain("AR");
+    expect(texts).not.toContain("BK");
+    expect(texts).not.toContain("KN");
+  });
+
+  it("excludes wrap-up joined-prosign spellings by default", () => {
+    const unlocked = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".split("");
+    const words = eligibleOnAirVocabulary(unlocked, "wrap-up");
+    const texts = words.map((word) => word.text);
+    expect(texts).not.toContain("AR");
+    expect(texts).not.toContain("SK");
   });
 
   it("can include joined prosigns when explicitly requested", () => {
@@ -168,10 +180,8 @@ describe("on-air vocabulary stage coverage", () => {
       expect.arrayContaining(["RST", "599", "QRM", "QRN", "QSB"]),
     );
     const courtesy = byStage.get("courtesy-flow") ?? [];
-    expect(courtesy).toEqual(
-      expect.arrayContaining(["PSE", "AGN", "TNX", "BK", "KN"]),
-    );
+    expect(courtesy).toEqual(expect.arrayContaining(["PSE", "AGN", "TNX"]));
     const wrapUp = byStage.get("wrap-up") ?? [];
-    expect(wrapUp).toEqual(expect.arrayContaining(["73", "88", "SK", "QRT"]));
+    expect(wrapUp).toEqual(expect.arrayContaining(["73", "88", "QRT"]));
   });
 });
