@@ -14,20 +14,13 @@ visual identity decisions as part of functional PRs.
 
 ## Next
 
-- #92 — Clarify continuous-copy timer after transmission completes
+- #87 — Define the first-contact CW curriculum: from characters to a real QSO
 
 ## Queue
 
-- #87 — Define the first-contact CW curriculum: from characters to a real QSO
 - #61 — Architecture review: modularize oversized files and reduce structural coupling
 - #70 — External paddle compatibility spike: validate keyboard HID on desktop and Android
 - #43 — Add external CW paddle support via USB HID/MIDI (depends on #70 compatibility evidence)
-
-#92 cleans up the post-playback timer display and completion state. Preserve
-#89's preparation countdown and #90's explicit submission behavior:
-playback ending must not force grading; the
-learner explicitly submits their finished transcription. #92 is presentation
-polish only and must not change scoring, timing, or persistence.
 
 #87 is independent of branding. It should define a staged path from character
 recognition toward on-air vocabulary, callsigns, structured exchanges, and
@@ -35,6 +28,11 @@ complete QSO practice. Its output should be **bounded, prioritized implementatio
 issues**. Before proceeding from #87 to #61, explicitly review those slices and
 update this roadmap with their agreed implementation order. Do not treat
 unspecified follow-up work as automatically authorized.
+
+Preserve #92's timer-status polish plus #89's preparation countdown and #90's
+explicit submission behavior: playback ending must not force grading; the
+learner explicitly submits their finished transcription. #92 is presentation
+polish only and must not change scoring, timing, or persistence.
 
 #61 is a behavior-preserving review/refactor, not an excuse for broad rewrites.
 Investigate actual reliability or performance problems (audio scheduling,
@@ -71,6 +69,7 @@ Do not silently promote paused work into the active queue.
 
 ## Recently completed
 
+- #92 — Clarify continuous-copy timer after transmission completes
 - #89 — Add 3-2-1 countdown before continuous copy begins
 - #90 — Keep continuous copy open for transcription after CW playback ends
 - #78 — UI/UX sprint: audit current flows and define information architecture
@@ -78,7 +77,6 @@ Do not silently promote paused work into the active queue.
 - #60 — Design speed-aware CW proficiency with discrete global WPM bands
 - #51 — Checkpoint 4: audit and close Persistence & Analytics milestone
 - #58 — Milestone 4 blocker: finish IndexedDB lifecycle hardening and browser acceptance checks
-- #57 — Milestone 4 blocker: complete Progress dashboard contract and analytics semantics
 
 ## Maintenance contract
 

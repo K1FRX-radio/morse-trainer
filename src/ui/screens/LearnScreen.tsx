@@ -690,6 +690,8 @@ export function LearnScreen() {
     const remainingSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
     const minutes = Math.floor(remainingSeconds / 60);
     const seconds = String(remainingSeconds % 60).padStart(2, "0");
+    const showsRemainingTime =
+      stage === "countdown" || stage === "playing" || stage === "paused";
     const progress = totalMs
       ? Math.round(((totalMs - remainingMs) / totalMs) * 100)
       : 0;
@@ -703,9 +705,15 @@ export function LearnScreen() {
           <div className="learn__bar" aria-hidden>
             <span style={{ width: `${progress}%` }} />
           </div>
-          <span className="field__label" aria-label="Time remaining">
-            {minutes}:{seconds}
-          </span>
+          {showsRemainingTime ? (
+            <span className="field__label" aria-label="Time remaining">
+              {minutes}:{seconds}
+            </span>
+          ) : (
+            <span className="field__label" aria-label="Transmission status">
+              Complete
+            </span>
+          )}
         </div>
         <div className="practice">
           <p className="field__label" role="status">

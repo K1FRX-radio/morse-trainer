@@ -2350,6 +2350,10 @@ describe("LearnScreen audio sequencing", () => {
     expect(screen.getByRole("status")).toHaveTextContent(
       "Transmission complete",
     );
+    expect(screen.queryByLabelText("Time remaining")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Transmission status")).toHaveTextContent(
+      "Complete",
+    );
     expect(input).toBeEnabled();
     expect(input).toHaveValue("KM");
     expect(input).toHaveFocus();
