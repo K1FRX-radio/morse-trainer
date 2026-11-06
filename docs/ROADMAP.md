@@ -14,7 +14,7 @@ visual identity decisions as part of functional PRs.
 
 ## Next
 
-- Approval checkpoint: review and approve proposed first-contact slices (#95-#101)
+- Approval checkpoint: prioritize and explicitly authorize pending first-contact slices (#96-#101)
 
 ## Proposed queue (pending approval)
 
@@ -30,11 +30,11 @@ visual identity decisions as part of functional PRs.
 
 #87 produced a staged first-contact progression proposal and bounded
 implementation slices (#95-#101) documented in
-`docs/first-contact-cw-curriculum-proposal.md`. The #95-#101 sequence is
-proposed, not pre-approved for automatic execution. Before starting #95,
-explicitly approve the proposed slices/order and confirm whether any
-reprioritization is required against #61. Keep scope focused on curriculum
-behavior and domain contracts rather than branding or broad UI restyling.
+`docs/first-contact-cw-curriculum-proposal.md`. #95 now defines the operating-
+prep contract in `docs/operating-prep-progression-contract.md`. The remaining
+#96-#101 sequence is still proposed, not pre-approved for automatic execution.
+Before starting any of #96-#101, explicitly approve prioritization/order and
+confirm whether reprioritization is required against #61.
 
 Preserve #92's timer-status polish plus #89's preparation countdown and #90's
 explicit submission behavior: playback ending must not force grading; the
@@ -76,6 +76,7 @@ Do not silently promote paused work into the active queue.
 
 ## Recently completed
 
+- #95 — Define operating-prep progression contract and stage gates
 - #87 — Define the first-contact CW curriculum: from characters to a real QSO
 - #92 — Clarify continuous-copy timer after transmission completes
 - #89 — Add 3-2-1 countdown before continuous copy begins

@@ -4,6 +4,13 @@ This document fulfills roadmap issue #87 by defining a staged progression from
 character recognition to realistic first-contact CW exchanges and by splitting
 that direction into bounded implementation issues.
 
+Status update:
+
+- issue #95 completed the operating-prep progression contract in
+  `docs/operating-prep-progression-contract.md`
+- implementation issues #96-#101 remain pending explicit prioritization
+  approval
+
 ## Goals
 
 - Preserve current Learn invariants: RX-only advancement authority, explicit
@@ -42,25 +49,23 @@ Each stage should gate difficulty based on existing readiness signals (for
 example, speed-band and recent proficiency evidence) so learners do not jump
 from random groups directly into full noisy QSO simulations.
 
-## Outstanding design-contract decisions (deferred to #95)
+## Design-contract resolution note
 
-This proposal establishes direction and candidate sequencing, but the following
-product/domain decisions are intentionally not finalized in #87 and must be
-resolved in #95 before implementation work proceeds:
+Issue #87 intentionally deferred detailed product/domain contracts, which are
+now resolved by #95 in `docs/operating-prep-progression-contract.md`:
 
-- exact ownership boundaries between Learn, Practice, and operating-prep
-  surfaces.
-- stage entry/completion criteria and the concrete progression contract.
-- speed-band/proficiency gate rules per stage.
-- grading model choices by stage (exact transcription vs field-capture vs
-  comprehension-oriented scoring).
-- persistence and analytics contracts for operating-prep outcomes.
+- ownership boundaries between Learn, Practice, and operating-prep surfaces
+- stage entry/completion criteria and progression gates
+- speed-band/proficiency gate rules per stage
+- grading model choices by stage (exact transcription, field capture,
+  comprehension)
+- persistence and analytics contracts for operating-prep outcomes
 
-#95 is a design-contract phase, not curriculum feature implementation.
+This file remains the high-level direction and slice proposal from #87.
 
 ## Proposed issue slices
 
-### 1. #95 - Define operating-prep progression contract and stage gates
+### 1. #95 - Define operating-prep progression contract and stage gates (completed)
 
 Role:
 Foundational product/domain contract that clarifies stage ownership,
@@ -71,8 +76,8 @@ All later slices depend on shared stage definitions, grading semantics, and
 persistence boundaries.
 
 Design-phase note:
-#95 resolves the outstanding contract decisions listed above; it does not
-implement callsign/vocabulary/QSO features.
+#95 delivered the contract and intentionally did not implement
+callsign/vocabulary/QSO features.
 
 ### 2. #96 - Add staged on-air vocabulary tracks for RX training
 
