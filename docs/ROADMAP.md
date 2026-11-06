@@ -14,20 +14,27 @@ visual identity decisions as part of functional PRs.
 
 ## Next
 
-- #87 — Define the first-contact CW curriculum: from characters to a real QSO
+- Approval checkpoint: review and approve proposed first-contact slices (#95-#101)
 
-## Queue
+## Proposed queue (pending approval)
 
+- #96 — Add staged on-air vocabulary tracks for RX training
+- #97 — Add realistic callsign curriculum progression
+- #98 — Add learner station profile for self-relevant CW practice
+- #99 — Implement structured QSO element drills with field-based grading
+- #100 — Implement complete simulated CW QSO practice sessions
+- #101 — Add layered realism modifiers for operating-prep copy
 - #61 — Architecture review: modularize oversized files and reduce structural coupling
 - #70 — External paddle compatibility spike: validate keyboard HID on desktop and Android
 - #43 — Add external CW paddle support via USB HID/MIDI (depends on #70 compatibility evidence)
 
-#87 is independent of branding. It should define a staged path from character
-recognition toward on-air vocabulary, callsigns, structured exchanges, and
-complete QSO practice. Its output should be **bounded, prioritized implementation
-issues**. Before proceeding from #87 to #61, explicitly review those slices and
-update this roadmap with their agreed implementation order. Do not treat
-unspecified follow-up work as automatically authorized.
+#87 produced a staged first-contact progression proposal and bounded
+implementation slices (#95-#101) documented in
+`docs/first-contact-cw-curriculum-proposal.md`. The #95-#101 sequence is
+proposed, not pre-approved for automatic execution. Before starting #95,
+explicitly approve the proposed slices/order and confirm whether any
+reprioritization is required against #61. Keep scope focused on curriculum
+behavior and domain contracts rather than branding or broad UI restyling.
 
 Preserve #92's timer-status polish plus #89's preparation countdown and #90's
 explicit submission behavior: playback ending must not force grading; the
@@ -69,6 +76,7 @@ Do not silently promote paused work into the active queue.
 
 ## Recently completed
 
+- #87 — Define the first-contact CW curriculum: from characters to a real QSO
 - #92 — Clarify continuous-copy timer after transmission completes
 - #89 — Add 3-2-1 countdown before continuous copy begins
 - #90 — Keep continuous copy open for transcription after CW playback ends
@@ -76,7 +84,6 @@ Do not silently promote paused work into the active queue.
 - #52 — Phase 5 kickoff: installable PWA foundation, offline shell, and safe updates
 - #60 — Design speed-aware CW proficiency with discrete global WPM bands
 - #51 — Checkpoint 4: audit and close Persistence & Analytics milestone
-- #58 — Milestone 4 blocker: finish IndexedDB lifecycle hardening and browser acceptance checks
 
 ## Maintenance contract
 
@@ -90,9 +97,8 @@ Roadmap-item implementation PRs must update this file in the same PR:
    changes priority or a newly discovered blocker requires escalation.
 6. Paused and blocked items must not be promoted without explicit
    reprioritization or the required setup/decision.
-7. After #87, pause for approval of its bounded curriculum implementation
-   slices and their placement in the queue, rather than automatically
-   continuing to #61.
+7. After proposal work like #87, pause for explicit approval of any proposed
+   follow-up slices/order before treating them as committed queue work.
 
 If `Next` is closed, blocked, already has an active implementation PR, or
 otherwise cannot be started safely, do not silently choose another issue.
