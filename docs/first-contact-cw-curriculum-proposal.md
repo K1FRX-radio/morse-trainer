@@ -42,6 +42,22 @@ Each stage should gate difficulty based on existing readiness signals (for
 example, speed-band and recent proficiency evidence) so learners do not jump
 from random groups directly into full noisy QSO simulations.
 
+## Outstanding design-contract decisions (deferred to #95)
+
+This proposal establishes direction and candidate sequencing, but the following
+product/domain decisions are intentionally not finalized in #87 and must be
+resolved in #95 before implementation work proceeds:
+
+- exact ownership boundaries between Learn, Practice, and operating-prep
+  surfaces.
+- stage entry/completion criteria and the concrete progression contract.
+- speed-band/proficiency gate rules per stage.
+- grading model choices by stage (exact transcription vs field-capture vs
+  comprehension-oriented scoring).
+- persistence and analytics contracts for operating-prep outcomes.
+
+#95 is a design-contract phase, not curriculum feature implementation.
+
 ## Proposed issue slices
 
 ### 1. #95 - Define operating-prep progression contract and stage gates
@@ -53,6 +69,10 @@ Learn/Practice/operating-prep boundaries, and entry/completion criteria.
 Why first:
 All later slices depend on shared stage definitions, grading semantics, and
 persistence boundaries.
+
+Design-phase note:
+#95 resolves the outstanding contract decisions listed above; it does not
+implement callsign/vocabulary/QSO features.
 
 ### 2. #96 - Add staged on-air vocabulary tracks for RX training
 
@@ -125,11 +145,13 @@ dependency flow:
 ## Acceptance mapping from #87
 
 - End-to-end progression documented: yes (stages above).
-- Learn/Practice/operating-prep boundary explicit: yes (boundaries section,
-  #95 scope).
+- Learn/Practice/operating-prep boundary explicit: partially. High-level
+  boundary intent is documented, but concrete ownership contracts are deferred
+  to #95.
 - Initial authentic-content scope defined: yes (#96, #97, #99).
 - Learner-specific station information defined: yes (#98).
 - Realism dimensions staged: yes (#101 after #100).
 - Follow-up work split into bounded issues: yes (#95-#101).
-- Enough direction for #80/#81 redesigns: yes (sequence and stage contracts
-  established before those redesigns are resumed).
+- Enough direction for #80/#81 redesigns: partially. The sequence and
+  curriculum direction are defined; detailed stage contracts still require #95
+  before screen-specific redesigns consume the model.

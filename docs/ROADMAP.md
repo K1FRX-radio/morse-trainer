@@ -14,9 +14,9 @@ visual identity decisions as part of functional PRs.
 
 ## Next
 
-- #95 — Define operating-prep progression contract and stage gates
+- Approval checkpoint: review and approve proposed first-contact slices (#95-#101)
 
-## Queue
+## Proposed queue (pending approval)
 
 - #96 — Add staged on-air vocabulary tracks for RX training
 - #97 — Add realistic callsign curriculum progression
@@ -30,9 +30,11 @@ visual identity decisions as part of functional PRs.
 
 #87 produced a staged first-contact progression proposal and bounded
 implementation slices (#95-#101) documented in
-`docs/first-contact-cw-curriculum-proposal.md`. Progress through those slices
-in order before resuming #61. Keep scope focused on curriculum behavior and
-domain contracts rather than branding or broad UI restyling.
+`docs/first-contact-cw-curriculum-proposal.md`. The #95-#101 sequence is
+proposed, not pre-approved for automatic execution. Before starting #95,
+explicitly approve the proposed slices/order and confirm whether any
+reprioritization is required against #61. Keep scope focused on curriculum
+behavior and domain contracts rather than branding or broad UI restyling.
 
 Preserve #92's timer-status polish plus #89's preparation countdown and #90's
 explicit submission behavior: playback ending must not force grading; the
@@ -95,8 +97,8 @@ Roadmap-item implementation PRs must update this file in the same PR:
    changes priority or a newly discovered blocker requires escalation.
 6. Paused and blocked items must not be promoted without explicit
    reprioritization or the required setup/decision.
-7. After #95-#101 are completed or reprioritized by explicit direction, resume
-   queued non-curriculum items beginning with #61.
+7. After proposal work like #87, pause for explicit approval of any proposed
+   follow-up slices/order before treating them as committed queue work.
 
 If `Next` is closed, blocked, already has an active implementation PR, or
 otherwise cannot be started safely, do not silently choose another issue.
