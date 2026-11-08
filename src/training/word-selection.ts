@@ -1,4 +1,9 @@
 import {
+  eligibleCallsigns,
+  type CallsignEntry,
+  type CallsignStage,
+} from "../content/callsigns.ts";
+import {
   eligibleOnAirVocabulary,
   eligibleWords,
   type CorpusWord,
@@ -10,6 +15,11 @@ export type FocusedWordEligibility = {
   candidates: readonly CorpusWord[];
 };
 
+export type FocusedCallsignEligibility = {
+  eligible: boolean;
+  candidates: readonly CallsignEntry[];
+};
+
 export type WordEligibilityOptions = {
   active: readonly string[];
   minimumLength: number;
@@ -19,6 +29,10 @@ export type WordEligibilityOptions = {
 
 export type OnAirVocabularyEligibilityOptions = WordEligibilityOptions & {
   stage: OnAirVocabularyStage;
+};
+
+export type CallsignEligibilityOptions = WordEligibilityOptions & {
+  stage: CallsignStage;
 };
 
 export type WordSelectionWeights = {
@@ -57,6 +71,20 @@ export function evaluateOnAirVocabularyEligibility(
     (word) =>
       word.text.length >= options.minimumLength &&
       word.text.length <= options.maximumLength,
+  );
+  return {
+    eligible: candidates.length >= options.minimumPoolSize,
+    candidates,
+  };
+}
+
+export function evaluateCallsignEligibility(
+  options: CallsignEligibilityOptions,
+): FocusedCallsignEligibility {
+  const candidates = eligibleCallsigns(options.active, options.stage).filter(
+    (callsign) =>
+      callsign.text.length >= options.minimumLength &&
+      callsign.text.length <= options.maximumLength,
   );
   return {
     eligible: candidates.length >= options.minimumPoolSize,

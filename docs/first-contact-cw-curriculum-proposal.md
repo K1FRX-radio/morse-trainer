@@ -10,7 +10,9 @@ Status update:
   `docs/operating-prep-progression-contract.md`
 - issue #96 completed staged on-air vocabulary selectors in the existing
   content/training stack
-- implementation issues #97-#101 remain pending explicit prioritization
+- issue #97 completed staged callsign progression selectors and deterministic
+  generation in the existing content/training stack
+- implementation issues #98-#101 remain pending explicit prioritization
   approval
 
 ## Goals
