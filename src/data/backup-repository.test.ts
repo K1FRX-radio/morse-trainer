@@ -100,6 +100,7 @@ function attemptRecord() {
 
 async function seedPortableState(repository: DexieTrainingRepository) {
   await repository.savePortableSettings(DEFAULT_SETTINGS);
+  await repository.saveLearnerStationProfile({});
   await repository.saveCurriculumState(
     createInitialState(DEFAULT_CURRICULUM_CONFIG),
   );
@@ -252,6 +253,9 @@ describe("portable backup and reset", () => {
       expect(await database.attempts.count()).toBe(1);
       expect(await repository.getPortableSettings()).toMatchObject({
         value: DEFAULT_SETTINGS,
+      });
+      expect(await repository.getLearnerStationProfile()).toMatchObject({
+        value: {},
       });
 
       const after = await repository.listDailyProjections({

@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import type { CurriculumState } from "../core/curriculum.ts";
+import type { LearnerStationProfile } from "../content/station-profile.ts";
 import type { SpeedSuggestionAfterAttempts } from "../core/settings.ts";
 import type {
   CharacterSpeedProficiencyQuery,
@@ -43,6 +44,10 @@ type TrainingDataProviderProps = {
   persistCurriculum?: (state: CurriculumState) => unknown;
   loadPersistedCurriculum: () => Promise<CurriculumState>;
   persistIntroductions?: (characters: string[]) => unknown;
+  loadLearnerStationProfile?: () => Promise<LearnerStationProfile>;
+  persistLearnerStationProfile?: (
+    profile: LearnerStationProfile,
+  ) => unknown;
   startLearnSessionPersistence: (
     options: LearnPersistenceStart,
   ) => Promise<LearnSessionPersistence>;
@@ -95,6 +100,8 @@ export function TrainingDataProvider({
   persistCurriculum,
   loadPersistedCurriculum,
   persistIntroductions,
+  loadLearnerStationProfile,
+  persistLearnerStationProfile,
   startLearnSessionPersistence,
   startPracticeSessionPersistence,
   getRetryClassification,
@@ -241,6 +248,16 @@ export function TrainingDataProvider({
       reconcileCurriculum,
       loadIntroductions,
       saveIntroductions,
+      ...(loadLearnerStationProfile
+        ? { loadLearnerStationProfile }
+        : {}),
+      ...(persistLearnerStationProfile
+        ? {
+            saveLearnerStationProfile: async (profile: LearnerStationProfile) => {
+              persistBestEffort(() => persistLearnerStationProfile(profile));
+            },
+          }
+        : {}),
       startLearnSessionPersistence: startLearnSessionPersistenceWithRefresh,
       startPracticeSessionPersistence:
         startPracticeSessionPersistenceWithRefresh,
@@ -267,6 +284,8 @@ export function TrainingDataProvider({
       reconcileCurriculum,
       loadIntroductions,
       saveIntroductions,
+      loadLearnerStationProfile,
+      persistLearnerStationProfile,
       startLearnSessionPersistenceWithRefresh,
       startPracticeSessionPersistenceWithRefresh,
       getRetryClassification,

@@ -41,6 +41,8 @@ function renderSettings(
     previewPortableBackup: vi.fn(),
     replacePortableBackup: vi.fn(),
     resetPortableData: vi.fn(),
+    loadLearnerStationProfile: vi.fn().mockResolvedValue({}),
+    saveLearnerStationProfile: vi.fn().mockResolvedValue(undefined),
   };
 
   return render(
@@ -421,5 +423,57 @@ describe("SettingsScreen continuous copy", () => {
     expect(
       screen.getByRole("button", { name: "Request persistent storage" }),
     ).toBeDisabled();
+  });
+
+  it("loads and saves learner profile with normalized callsign", async () => {
+    const loadLearnerStationProfile = vi.fn().mockResolvedValue({
+      callsign: "k1frx",
+      name: "alex",
+      qth: "boston",
+    });
+    const saveLearnerStationProfile = vi.fn().mockResolvedValue(undefined);
+
+    renderSettings(DEFAULT_SETTINGS, vi.fn(), {
+      loadLearnerStationProfile,
+      saveLearnerStationProfile,
+    });
+
+    await waitFor(() => expect(loadLearnerStationProfile).toHaveBeenCalled());
+    fireEvent.change(screen.getByLabelText("Learner callsign"), {
+      target: { value: "w1aw" },
+    });
+    fireEvent.change(screen.getByLabelText("Learner name"), {
+      target: { value: "sam" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Save learner station profile" }),
+    );
+
+    await waitFor(() =>
+      expect(saveLearnerStationProfile).toHaveBeenCalledWith(
+        expect.objectContaining({
+          callsign: "W1AW",
+          name: "SAM",
+          qth: "BOSTON",
+        }),
+      ),
+    );
+  });
+
+  it("blocks learner profile save when callsign format is invalid", async () => {
+    const saveLearnerStationProfile = vi.fn().mockResolvedValue(undefined);
+
+    renderSettings(DEFAULT_SETTINGS, vi.fn(), {
+      saveLearnerStationProfile,
+    });
+
+    fireEvent.change(screen.getByLabelText("Learner callsign"), {
+      target: { value: "??" },
+    });
+
+    expect(
+      screen.getByRole("button", { name: "Save learner station profile" }),
+    ).toBeDisabled();
+    expect(saveLearnerStationProfile).not.toHaveBeenCalled();
   });
 });

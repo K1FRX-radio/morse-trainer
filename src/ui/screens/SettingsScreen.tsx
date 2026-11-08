@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  normalizeLearnerStationProfile,
+  validateCallsign,
+  type LearnerStationProfile,
+} from "../../content/station-profile.ts";
+import {
   CHARACTER_WPM_BANDS,
   CONTINUOUS_COPY_DURATIONS,
   EFFECTIVE_WPM_BANDS,
@@ -73,7 +78,9 @@ export function SettingsScreen() {
   const { settings, update, outputDeviceId, setOutputDeviceId } = useSettings();
   const {
     exportPortableBackup,
+    loadLearnerStationProfile,
     previewPortableBackup,
+    saveLearnerStationProfile,
     replacePortableBackup,
     resetPortableData,
   } = useTrainingData();
@@ -98,7 +105,22 @@ export function SettingsScreen() {
   const [persistenceError, setPersistenceError] = useState<string | undefined>(
     undefined,
   );
+  const [learnerProfile, setLearnerProfile] = useState<LearnerStationProfile>(
+    {},
+  );
+  const [learnerProfileStatus, setLearnerProfileStatus] = useState<
+    string | undefined
+  >(undefined);
+  const [learnerProfileError, setLearnerProfileError] = useState<
+    string | undefined
+  >(undefined);
+  const [callsignError, setCallsignError] = useState<string | undefined>(
+    undefined,
+  );
   const outputSupport = getOutputSupport();
+
+  const profileUnavailable =
+    !loadLearnerStationProfile || !saveLearnerStationProfile;
 
   const refreshPersistenceStatus = useCallback(async (): Promise<void> => {
     if (!hasPersistenceApi()) {
@@ -144,6 +166,89 @@ export function SettingsScreen() {
   useEffect(() => {
     void refreshPersistenceStatus();
   }, [refreshPersistenceStatus]);
+
+  useEffect(() => {
+    if (profileUnavailable) {
+      return;
+    }
+    let canceled = false;
+    void (async () => {
+      try {
+        const profile = await loadLearnerStationProfile();
+        if (canceled) {
+          return;
+        }
+        setLearnerProfile({
+          callsign: profile.callsign ?? "",
+          name: profile.name ?? "",
+          qth: profile.qth ?? "",
+          rig: profile.rig ?? "",
+          power: profile.power ?? "",
+        });
+      } catch (error) {
+        if (canceled) {
+          return;
+        }
+        setLearnerProfileError(
+          error instanceof Error
+            ? error.message
+            : "Could not load learner station profile.",
+        );
+      }
+    })();
+    return () => {
+      canceled = true;
+    };
+  }, [loadLearnerStationProfile, profileUnavailable]);
+
+  function updateProfileField(field: keyof LearnerStationProfile, value: string) {
+    setLearnerProfile((current) => ({ ...current, [field]: value }));
+    setLearnerProfileStatus(undefined);
+    setLearnerProfileError(undefined);
+    if (field === "callsign") {
+      const trimmed = value.trim();
+      setCallsignError(
+        validateCallsign(trimmed.length > 0 ? trimmed.toUpperCase() : undefined),
+      );
+    }
+  }
+
+  async function saveProfile(): Promise<void> {
+    if (!saveLearnerStationProfile) {
+      setLearnerProfileError(
+        "Learner profile persistence is unavailable in this build.",
+      );
+      return;
+    }
+    const candidate = {
+      callsign: learnerProfile.callsign,
+      name: learnerProfile.name,
+      qth: learnerProfile.qth,
+      rig: learnerProfile.rig,
+      power: learnerProfile.power,
+    };
+    try {
+      const normalized = normalizeLearnerStationProfile(candidate);
+      await saveLearnerStationProfile(normalized);
+      setLearnerProfile({
+        callsign: normalized.callsign ?? "",
+        name: normalized.name ?? "",
+        qth: normalized.qth ?? "",
+        rig: normalized.rig ?? "",
+        power: normalized.power ?? "",
+      });
+      setCallsignError(undefined);
+      setLearnerProfileError(undefined);
+      setLearnerProfileStatus("Learner station profile saved.");
+    } catch (error) {
+      setLearnerProfileStatus(undefined);
+      setLearnerProfileError(
+        error instanceof Error
+          ? error.message
+          : "Could not save learner station profile.",
+      );
+    }
+  }
 
   async function enableOutputSelection(): Promise<void> {
     const granted = await requestOutputAccess();
@@ -424,6 +529,87 @@ export function SettingsScreen() {
         Learn recommends a continuous-copy duration for your active character
         set without changing this choice.
       </p>
+
+      <h3>Learner station profile</h3>
+      {profileUnavailable ? (
+        <p className="settings__note">
+          Learner profile persistence is unavailable in this build.
+        </p>
+      ) : (
+        <>
+          <label className="field">
+            <span className="field__label">Callsign</span>
+            <input
+              aria-label="Learner callsign"
+              type="text"
+              value={learnerProfile.callsign ?? ""}
+              onChange={(event) =>
+                updateProfileField("callsign", event.target.value.toUpperCase())
+              }
+            />
+          </label>
+          <label className="field">
+            <span className="field__label">Name</span>
+            <input
+              aria-label="Learner name"
+              type="text"
+              value={learnerProfile.name ?? ""}
+              onChange={(event) => updateProfileField("name", event.target.value)}
+            />
+          </label>
+          <label className="field">
+            <span className="field__label">QTH</span>
+            <input
+              aria-label="Learner QTH"
+              type="text"
+              value={learnerProfile.qth ?? ""}
+              onChange={(event) => updateProfileField("qth", event.target.value)}
+            />
+          </label>
+          <label className="field">
+            <span className="field__label">Rig (optional)</span>
+            <input
+              aria-label="Learner rig"
+              type="text"
+              value={learnerProfile.rig ?? ""}
+              onChange={(event) => updateProfileField("rig", event.target.value)}
+            />
+          </label>
+          <label className="field">
+            <span className="field__label">Power (optional)</span>
+            <input
+              aria-label="Learner power"
+              type="text"
+              value={learnerProfile.power ?? ""}
+              onChange={(event) => updateProfileField("power", event.target.value)}
+            />
+          </label>
+          <p className="settings__note">
+            Blank fields use deterministic generic station fallbacks in practice
+            content.
+          </p>
+          {callsignError && (
+            <p className="feedback feedback--bad" role="alert">
+              {callsignError}
+            </p>
+          )}
+          {learnerProfileError && (
+            <p className="feedback feedback--bad" role="alert">
+              {learnerProfileError}
+            </p>
+          )}
+          {learnerProfileStatus && <p role="status">{learnerProfileStatus}</p>}
+          <div className="field">
+            <button
+              type="button"
+              onClick={() => void saveProfile()}
+              disabled={Boolean(callsignError)}
+            >
+              Save learner station profile
+            </button>
+          </div>
+        </>
+      )}
 
       <h3>Audio output</h3>
       {!outputSupport.supported && (

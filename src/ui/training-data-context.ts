@@ -1,5 +1,6 @@
 import { createContext, useContext } from "react";
 import type { CurriculumState } from "../core/curriculum.ts";
+import type { LearnerStationProfile } from "../content/station-profile.ts";
 import type { SpeedSuggestionAfterAttempts } from "../core/settings.ts";
 import type {
   CharacterSpeedProficiencyQuery,
@@ -42,6 +43,10 @@ export type TrainingDataContextValue = {
   reconcileCurriculum: () => Promise<CurriculumState>;
   loadIntroductions: () => string[];
   saveIntroductions: (characters: string[]) => void;
+  loadLearnerStationProfile?: () => Promise<LearnerStationProfile>;
+  saveLearnerStationProfile?: (
+    profile: LearnerStationProfile,
+  ) => Promise<void>;
   startLearnSessionPersistence: (
     options: LearnPersistenceStart,
   ) => Promise<LearnSessionPersistence>;
