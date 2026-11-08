@@ -3,6 +3,11 @@
 // seedable so exercises are reproducible in tests.
 
 import type { Rng } from "../core/rng.ts";
+import {
+  generateCallsignForStage,
+  selectCallsign,
+  type CallsignStage,
+} from "./callsigns.ts";
 
 export type CopyContentMode =
   "letters" | "letters-numbers" | "words" | "callsigns";
@@ -77,16 +82,16 @@ function pick(pool: string, rng: Rng): string {
   return pool[Math.floor(rng() * pool.length)];
 }
 
-function randomInt(min: number, max: number, rng: Rng): number {
-  return min + Math.floor(rng() * (max - min + 1));
-}
-
 function randomGroup(pool: string, size: number, rng: Rng): string {
   let group = "";
   for (let i = 0; i < size; i++) {
     group += pick(pool, rng);
   }
   return group;
+}
+
+function randomInt(min: number, max: number, rng: Rng): number {
+  return min + Math.floor(rng() * (max - min + 1));
 }
 
 function uniqueCharacters(characters: Iterable<string>): string {
@@ -127,20 +132,42 @@ export function eligibleCopyWords(unlocked: Iterable<string>): string[] {
   return CW_WORDS.filter((word) => isComposedOf(word, allowed));
 }
 
-function generateCallsignFromPools(
-  letterPool: string,
-  digitPool: string,
+/** Generates a stage-specific plausible callsign prompt. */
+export function generateCallsign(
   rng: Rng,
+  stage: CallsignStage = "basic-domestic",
 ): string {
-  const prefix = randomGroup(letterPool, randomInt(1, 2, rng), rng);
-  const digit = pick(digitPool, rng);
-  const suffix = randomGroup(letterPool, randomInt(1, 3, rng), rng);
-  return prefix + digit + suffix;
+  return generateCallsignForStage(stage, rng);
 }
 
-/** Generates a callsign-style prompt: 1-2 prefix letters, a digit, 1-3 suffix. */
-export function generateCallsign(rng: Rng): string {
-  return generateCallsignFromPools(LETTERS, DIGITS, rng);
+export function generateStagedCallsignPrompt(
+  stage: CallsignStage,
+  rng: Rng,
+  scope: CopyPracticeScope,
+  unlocked: Iterable<string>,
+): string | undefined {
+  if (scope === "all-characters") {
+    return generateCallsign(rng, stage);
+  }
+  const staged = selectCallsign(unlocked, rng, stage)?.text;
+  if (staged) {
+    return staged;
+  }
+
+  // Keep existing unlocked-scope practice behavior as a safe fallback for
+  // sparse active sets while OP-2 stage gates are integrated in UI flow.
+  if (stage === "basic-domestic") {
+    const unlockedPool = uniqueCharacters(unlocked);
+    const letters = filterPool(LETTERS, unlockedPool);
+    const digits = filterPool(DIGITS, unlockedPool);
+    if (letters.length > 0 && digits.length > 0) {
+      const prefix = randomGroup(letters, randomInt(1, 2, rng), rng);
+      const digit = pick(digits, rng);
+      const suffix = randomGroup(letters, randomInt(1, 3, rng), rng);
+      return prefix + digit + suffix;
+    }
+  }
+  return undefined;
 }
 
 /** Generates one copy prompt for the given content mode. */
@@ -189,12 +216,12 @@ export function generateScopedCopyPrompt(
       return words[Math.floor(rng() * words.length)];
     }
     case "callsigns": {
-      const letters = filterPool(LETTERS, unlockedPool);
-      const digits = filterPool(DIGITS, unlockedPool);
-      if (letters.length === 0 || digits.length === 0) {
-        return undefined;
-      }
-      return generateCallsignFromPools(letters, digits, rng);
+      return generateStagedCallsignPrompt(
+        "basic-domestic",
+        rng,
+        scope,
+        unlockedPool,
+      );
     }
   }
 }
