@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createRng } from "../core/rng.ts";
+import { isPlausibleCallsignForStage } from "./callsigns.ts";
 import {
   CW_WORDS,
   GROUP_SIZE,
@@ -130,7 +131,7 @@ describe("generateCopyPrompt", () => {
       ["K", "M", "2"],
     );
     expect(prompt).toBeDefined();
-    expect(prompt).toMatch(/^[KM]{1,2}2[KM]{1,3}$/);
+    expect(isPlausibleCallsignForStage(prompt!, "basic-domestic")).toBe(true);
   });
 
   it("supports staged unlocked callsign selection hooks", () => {

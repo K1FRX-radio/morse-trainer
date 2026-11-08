@@ -84,6 +84,9 @@ Do not silently promote paused work into the active queue.
 - #89 — Add 3-2-1 countdown before continuous copy begins
 - #90 — Keep continuous copy open for transcription after CW playback ends
 - #78 — UI/UX sprint: audit current flows and define information architecture
+- #52 — Phase 5 kickoff: installable PWA foundation, offline shell, and safe updates
+- #51 — Checkpoint 4: audit and close Persistence & Analytics milestone
+- #60 — Design speed-aware CW proficiency with discrete global WPM bands
 
 ## Maintenance contract
 

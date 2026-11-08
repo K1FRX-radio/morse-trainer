@@ -40,6 +40,14 @@ license-database lookups and are not validated against real assignments.
   minimum pool-size thresholds so OP-2 gates can advance complexity without any
   separate character unlock mechanism.
 
+Portable slash path:
+
+- Portable identifiers require `/` plus at least one unlocked letter and digit.
+- The Learn curriculum order already includes `/`, so portable OP-2 eligibility
+  is reachable through the existing unlock progression without introducing a
+  separate symbol-unlock authority.
+- Until `/` is unlocked, portable stage selection is intentionally ineligible.
+
 ## Scope guardrails
 
 - No unlock-authority changes: Learn remains the sole source of unlock state.

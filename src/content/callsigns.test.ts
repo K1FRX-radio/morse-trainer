@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { createRng } from "../core/rng.ts";
+import { KOCH_ORDER } from "./curriculum-data.ts";
 import {
   CALLSIGN_CURATED_EXAMPLES,
   CALLSIGN_STAGES,
   eligibleCallsigns,
   generateCallsignForStage,
+  hasPortableSymbolEligibility,
   isPlausibleCallsignForStage,
   selectCallsign,
 } from "./callsigns.ts";
@@ -92,5 +94,76 @@ describe("selectCallsign", () => {
     expect(
       isPlausibleCallsignForStage(value!.text, "portable-identifiers"),
     ).toBe(true);
+  });
+
+  it("keeps unlocked basic-domestic fallback stage-plausible", () => {
+    const unlocked = ["K", "M", "2"];
+    const value = selectCallsign(unlocked, createRng(18), "basic-domestic");
+    expect(value).toBeDefined();
+    expect(isPlausibleCallsignForStage(value!.text, "basic-domestic")).toBe(
+      true,
+    );
+  });
+
+  it("requires slash eligibility for portable stage", () => {
+    expect(hasPortableSymbolEligibility(["K", "1", "A"])).toBe(false);
+    expect(hasPortableSymbolEligibility(["K", "1", "A", "/"])).toBe(true);
+
+    const withoutSlash = selectCallsign(
+      [
+        "A",
+        "B",
+        "C",
+        "D",
+        "E",
+        "F",
+        "G",
+        "H",
+        "I",
+        "J",
+        "K",
+        "L",
+        "M",
+        "N",
+        "O",
+        "P",
+        "Q",
+        "R",
+        "S",
+        "T",
+        "U",
+        "V",
+        "W",
+        "X",
+        "Y",
+        "Z",
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+      ],
+      createRng(5),
+      "portable-identifiers",
+    );
+    expect(withoutSlash).toBeUndefined();
+
+    const withSlash = selectCallsign(
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/".split(""),
+      createRng(5),
+      "portable-identifiers",
+    );
+    expect(withSlash).toBeDefined();
+  });
+});
+
+describe("portable symbol path", () => {
+  it("keeps slash reachable via Learn curriculum order", () => {
+    expect(KOCH_ORDER).toContain("/");
   });
 });

@@ -100,6 +100,55 @@ const INTERNATIONAL_PREFIXES = [
 ] as const;
 const PORTABLE_ISLAND_PREFIXES = ["EA8", "CT3", "KH6", "VP9", "ZS8"] as const;
 
+function hasEligibleCharacters(
+  text: string,
+  unlocked: ReadonlySet<string>,
+): boolean {
+  for (const character of text) {
+    if (!unlocked.has(character)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function canFormBasicDomesticPrefix(
+  prefix: string,
+  unlocked: ReadonlySet<string>,
+): boolean {
+  return hasEligibleCharacters(prefix, unlocked);
+}
+
+function generateBasicDomesticFromUnlocked(
+  unlocked: ReadonlySet<string>,
+  rng: Rng,
+): string | undefined {
+  const allowedPrefixes = BASIC_PREFIXES.filter((prefix) =>
+    canFormBasicDomesticPrefix(prefix, unlocked),
+  );
+  const allowedDigits = DIGITS.split("").filter((digit) => unlocked.has(digit));
+  const allowedLetters = LETTERS.split("").filter((letter) =>
+    unlocked.has(letter),
+  );
+
+  if (
+    allowedPrefixes.length === 0 ||
+    allowedDigits.length === 0 ||
+    allowedLetters.length === 0
+  ) {
+    return undefined;
+  }
+
+  const prefix = pick(allowedPrefixes, rng);
+  const digit = pick(allowedDigits, rng);
+  const suffixLength = randomInt(1, 3, rng);
+  let suffix = "";
+  for (let i = 0; i < suffixLength; i++) {
+    suffix += pick(allowedLetters, rng);
+  }
+  return `${prefix}${digit}${suffix}`;
+}
+
 export function isPlausibleCallsignForStage(
   text: string,
   stage: CallsignStage,
@@ -122,6 +171,16 @@ export function isPlausibleCallsignForStage(
         /^(II|AO|TM|LZ|9A)[0-9][A-Z]{2}$/.test(text)
       );
   }
+}
+
+export function hasPortableSymbolEligibility(
+  unlocked: Iterable<string>,
+): boolean {
+  const set = new Set(unlocked);
+  const hasSlash = set.has("/");
+  const hasDigit = DIGITS.split("").some((digit) => set.has(digit));
+  const hasLetter = LETTERS.split("").some((letter) => set.has(letter));
+  return hasSlash && hasDigit && hasLetter;
 }
 
 export function generateCallsignForStage(
@@ -164,12 +223,7 @@ export function generateCallsignForStage(
 }
 
 function isEligibleText(text: string, unlocked: ReadonlySet<string>): boolean {
-  for (const character of text) {
-    if (!unlocked.has(character)) {
-      return false;
-    }
-  }
-  return true;
+  return hasEligibleCharacters(text, unlocked);
 }
 
 /** Returns stage-tagged curated callsigns that can be copied with unlocked symbols. */
@@ -193,10 +247,21 @@ export function selectCallsign(
   stage: CallsignStage,
 ): CallsignEntry | undefined {
   const set = new Set(unlocked);
+  if (stage === "portable-identifiers" && !hasPortableSymbolEligibility(set)) {
+    return undefined;
+  }
   const curated = eligibleCallsigns(set, stage);
   if (curated.length > 0 && rng() < 0.6) {
     return curated[Math.floor(rng() * curated.length)];
   }
+
+  if (stage === "basic-domestic") {
+    const constrained = generateBasicDomesticFromUnlocked(set, rng);
+    if (constrained) {
+      return { text: constrained, stages: [stage], source: "generated" };
+    }
+  }
+
   for (let attempt = 0; attempt < 32; attempt++) {
     const text = generateCallsignForStage(stage, rng);
     if (isEligibleText(text, set)) {

@@ -90,10 +90,6 @@ function randomGroup(pool: string, size: number, rng: Rng): string {
   return group;
 }
 
-function randomInt(min: number, max: number, rng: Rng): number {
-  return min + Math.floor(rng() * (max - min + 1));
-}
-
 function uniqueCharacters(characters: Iterable<string>): string {
   let unique = "";
   for (const character of characters) {
@@ -149,25 +145,7 @@ export function generateStagedCallsignPrompt(
   if (scope === "all-characters") {
     return generateCallsign(rng, stage);
   }
-  const staged = selectCallsign(unlocked, rng, stage)?.text;
-  if (staged) {
-    return staged;
-  }
-
-  // Keep existing unlocked-scope practice behavior as a safe fallback for
-  // sparse active sets while OP-2 stage gates are integrated in UI flow.
-  if (stage === "basic-domestic") {
-    const unlockedPool = uniqueCharacters(unlocked);
-    const letters = filterPool(LETTERS, unlockedPool);
-    const digits = filterPool(DIGITS, unlockedPool);
-    if (letters.length > 0 && digits.length > 0) {
-      const prefix = randomGroup(letters, randomInt(1, 2, rng), rng);
-      const digit = pick(digits, rng);
-      const suffix = randomGroup(letters, randomInt(1, 3, rng), rng);
-      return prefix + digit + suffix;
-    }
-  }
-  return undefined;
+  return selectCallsign(unlocked, rng, stage)?.text;
 }
 
 /** Generates one copy prompt for the given content mode. */
