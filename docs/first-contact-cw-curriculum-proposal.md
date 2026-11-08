@@ -8,7 +8,9 @@ Status update:
 
 - issue #95 completed the operating-prep progression contract in
   `docs/operating-prep-progression-contract.md`
-- implementation issues #96-#101 remain pending explicit prioritization
+- issue #96 completed staged on-air vocabulary selectors in the existing
+  content/training stack
+- implementation issues #97-#101 remain pending explicit prioritization
   approval
 
 ## Goals
@@ -150,13 +152,11 @@ dependency flow:
 ## Acceptance mapping from #87
 
 - End-to-end progression documented: yes (stages above).
-- Learn/Practice/operating-prep boundary explicit: partially. High-level
-  boundary intent is documented, but concrete ownership contracts are deferred
-  to #95.
+- Learn/Practice/operating-prep boundary explicit: yes. Concrete ownership
+  contracts are defined in `docs/operating-prep-progression-contract.md`.
 - Initial authentic-content scope defined: yes (#96, #97, #99).
 - Learner-specific station information defined: yes (#98).
 - Realism dimensions staged: yes (#101 after #100).
 - Follow-up work split into bounded issues: yes (#95-#101).
-- Enough direction for #80/#81 redesigns: partially. The sequence and
-  curriculum direction are defined; detailed stage contracts still require #95
-  before screen-specific redesigns consume the model.
+- Enough direction for #80/#81 redesigns: yes. Stage contracts and gating are
+  defined by #95 for redesign consumers.
