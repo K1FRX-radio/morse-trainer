@@ -99,6 +99,22 @@ Approval is tied to the exact PR head SHA. The owner is mentioned only when that
 same head is both supervisor-approved and CI-green, at which point
 `owner:merge-ready` is applied. Merge authority remains explicit.
 
+CI checks out the PR head (not the synthetic merge commit), captures the actual
+checkout SHA before validation, and reports only that SHA. If the PR head has
+changed, the completed run cannot validate the newer commit. Supervisor review
+and repair also pin their checkout to the captured head; stale verdicts are
+discarded without starting another repair. A repair push uses an exact-SHA lease
+after verifying its parent commit, so a concurrent push or rewind cannot be
+overwritten.
+
+Only workflow-bot comments count as CI/review markers. Both publishers refresh
+comments after posting their result so concurrent CI and approval can converge
+on readiness. They recheck the live head around readiness updates and remove
+stale labels if a change is detected. GitHub labels are not commit-scoped or
+transactional: a later push can briefly leave an old label visible until the
+synchronize workflow resets it. SHA-bearing comments and current-head checks,
+not the label alone, are the evidence for the owner's manual merge decision.
+
 ## Disabling or recovering the loop
 
 To stop automatic model work immediately, disable the **Agent supervisor loop**

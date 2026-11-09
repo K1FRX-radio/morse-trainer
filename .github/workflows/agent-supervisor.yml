@@ -35,6 +35,7 @@ jobs:
         uses: actions/github-script@v7
         env:
           PR_NUMBER: ${{ env.PR_NUMBER }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         with:
           github-token: ${{ github.token }}
           script: |
@@ -48,7 +49,10 @@ jobs:
             });
 
             const eligible =
-              pr.head.repo?.full_name === `${owner}/${repo}` && !pr.draft;
+              pr.head.repo?.full_name === `${owner}/${repo}` &&
+              pr.state === "open" && !pr.draft &&
+              (!process.env.EVENT_HEAD_SHA ||
+                pr.head.sha === process.env.EVENT_HEAD_SHA);
             core.setOutput("eligible", String(eligible));
             core.setOutput("head_sha", pr.head.sha);
             if (!eligible) return;
@@ -105,6 +109,7 @@ jobs:
       pull-requests: read
     outputs:
       review_json: ${{ steps.codex.outputs.final-message }}
+      reviewed_sha: ${{ steps.review-context.outputs.head_sha }}
 
     steps:
       - name: Check out trusted base
@@ -114,8 +119,10 @@ jobs:
           persist-credentials: false
 
       - name: Prepare trusted policy and PR context
+        id: review-context
         env:
           GH_TOKEN: ${{ github.token }}
+          EXPECTED_HEAD_SHA: ${{ needs.prepare-state.outputs.head_sha }}
         run: |
           set -euo pipefail
           mkdir -p .agent-context .agent-policy
@@ -131,12 +138,18 @@ jobs:
             echo "PR is draft; supervisor loop is intentionally idle." >&2
             exit 1
           fi
+          if [[ "$(jq -r '.state' .agent-context/pull.json)" != "open" ||
+                "$(jq -r '.head.sha' .agent-context/pull.json)" != "$EXPECTED_HEAD_SHA" ]]; then
+            echo "PR changed before review; refusing stale work." >&2
+            exit 1
+          fi
 
           gh pr view "$PR_NUMBER" \
             --repo "$GITHUB_REPOSITORY" \
             --json number,title,body,author,baseRefName,baseRefOid,headRefName,headRefOid,isDraft,state,comments,reviews \
             > .agent-context/pr.json
 
+          test "$(jq -r '.headRefOid' .agent-context/pr.json)" = "$EXPECTED_HEAD_SHA"
           base_ref="$(jq -r '.baseRefName' .agent-context/pr.json)"
           git fetch --no-tags origin \
             "+refs/heads/$base_ref:refs/remotes/origin/$base_ref" \
@@ -149,7 +162,9 @@ jobs:
           git show "refs/remotes/origin/$base_ref:.github/agent/review-schema.json" \
             > .agent-policy/review-schema.json
 
-          git checkout --detach "refs/remotes/origin/pr-$PR_NUMBER"
+          test "$(git rev-parse "refs/remotes/origin/pr-$PR_NUMBER")" = "$EXPECTED_HEAD_SHA"
+          git checkout --detach "$EXPECTED_HEAD_SHA"
+          echo "head_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
           : > .agent-context/issues.jsonl
           { jq -r '.body // ""' .agent-context/pr.json | grep -oE '#[0-9]+' || true; } \
@@ -211,7 +226,8 @@ jobs:
         env:
           REVIEW_JSON: ${{ needs.review.outputs.review_json }}
           PR_NUMBER: ${{ env.PR_NUMBER }}
-          HEAD_SHA: ${{ needs.prepare-state.outputs.head_sha }}
+          HEAD_SHA: ${{ needs.review.outputs.reviewed_sha }}
+          EXPECTED_HEAD_SHA: ${{ needs.prepare-state.outputs.head_sha }}
           OWNER_LOGIN: frivolas
           MAX_REPAIR_ROUNDS: "5"
         with:
@@ -224,6 +240,19 @@ jobs:
             const repo = context.repo.repo;
             const ownerLogin = process.env.OWNER_LOGIN;
             const maxRounds = Number(process.env.MAX_REPAIR_ROUNDS);
+            const isCurrentHead = async () => {
+              const { data: pr } = await github.rest.pulls.get({
+                owner,
+                repo,
+                pull_number: issue_number,
+              });
+              return Boolean(headSha) &&
+                headSha === process.env.EXPECTED_HEAD_SHA &&
+                pr.head.sha === headSha &&
+                pr.head.repo?.full_name === `${owner}/${repo}` &&
+                pr.state === "open" && !pr.draft;
+            };
+            if (!(await isCurrentHead())) return;
 
             const labels = {
               pending: { name: "review:pending", color: "bfdadc" },
@@ -234,10 +263,16 @@ jobs:
               mergeReady: { name: "owner:merge-ready", color: "5319e7" },
             };
 
-            const comments = await github.paginate(
-              github.rest.issues.listComments,
-              { owner, repo, issue_number, per_page: 100 },
+            const readAutomationComments = async () => (
+              await github.paginate(
+                github.rest.issues.listComments,
+                { owner, repo, issue_number, per_page: 100 },
+              )
+            ).filter((comment) =>
+              comment.user?.login === "github-actions[bot]" &&
+              comment.user?.type === "Bot",
             );
+            const comments = await readAutomationComments();
             const priorRepairRounds = comments.filter((comment) =>
               comment.body?.includes("<!-- agent-supervisor:changes_requested"),
             ).length;
@@ -253,6 +288,7 @@ jobs:
                 `\n\nAutomatic repair limit (${maxRounds}) reached. @${ownerLogin}, please decide how to proceed.`;
             }
 
+            if (!(await isCurrentHead())) return;
             for (const label of Object.values(labels)) {
               try {
                 await github.rest.issues.removeLabel({
@@ -273,12 +309,26 @@ jobs:
                   ? labels.changes.name
                   : labels.owner.name;
 
+            const discardStaleState = async () => {
+              for (const name of [stateLabel, labels.mergeReady.name]) {
+                try {
+                  await github.rest.issues.removeLabel({ owner, repo, issue_number, name });
+                } catch (error) {
+                  if (error.status !== 404) throw error;
+                }
+              }
+            };
+            if (!(await isCurrentHead())) return;
             await github.rest.issues.addLabels({
               owner,
               repo,
               issue_number,
               labels: [stateLabel],
             });
+            if (!(await isCurrentHead())) {
+              await discardStaleState();
+              return;
+            }
 
             const findings =
               review.findings.length === 0
@@ -319,22 +369,31 @@ jobs:
             });
 
             if (verdict === "approve") {
+              const currentComments = await readAutomationComments();
               const greenMarker = `<!-- agent-ci:green head=${headSha} -->`;
               const readyMarker = `<!-- owner-notify:merge-ready head=${headSha} -->`;
-              const ciGreen = comments.some((comment) =>
+              const ciGreen = currentComments.some((comment) =>
                 comment.body?.includes(greenMarker),
               );
-              const alreadyNotified = comments.some((comment) =>
+              const alreadyNotified = currentComments.some((comment) =>
                 comment.body?.includes(readyMarker),
               );
 
               if (ciGreen) {
+                if (!(await isCurrentHead())) {
+                  await discardStaleState();
+                  return;
+                }
                 await github.rest.issues.addLabels({
                   owner,
                   repo,
                   issue_number,
                   labels: [labels.mergeReady.name],
                 });
+                if (!(await isCurrentHead())) {
+                  await discardStaleState();
+                  return;
+                }
                 if (!alreadyNotified) {
                   await github.rest.issues.createComment({
                     owner,
@@ -347,6 +406,10 @@ jobs:
               }
             }
 
+            if (!(await isCurrentHead())) {
+              await discardStaleState();
+              return;
+            }
             core.setOutput("verdict", verdict);
 
   repair:
@@ -369,6 +432,8 @@ jobs:
       - name: Check out PR branch and capture trusted repair context
         env:
           GH_TOKEN: ${{ github.token }}
+          EXPECTED_HEAD_SHA: ${{ needs.review.outputs.reviewed_sha }}
+          REVIEW_JSON: ${{ needs.review.outputs.review_json }}
         run: |
           set -euo pipefail
           mkdir -p .agent-context .agent-policy
@@ -379,12 +444,19 @@ jobs:
             echo "Refusing repair for fork PR: $head_repo" >&2
             exit 1
           fi
+          if [[ "$(jq -r '.state' .agent-context/pull.json)" != "open" ||
+                "$(jq -r '.draft' .agent-context/pull.json)" == "true" ||
+                "$(jq -r '.head.sha' .agent-context/pull.json)" != "$EXPECTED_HEAD_SHA" ]]; then
+            echo "PR changed before repair; refusing stale work." >&2
+            exit 1
+          fi
 
           gh pr view "$PR_NUMBER" \
             --repo "$GITHUB_REPOSITORY" \
             --json number,title,body,author,baseRefName,baseRefOid,headRefName,headRefOid \
             > .agent-context/pr.json
 
+          test "$(jq -r '.headRefOid' .agent-context/pr.json)" = "$EXPECTED_HEAD_SHA"
           base_ref="$(jq -r '.baseRefName' .agent-context/pr.json)"
           head_ref="$(jq -r '.headRefName' .agent-context/pr.json)"
           echo "HEAD_REF=$head_ref" >> "$GITHUB_ENV"
@@ -398,12 +470,10 @@ jobs:
           git show "refs/remotes/origin/$base_ref:docs/REVIEW_POLICY.md" \
             > .agent-policy/REVIEW_POLICY.md
 
-          git checkout -B "$head_ref" "refs/remotes/origin/pr-$PR_NUMBER"
+          test "$(git rev-parse "refs/remotes/origin/pr-$PR_NUMBER")" = "$EXPECTED_HEAD_SHA"
+          git checkout -B "$head_ref" "$EXPECTED_HEAD_SHA"
 
-          gh api \
-            "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" \
-            | jq '[.[] | select(.body | contains("<!-- agent-supervisor:changes_requested"))] | last' \
-            > .agent-context/latest-review.json
+          printf '%s\n' "$REVIEW_JSON" > .agent-context/latest-review.json
 
           gh pr edit "$PR_NUMBER" \
             --repo "$GITHUB_REPOSITORY" \
@@ -452,8 +522,19 @@ jobs:
       - name: Commit, push, and request fresh CI/review
         env:
           GH_TOKEN: ${{ github.token }}
+          EXPECTED_HEAD_SHA: ${{ needs.review.outputs.reviewed_sha }}
         run: |
           set -euo pipefail
+          current_pr="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER")"
+          if [[ "$(jq -r '.state' <<< "$current_pr")" != "open" ||
+                "$(jq -r '.draft' <<< "$current_pr")" == "true" ||
+                "$(jq -r '.head.repo.full_name' <<< "$current_pr")" != "$GITHUB_REPOSITORY" ||
+                "$(jq -r '.head.ref' <<< "$current_pr")" != "$HEAD_REF" ||
+                "$(jq -r '.head.sha' <<< "$current_pr")" != "$EXPECTED_HEAD_SHA" ]]; then
+            echo "PR changed during repair; refusing stale publication." >&2
+            exit 1
+          fi
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD_SHA"
           rm -rf .agent-context .agent-policy
 
           if [[ -z "$(git status --porcelain)" ]]; then
@@ -473,7 +554,9 @@ jobs:
               commit -m "fix: address automated supervisor review"
 
           gh auth setup-git
-          git -c core.hooksPath=/dev/null push origin "HEAD:$HEAD_REF"
+          git -c core.hooksPath=/dev/null push \
+            --force-with-lease="refs/heads/$HEAD_REF:$EXPECTED_HEAD_SHA" \
+            origin "HEAD:refs/heads/$HEAD_REF"
 
           # GITHUB_TOKEN pushes intentionally do not recursively trigger most
           # workflows. Explicitly request both trusted CI and the next review.
