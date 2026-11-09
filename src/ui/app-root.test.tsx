@@ -90,6 +90,7 @@ function bootstrapFixture(): TrainingDataBootstrap {
       continuousCopyDurationMs: 60000,
       speedSuggestionAfterAttempts: 3,
     },
+    learnerProfile: {},
     curriculum: {
       config: {
         order: ["K", "M", "U"],

@@ -43,6 +43,51 @@ describe("DexieTrainingRepository", () => {
     }
   });
 
+  it("creates and updates learner station profile through validated records", async () => {
+    const database = new TrainerDatabase({
+      name: crypto.randomUUID(),
+      indexedDB,
+      IDBKeyRange,
+    });
+    const repository = new DexieTrainingRepository(database, {
+      now: () => new Date("2026-09-24T18:00:00.000Z"),
+    });
+
+    try {
+      await repository.open();
+      await expect(repository.getLearnerStationProfile()).resolves.toBeUndefined();
+      await expect(
+        repository.saveLearnerStationProfile({
+          callsign: "k1frx",
+          name: "alex",
+          qth: "boston",
+        }),
+      ).resolves.toMatchObject({
+        id: "learner-station-profile",
+        updatedAt: "2026-09-24T18:00:00.000Z",
+        value: {
+          callsign: "K1FRX",
+          name: "ALEX",
+          qth: "BOSTON",
+        },
+      });
+      await expect(
+        repository.saveLearnerStationProfile({
+          callsign: "W1AW",
+          power: "5w",
+        }),
+      ).resolves.toMatchObject({
+        value: { callsign: "W1AW", power: "5W" },
+      });
+      await expect(repository.getLearnerStationProfile()).resolves.toMatchObject(
+        { value: { callsign: "W1AW", power: "5W" } },
+      );
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
   it("creates and updates curriculum and introduction snapshots", async () => {
     const database = new TrainerDatabase({
       name: crypto.randomUUID(),

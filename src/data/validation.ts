@@ -19,6 +19,7 @@ import type {
   CurriculumStateRecord,
   DailyProjectionRecord,
   IntroductionsRecord,
+  LearnerStationProfileRecord,
   LegacyMigrationBundle,
   PortableSettingsRecord,
   ProgressionEventRecord,
@@ -663,6 +664,30 @@ const portableSettingsRecordSchema = persistedRecordSchema
   })
   .strict();
 
+const learnerCallsignSchema = z
+  .string()
+  .regex(
+    /^(?:[A-Z0-9]{1,4}\/)?[A-Z]{1,2}[0-9][A-Z0-9]{1,4}(?:\/[A-Z0-9]{1,4})?$/,
+    "callsign must use a plausible amateur-radio format",
+  );
+
+const learnerStationProfileValueSchema = z
+  .object({
+    callsign: learnerCallsignSchema.optional(),
+    name: z.string().min(1).optional(),
+    qth: z.string().min(1).optional(),
+    rig: z.string().min(1).optional(),
+    power: z.string().min(1).optional(),
+  })
+  .strict();
+
+const learnerStationProfileRecordSchema = persistedRecordSchema
+  .extend({
+    id: z.literal("learner-station-profile"),
+    value: learnerStationProfileValueSchema,
+  })
+  .strict();
+
 const curriculumStateRecordSchema = persistedRecordSchema
   .extend({
     id: z.literal("curriculum-state"),
@@ -1061,6 +1086,14 @@ export function parsePortableSettingsRecord(
   value: unknown,
 ): PortableSettingsRecord {
   return portableSettingsRecordSchema.parse(value) as PortableSettingsRecord;
+}
+
+export function parseLearnerStationProfileRecord(
+  value: unknown,
+): LearnerStationProfileRecord {
+  return learnerStationProfileRecordSchema.parse(
+    value,
+  ) as LearnerStationProfileRecord;
 }
 
 export function parseTrainingDataset(

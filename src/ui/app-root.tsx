@@ -300,6 +300,12 @@ export function AppRoot({ dependencies }: AppRootProps) {
           persistIntroductions={(characters) =>
             bootstrap.repository.saveIntroductions(characters)
           }
+          loadLearnerStationProfile={async () =>
+            (await bootstrap.repository.getLearnerStationProfile())?.value ?? {}
+          }
+          persistLearnerStationProfile={(profile) =>
+            bootstrap.repository.saveLearnerStationProfile(profile)
+          }
           startLearnSessionPersistence={(options) =>
             DurableLearnSession.create(bootstrap.repository, options)
           }
