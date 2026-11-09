@@ -476,4 +476,63 @@ describe("SettingsScreen continuous copy", () => {
     ).toBeDisabled();
     expect(saveLearnerStationProfile).not.toHaveBeenCalled();
   });
+
+  it("shows success only after learner profile persistence resolves", async () => {
+    let resolveSave: (() => void) | undefined;
+    const saveLearnerStationProfile = vi.fn().mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+
+    renderSettings(DEFAULT_SETTINGS, vi.fn(), {
+      saveLearnerStationProfile,
+    });
+
+    fireEvent.change(screen.getByLabelText("Learner callsign"), {
+      target: { value: "W1AW" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Save learner station profile" }),
+    );
+
+    expect(
+      screen.queryByText("Learner station profile saved."),
+    ).not.toBeInTheDocument();
+
+    resolveSave?.();
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("Learner station profile saved."),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it("shows an error when learner profile persistence rejects", async () => {
+    const saveLearnerStationProfile = vi
+      .fn()
+      .mockRejectedValue(new Error("profile write failed"));
+
+    renderSettings(DEFAULT_SETTINGS, vi.fn(), {
+      saveLearnerStationProfile,
+    });
+
+    fireEvent.change(screen.getByLabelText("Learner callsign"), {
+      target: { value: "W1AW" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Save learner station profile" }),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "profile write failed",
+      ),
+    );
+    expect(
+      screen.queryByText("Learner station profile saved."),
+    ).not.toBeInTheDocument();
+  });
 });

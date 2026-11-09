@@ -254,7 +254,7 @@ export function TrainingDataProvider({
       ...(persistLearnerStationProfile
         ? {
             saveLearnerStationProfile: async (profile: LearnerStationProfile) => {
-              persistBestEffort(() => persistLearnerStationProfile(profile));
+              await Promise.resolve(persistLearnerStationProfile(profile));
             },
           }
         : {}),

@@ -220,12 +220,16 @@ export function SettingsScreen() {
       );
       return;
     }
-    const candidate = {
-      callsign: learnerProfile.callsign,
-      name: learnerProfile.name,
-      qth: learnerProfile.qth,
-      rig: learnerProfile.rig,
-      power: learnerProfile.power,
+    const candidate: LearnerStationProfile = {
+      ...(learnerProfile.callsign !== undefined
+        ? { callsign: learnerProfile.callsign }
+        : {}),
+      ...(learnerProfile.name !== undefined ? { name: learnerProfile.name } : {}),
+      ...(learnerProfile.qth !== undefined ? { qth: learnerProfile.qth } : {}),
+      ...(learnerProfile.rig !== undefined ? { rig: learnerProfile.rig } : {}),
+      ...(learnerProfile.power !== undefined
+        ? { power: learnerProfile.power }
+        : {}),
     };
     try {
       const normalized = normalizeLearnerStationProfile(candidate);
@@ -587,6 +591,10 @@ export function SettingsScreen() {
           <p className="settings__note">
             Blank fields use deterministic generic station fallbacks in practice
             content.
+          </p>
+          <p className="settings__note">
+            This profile is stored locally on this device and is included in
+            exported backups.
           </p>
           {callsignError && (
             <p className="feedback feedback--bad" role="alert">

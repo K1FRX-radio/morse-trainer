@@ -59,8 +59,8 @@ describe("bootstrapTrainingData", () => {
       saveLearnerStationProfile: async () => {
         calls.push("profile-save");
         learnerProfile = {
-          id: "learner-station-profile",
-          schemaVersion: 1,
+          id: "learner-station-profile" as const,
+          schemaVersion: 1 as const,
           updatedAt: "2026-09-24T18:00:00.000Z",
           value: {},
         };
@@ -139,8 +139,8 @@ describe("bootstrapTrainingData", () => {
       saveLearnerStationProfile: async () => {
         calls.push("profile-save");
         return {
-          id: "learner-station-profile",
-          schemaVersion: 1,
+          id: "learner-station-profile" as const,
+          schemaVersion: 1 as const,
           updatedAt: "2026-09-24T18:00:00.000Z",
           value: {},
         };
@@ -225,8 +225,8 @@ describe("bootstrapTrainingData", () => {
       },
       getCurriculumState: async () => curriculumRecord,
       getLearnerStationProfile: async () => ({
-        id: "learner-station-profile",
-        schemaVersion: 1,
+        id: "learner-station-profile" as const,
+        schemaVersion: 1 as const,
         updatedAt: "2026-09-24T18:00:00.000Z",
         value: {},
       }),

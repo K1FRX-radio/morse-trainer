@@ -63,6 +63,10 @@ export function normalizeLearnerStationProfile(
   profile: LearnerStationProfile,
 ): LearnerStationProfile {
   const callsign = normalizeText(profile.callsign);
+  const name = normalizeText(profile.name);
+  const qth = normalizeText(profile.qth);
+  const rig = normalizeText(profile.rig);
+  const power = normalizeText(profile.power);
   const error = validateCallsign(callsign);
   if (error) {
     throw new Error(error);
@@ -70,12 +74,10 @@ export function normalizeLearnerStationProfile(
 
   return {
     ...(callsign ? { callsign } : {}),
-    ...(normalizeText(profile.name) ? { name: normalizeText(profile.name) } : {}),
-    ...(normalizeText(profile.qth) ? { qth: normalizeText(profile.qth) } : {}),
-    ...(normalizeText(profile.rig) ? { rig: normalizeText(profile.rig) } : {}),
-    ...(normalizeText(profile.power)
-      ? { power: normalizeText(profile.power) }
-      : {}),
+    ...(name ? { name } : {}),
+    ...(qth ? { qth } : {}),
+    ...(rig ? { rig } : {}),
+    ...(power ? { power } : {}),
   };
 }
 
