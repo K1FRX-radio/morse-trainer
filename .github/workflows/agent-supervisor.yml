@@ -118,14 +118,14 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Prepare trusted policy and PR context
+      - name: Capture trusted base and PR context
         id: review-context
         env:
           GH_TOKEN: ${{ github.token }}
           EXPECTED_HEAD_SHA: ${{ needs.prepare-state.outputs.head_sha }}
         run: |
           set -euo pipefail
-          mkdir -p .agent-context .agent-policy
+          mkdir -p .agent-context
 
           gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > .agent-context/pull.json
           head_repo="$(jq -r '.head.repo.full_name // ""' .agent-context/pull.json)"
@@ -155,12 +155,7 @@ jobs:
             "+refs/heads/$base_ref:refs/remotes/origin/$base_ref" \
             "+refs/pull/$PR_NUMBER/head:refs/remotes/origin/pr-$PR_NUMBER"
 
-          git show "refs/remotes/origin/$base_ref:AGENTS.md" \
-            > .agent-policy/AGENTS.md
-          git show "refs/remotes/origin/$base_ref:docs/REVIEW_POLICY.md" \
-            > .agent-policy/REVIEW_POLICY.md
-          git show "refs/remotes/origin/$base_ref:.github/agent/review-schema.json" \
-            > .agent-policy/review-schema.json
+          echo "policy_sha=$(git rev-parse "refs/remotes/origin/$base_ref")" >> "$GITHUB_OUTPUT"
 
           test "$(git rev-parse "refs/remotes/origin/pr-$PR_NUMBER")" = "$EXPECTED_HEAD_SHA"
           git checkout --detach "$EXPECTED_HEAD_SHA"
@@ -179,7 +174,18 @@ jobs:
               done
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
+
+      - name: Materialize trusted review policy
+        env:
+          POLICY_SHA: ${{ steps.review-context.outputs.policy_sha }}
+        run: |
+          set -euo pipefail
+          rm -rf .agent-policy
+          mkdir .agent-policy
+          git show "$POLICY_SHA:AGENTS.md" > .agent-policy/AGENTS.md
+          git show "$POLICY_SHA:docs/REVIEW_POLICY.md" > .agent-policy/REVIEW_POLICY.md
+          git show "$POLICY_SHA:.github/agent/review-schema.json" > .agent-policy/review-schema.json
 
       - name: Run supervisor review
         id: codex
@@ -234,6 +240,12 @@ jobs:
           github-token: ${{ github.token }}
           script: |
             const review = JSON.parse(process.env.REVIEW_JSON);
+            if (
+              !review ||
+              !["approve", "changes_requested", "owner_decision"].includes(review.verdict) ||
+              typeof review.summary !== "string" ||
+              !Array.isArray(review.findings)
+            ) throw new Error("Invalid supervisor review shape");
             const issue_number = Number(process.env.PR_NUMBER);
             const headSha = process.env.HEAD_SHA;
             const owner = context.repo.owner;
@@ -273,8 +285,12 @@ jobs:
               comment.user?.type === "Bot",
             );
             const comments = await readAutomationComments();
+            const parseReview = (comment) => {
+              const match = /^<!-- agent-supervisor:(approve|changes_requested|owner_decision) head=([0-9a-f]{40}) -->\n## Automated supervisor review\n\n\*\*Verdict:\*\* `\1`\n\n/.exec(comment.body ?? "");
+              return match ? { verdict: match[1], headSha: match[2] } : undefined;
+            };
             const priorRepairRounds = comments.filter((comment) =>
-              comment.body?.includes("<!-- agent-supervisor:changes_requested"),
+              parseReview(comment)?.verdict === "changes_requested",
             ).length;
 
             let verdict = review.verdict;
@@ -372,11 +388,13 @@ jobs:
               const currentComments = await readAutomationComments();
               const greenMarker = `<!-- agent-ci:green head=${headSha} -->`;
               const readyMarker = `<!-- owner-notify:merge-ready head=${headSha} -->`;
+              const greenBody = `${greenMarker}\nAutomated CI is green for \`${headSha.slice(0, 8)}\`.`;
+              const readyBody = `${readyMarker}\n@${ownerLogin}, this exact PR head is supervisor-approved and CI-green. It is ready for your merge decision.`;
               const ciGreen = currentComments.some((comment) =>
-                comment.body?.includes(greenMarker),
+                comment.body === greenBody,
               );
               const alreadyNotified = currentComments.some((comment) =>
-                comment.body?.includes(readyMarker),
+                comment.body === readyBody,
               );
 
               if (ciGreen) {
@@ -399,8 +417,7 @@ jobs:
                     owner,
                     repo,
                     issue_number,
-                    body:
-                      `${readyMarker}\n@${ownerLogin}, this exact PR head is supervisor-approved and CI-green. It is ready for your merge decision.`,
+                    body: readyBody,
                   });
                 }
               }
@@ -430,13 +447,14 @@ jobs:
           persist-credentials: false
 
       - name: Check out PR branch and capture trusted repair context
+        id: repair-context
         env:
           GH_TOKEN: ${{ github.token }}
           EXPECTED_HEAD_SHA: ${{ needs.review.outputs.reviewed_sha }}
           REVIEW_JSON: ${{ needs.review.outputs.review_json }}
         run: |
           set -euo pipefail
-          mkdir -p .agent-context .agent-policy
+          mkdir -p .agent-context
 
           gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > .agent-context/pull.json
           head_repo="$(jq -r '.head.repo.full_name // ""' .agent-context/pull.json)"
@@ -465,10 +483,7 @@ jobs:
             "+refs/heads/$base_ref:refs/remotes/origin/$base_ref" \
             "+refs/pull/$PR_NUMBER/head:refs/remotes/origin/pr-$PR_NUMBER"
 
-          git show "refs/remotes/origin/$base_ref:AGENTS.md" \
-            > .agent-policy/AGENTS.md
-          git show "refs/remotes/origin/$base_ref:docs/REVIEW_POLICY.md" \
-            > .agent-policy/REVIEW_POLICY.md
+          echo "policy_sha=$(git rev-parse "refs/remotes/origin/$base_ref")" >> "$GITHUB_OUTPUT"
 
           test "$(git rev-parse "refs/remotes/origin/pr-$PR_NUMBER")" = "$EXPECTED_HEAD_SHA"
           git checkout -B "$head_ref" "$EXPECTED_HEAD_SHA"
@@ -481,7 +496,17 @@ jobs:
             --add-label "agent:working"
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
+
+      - name: Materialize trusted repair policy
+        env:
+          POLICY_SHA: ${{ steps.repair-context.outputs.policy_sha }}
+        run: |
+          set -euo pipefail
+          rm -rf .agent-policy
+          mkdir .agent-policy
+          git show "$POLICY_SHA:AGENTS.md" > .agent-policy/AGENTS.md
+          git show "$POLICY_SHA:docs/REVIEW_POLICY.md" > .agent-policy/REVIEW_POLICY.md
 
       - name: Run repair agent
         id: repair_codex

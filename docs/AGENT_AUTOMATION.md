@@ -62,9 +62,12 @@ GitHub token while Codex is running. Git credentials are not persisted by
 checkout. A later fixed shell step commits/pushes the resulting workspace with
 Git hooks disabled.
 
-Supervisor and repair policy files are copied from the trusted base branch before
-the PR head is checked out. A PR therefore cannot weaken its own review schema,
-review policy, or implementation instructions for that automation run.
+Supervisor and repair jobs capture the trusted base commit before checking out
+the PR head. Dependency installation uses `npm ci --ignore-scripts`, so PR and
+dependency install lifecycle scripts cannot rewrite policy or other review inputs.
+Immediately before each Codex step, the workflow replaces `.agent-policy/` with
+policy files read from that pinned base commit; review also restores the output
+schema. PR-tracked copies and install-script policy replacements are not used.
 
 Fork PRs are intentionally excluded from this loop.
 
@@ -81,8 +84,12 @@ The workflow maintains these labels:
 - `owner:decision`
 - `owner:merge-ready`
 
-Supervisor comments include a hidden machine marker so review rounds can be
-counted deterministically.
+Supervisor comments begin with a hidden machine marker and a fixed review header
+with the matching verdict. Only bot-authored comments with that exact leading
+format count as review evidence or repair rounds. CI-green and owner-notification
+evidence must match their complete fixed publisher bodies. Markers embedded in
+model-authored summaries or findings are never evidence. CI uses the latest valid
+supervisor verdict for the verified head, not an earlier superseded approval.
 
 After five automatic requested-change rounds, the workflow stops and escalates
 to `owner:decision` rather than continuing indefinitely.

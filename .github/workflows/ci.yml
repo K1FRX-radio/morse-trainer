@@ -98,25 +98,30 @@ jobs:
             );
             let comments = await readAutomationComments();
             const greenMarker = `<!-- agent-ci:green head=${headSha} -->`;
-            const approveMarker = `<!-- agent-supervisor:approve head=${headSha} -->`;
             const readyMarker = `<!-- owner-notify:merge-ready head=${headSha} -->`;
+            const greenBody = `${greenMarker}\nAutomated CI is green for \`${headSha.slice(0, 8)}\`.`;
+            const readyBody = `${readyMarker}\n@${ownerLogin}, this exact PR head is supervisor-approved and CI-green. It is ready for your merge decision.`;
+            const parseReview = (comment) => {
+              const match = /^<!-- agent-supervisor:(approve|changes_requested|owner_decision) head=([0-9a-f]{40}) -->\n## Automated supervisor review\n\n\*\*Verdict:\*\* `\1`\n\n/.exec(comment.body ?? "");
+              return match ? { verdict: match[1], headSha: match[2] } : undefined;
+            };
 
             if (!(await isCurrentHead())) return;
-            if (!comments.some((comment) => comment.body?.includes(greenMarker))) {
+            if (!comments.some((comment) => comment.body === greenBody)) {
               await github.rest.issues.createComment({
                 owner,
                 repo,
                 issue_number,
-                body: `${greenMarker}\nAutomated CI is green for \`${headSha.slice(0, 8)}\`.`,
+                body: greenBody,
               });
             }
 
             comments = await readAutomationComments();
-            const approved = comments.some((comment) =>
-              comment.body?.includes(approveMarker),
-            );
+            const latestReview = comments.map(parseReview)
+              .filter((review) => review?.headSha === headSha).at(-1);
+            const approved = latestReview?.verdict === "approve";
             const alreadyNotified = comments.some((comment) =>
-              comment.body?.includes(readyMarker),
+              comment.body === readyBody,
             );
             if (!approved) return;
 
@@ -158,8 +163,7 @@ jobs:
                 owner,
                 repo,
                 issue_number,
-                body:
-                  `${readyMarker}\n@${ownerLogin}, this exact PR head is supervisor-approved and CI-green. It is ready for your merge decision.`,
+                body: readyBody,
               });
             }
 
