@@ -102,8 +102,8 @@ export function gradeStructuredQsoDrill(
   drill: StructuredQsoDrill,
   response: string,
 ): StructuredFieldCapture {
-  // Each label delimits a field independently, so omitted fields do not
-  // discard other captures. Match whole values to reject extra characters.
+  // Match complete expected values before checking the next label, so label
+  // text inside a value is preserved and omitted fields remain independent.
   let remaining = normalizeCopyForExact(drill.prompt);
   const escapePattern = (value: string) =>
     value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -115,16 +115,13 @@ export function gradeStructuredQsoDrill(
     return escapePattern(label);
   });
   const compactResponse = normalizeCopyForExact(response);
-  const compactFields = labels.map(
-    (label) =>
-      new RegExp(`${label}(.+?)(?=${labels.join("|")}|$)`).exec(
-        compactResponse,
-      )?.[1],
-  );
   const tokens = normalizeText(response).split(" ");
   const results = drill.expectations.map((expectation, index) => {
     const expected = normalizeCopyForExact(expectation.expected);
     // Also accept complete field values supplied without the exchange labels.
+    const labeledValueCaptured = new RegExp(
+      `${labels[index]}${escapePattern(expected)}(?=${labels.join("|")}|$)`,
+    ).test(compactResponse);
     const captured =
       tokens.some((_, start) => {
         let candidate = "";
@@ -134,7 +131,7 @@ export function gradeStructuredQsoDrill(
           if (candidate.length >= expected.length) break;
         }
         return false;
-      }) || normalizeCopyForExact(compactFields[index] ?? "") === expected;
+      }) || labeledValueCaptured;
     return { ...expectation, captured };
   });
 

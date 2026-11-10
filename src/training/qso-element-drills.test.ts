@@ -180,3 +180,44 @@ describe("compact exchanges with omitted fields", () => {
     },
   );
 });
+
+describe("label text within structured field values", () => {
+  it.each([
+    ["LU6KM", "ADELE", "NEW YORK"],
+    ["DE1ABC", "ERNST", "DENVER"],
+    ["K1RST", "QTH NAME", "WXFORD"],
+  ])("preserves complete values for %s / %s / %s", (callsign, name, qth) => {
+    const drill = {
+      templateId: "regression-embedded-labels",
+      label: "Exchange",
+      prompt: `DE ${callsign} RST 559 NAME ${name} QTH ${qth} WX RAIN`,
+      expectations: [
+        { field: "callsign" as const, expected: callsign, required: true },
+        { field: "rst" as const, expected: "559", required: true },
+        { field: "name" as const, expected: name, required: true },
+        { field: "qth" as const, expected: qth, required: true },
+        { field: "wx" as const, expected: "RAIN", required: false },
+      ],
+    };
+
+    for (const [response, captured] of [
+      [drill.prompt, [true, true, true, true, true]],
+      [
+        `DE ${callsign} NAME ${name} QTH ${qth}`,
+        [true, false, true, true, false],
+      ],
+      [
+        `DE ${callsign}X RST 559 NAME ${name}X QTH ${qth}X`,
+        [false, true, false, false, false],
+      ],
+    ] as const) {
+      const spaced = gradeStructuredQsoDrill(drill, response);
+      const compact = gradeStructuredQsoDrill(
+        drill,
+        response.replace(/\s+/g, ""),
+      );
+      expect(compact).toEqual(spaced);
+      expect(compact.results.map(({ captured }) => captured)).toEqual(captured);
+    }
+  });
+});
