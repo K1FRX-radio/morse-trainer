@@ -778,9 +778,21 @@ export function useLearnSession() {
         schedulerPerformance = [];
       }
       if (startToken !== flowToken.current) return;
-      const learnerProfile = loadLearnerStationProfile
-        ? await loadLearnerStationProfile()
-        : {};
+      let learnerProfile = {};
+      if (
+        mode === "review" &&
+        structuredQsoDrills &&
+        loadLearnerStationProfile
+      ) {
+        try {
+          learnerProfile = await loadLearnerStationProfile();
+        } catch (cause) {
+          if (startToken === flowToken.current) {
+            setPersistenceFailed("session-start", cause);
+          }
+          return;
+        }
+      }
       if (startToken !== flowToken.current) return;
 
       const session = new LearnSession({
@@ -798,6 +810,9 @@ export function useLearnSession() {
       try {
         persistence = await startLearnSessionPersistence({
           mode,
+          ...(mode === "review" && structuredQsoDrills
+            ? { operatingPrepStage: "OP-3" as const }
+            : {}),
           activeCharacters: session.unlockedNow,
           settings: {
             charWpm: sessionTiming.charWpm,
@@ -1000,7 +1015,7 @@ export function useLearnSession() {
           );
         }
       }
-      saveCurriculum(stateRef.current);
+      if (!outcome.fieldCapture) saveCurriculum(stateRef.current);
       forceTick((n) => n + 1);
       setFeedback({
         correct: outcome.correct,

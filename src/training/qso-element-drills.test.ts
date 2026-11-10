@@ -44,7 +44,10 @@ describe("gradeStructuredQsoDrill", () => {
       rng: createRng(1),
     });
 
-    const exact = gradeStructuredQsoDrill(callsignReport, callsignReport.prompt);
+    const exact = gradeStructuredQsoDrill(
+      callsignReport,
+      callsignReport.prompt,
+    );
     expect(exact.requiredScore).toBe(1);
     expect(exact.exactCopyMatched).toBe(true);
 
@@ -85,4 +88,43 @@ describe("gradeStructuredQsoDrill", () => {
       },
     ]);
   });
+});
+
+describe("complete structured field values", () => {
+  const drill = {
+    templateId: "regression",
+    label: "Exchange",
+    prompt: "DE K1ABC RST 579 NAME ALEX QTH NEW YORK",
+    expectations: [
+      { field: "callsign", expected: "K1ABC", required: true },
+      { field: "rst", expected: "579", required: true },
+      { field: "name", expected: "ALEX", required: true },
+      { field: "qth", expected: "NEW YORK", required: true },
+    ],
+  } as const;
+
+  it.each(["K1ABCD 1579", "DEK1ABCDRST1579NAMEALEXQTHNEWYORK"])(
+    "rejects extended callsigns and incorrect reports: %s",
+    (response) => {
+      const result = gradeStructuredQsoDrill(
+        { ...drill, expectations: [...drill.expectations] },
+        response,
+      );
+      expect(
+        result.results.slice(0, 2).map(({ captured }) => captured),
+      ).toEqual([false, false]);
+    },
+  );
+
+  it.each(["dek1abcrst579namealexqthnewyork", "K1ABC 579 ALEX NEWYORK"])(
+    "captures complete multiword values without spaces: %s",
+    (response) => {
+      expect(
+        gradeStructuredQsoDrill(
+          { ...drill, expectations: [...drill.expectations] },
+          response,
+        ).requiredScore,
+      ).toBe(1);
+    },
+  );
 });

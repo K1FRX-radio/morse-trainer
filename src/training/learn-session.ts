@@ -414,11 +414,13 @@ export class LearnSession {
       return this.current;
     }
     if (this.mode === "review") {
-      const structured = this.structuredQsoExercises[this.structuredQsoCursor++];
+      const structured =
+        this.structuredQsoExercises[this.structuredQsoCursor++];
       if (structured) {
         this.current = structured;
         return this.current;
       }
+      if (this.structuredQsoExercises.length > 0) return undefined;
       if (this.startedContinuousCopy || this.completedContinuousCopy) {
         return undefined;
       }
@@ -659,7 +661,7 @@ export class LearnSession {
       this.alignedTypedCharacters += normalizedAnswer.length;
       this.alignedCorrectCharacters += grade.perChar.filter(Boolean).length;
       correct = grade.correct;
-      if (!assisted) {
+      if (!assisted && !exercise.fieldCapture) {
         [...normalizedTarget].forEach((char, index) => {
           recordAttempt(this.state, char, "rx", grade.perChar[index] ?? false);
           this.rxAttempts += 1;

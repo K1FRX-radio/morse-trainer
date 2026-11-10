@@ -106,7 +106,9 @@ export const trainingSessionRecordSchema = persistedRecordSchema
       "copy-practice",
       "send-practice",
       "imported-text-rx",
+      "operating-prep",
     ]),
+    operatingPrepStage: z.literal("OP-3").optional(),
     mode: z.enum(["learn", "copy", "send", "review", "imported-text-rx"]),
     status: z.enum(["active", "completed", "interrupted"]),
     startedAt: capturedDateTimeSchema,
@@ -138,6 +140,7 @@ export const trainingSessionRecordSchema = persistedRecordSchema
       "copy-practice": ["copy"],
       "send-practice": ["send"],
       "imported-text-rx": ["imported-text-rx"],
+      "operating-prep": ["review"],
     }[session.source];
     if (!allowedModes.includes(session.mode)) {
       context.addIssue({
@@ -377,7 +380,13 @@ export const trainingAttemptRecordSchema = persistedRecordSchema
   .extend({
     sessionId: z.string().min(1),
     occurredAt: capturedDateTimeSchema,
-    source: z.enum(["learn", "copy-practice", "send-practice"]),
+    source: z.enum([
+      "learn",
+      "copy-practice",
+      "send-practice",
+      "operating-prep",
+    ]),
+    operatingPrepStage: z.literal("OP-3").optional(),
     direction: z.enum(["rx", "tx"]),
     exerciseType: z.enum([
       "copy-character",

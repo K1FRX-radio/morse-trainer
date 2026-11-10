@@ -102,11 +102,39 @@ export function gradeStructuredQsoDrill(
   drill: StructuredQsoDrill,
   response: string,
 ): StructuredFieldCapture {
-  const normalizedResponse = normalizeText(response);
-  const results = drill.expectations.map((expectation) => ({
-    ...expectation,
-    captured: normalizedResponse.includes(normalizeText(expectation.expected)),
-  }));
+  // Parse compact full exchanges using the template's literal field labels.
+  // Captured values must match in full, so extra callsign/report digits fail.
+  let remaining = normalizeCopyForExact(drill.prompt);
+  const escapePattern = (value: string) =>
+    value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  let pattern = "^";
+  for (const expectation of drill.expectations) {
+    const expected = normalizeCopyForExact(expectation.expected);
+    const index = remaining.indexOf(expected);
+    pattern += escapePattern(remaining.slice(0, index)) + "(.+?)";
+    remaining = remaining.slice(index + expected.length);
+  }
+  pattern += escapePattern(remaining) + "$";
+  const compactFields = new RegExp(pattern).exec(
+    normalizeCopyForExact(response),
+  );
+  const tokens = normalizeText(response).split(" ");
+  const results = drill.expectations.map((expectation, index) => {
+    const expected = normalizeCopyForExact(expectation.expected);
+    // Also accept complete field values supplied without the exchange labels.
+    const captured =
+      tokens.some((_, start) => {
+        let candidate = "";
+        for (let end = start; end < tokens.length; end += 1) {
+          candidate += tokens[end];
+          if (candidate === expected) return true;
+          if (candidate.length >= expected.length) break;
+        }
+        return false;
+      }) ||
+      normalizeCopyForExact(compactFields?.[index + 1] ?? "") === expected;
+    return { ...expectation, captured };
+  });
 
   const requiredFieldCount = results.filter((result) => result.required).length;
   const capturedRequiredFieldCount = results.filter(

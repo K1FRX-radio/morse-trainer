@@ -53,6 +53,7 @@ describe("DurableLearnSession", () => {
         repository,
         {
           mode: "review",
+          operatingPrepStage: "OP-3",
           activeCharacters: ["K", "M"],
           settings: {
             charWpm: 20,
@@ -111,8 +112,26 @@ describe("DurableLearnSession", () => {
         },
       );
 
+      expect(await database.curriculum.get("curriculum-state")).toBeUndefined();
+      expect(
+        await database.introductions.get("completed-introductions"),
+      ).toBeUndefined();
+      await session.finish({
+        activeMs: 1000,
+        activeDateBuckets: activeDateBuckets(1000),
+        completedCards: 1,
+        curriculum: state,
+        introductions: ["K", "M"],
+      });
+      expect(await database.sessions.get("session-field")).toMatchObject({
+        source: "operating-prep",
+        operatingPrepStage: "OP-3",
+        status: "completed",
+      });
       const attempt = await database.attempts.get("attempt-field");
       expect(attempt).toMatchObject({
+        source: "operating-prep",
+        operatingPrepStage: "OP-3",
         correct: false,
         exactCopyMatched: false,
         fieldCapture: {

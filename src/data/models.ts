@@ -29,7 +29,11 @@ export type CapturedDateTime = {
 };
 
 export type SessionSource =
-  "learn" | "copy-practice" | "send-practice" | "imported-text-rx";
+  | "learn"
+  | "copy-practice"
+  | "send-practice"
+  | "imported-text-rx"
+  | "operating-prep";
 export type SessionMode =
   "learn" | "copy" | "send" | "review" | "imported-text-rx";
 export type SessionStatus = "active" | "completed" | "interrupted";
@@ -44,6 +48,7 @@ export type ActiveDateBucket = {
 
 export type TrainingSessionRecord = PersistedRecord & {
   source: SessionSource;
+  operatingPrepStage?: "OP-3";
   mode: SessionMode;
   status: SessionStatus;
   startedAt: CapturedDateTime;
@@ -136,6 +141,7 @@ export type TrainingAttemptRecord = PersistedRecord & {
   sessionId: string;
   occurredAt: CapturedDateTime;
   source: SessionSource;
+  operatingPrepStage?: "OP-3";
   direction: AttemptDirection;
   exerciseType: AttemptExerciseType;
   rawTarget: string;

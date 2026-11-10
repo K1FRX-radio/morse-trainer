@@ -458,6 +458,18 @@ describe("buildCharacterSpeedProficiency", () => {
   it("includes only clean RX evidence and includes all intended RX exercise sources", () => {
     const attempts: TrainingAttemptRecord[] = [
       attempt({
+        id: "excluded-operating-prep",
+        occurredAtUtc: "2026-09-24T10:59:00.000Z",
+        exerciseType: "copy-word",
+        direction: "rx",
+        source: "operating-prep",
+        target: "K",
+        answer: "K",
+        correct: true,
+        charWpmBand: 20,
+        effectiveWpmBand: 12,
+      }),
+      attempt({
         id: "excluded-assisted",
         occurredAtUtc: "2026-09-24T11:00:00.000Z",
         exerciseType: "copy-character",

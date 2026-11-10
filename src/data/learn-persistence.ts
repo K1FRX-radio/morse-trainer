@@ -38,6 +38,7 @@ export type LearnPersistenceSettings = {
 
 export type LearnPersistenceStart = {
   mode: LearnSessionMode;
+  operatingPrepStage?: "OP-3";
   activeCharacters: string[];
   settings: LearnPersistenceSettings;
 };
@@ -225,7 +226,10 @@ export class DurableLearnSession implements LearnSessionPersistence {
       id: createId(),
       schemaVersion: RECORD_SCHEMA_VERSION,
       updatedAt: startedAt.utc,
-      source: "learn",
+      source: options.operatingPrepStage ? "operating-prep" : "learn",
+      ...(options.operatingPrepStage
+        ? { operatingPrepStage: options.operatingPrepStage }
+        : {}),
       mode: options.mode,
       status: "active",
       startedAt,
@@ -292,7 +296,10 @@ export class DurableLearnSession implements LearnSessionPersistence {
       updatedAt: occurredAt.utc,
       sessionId: this.record.id,
       occurredAt,
-      source: "learn",
+      source: this.record.source,
+      ...(this.record.operatingPrepStage
+        ? { operatingPrepStage: this.record.operatingPrepStage }
+        : {}),
       direction: "rx",
       exerciseType: evidence.exerciseType,
       rawTarget: evidence.target,
@@ -332,16 +339,25 @@ export class DurableLearnSession implements LearnSessionPersistence {
         this.record.attemptCount + 1,
         nextQualifyingAttemptCount,
       );
-      const result = await this.repository.commitLearnAttempt({
+      const shared = {
         expectedSessionRevision: this.record.revision,
         session: nextSession,
         attempt,
-        curriculum: curriculumRecord(frozenSnapshot.curriculum, occurredAt.utc),
-        introductions: introductionsRecord(
-          frozenSnapshot.introductions,
-          occurredAt.utc,
-        ),
-      });
+      };
+      const result =
+        this.record.source === "operating-prep"
+          ? await this.repository.commitPracticeAttempt(shared)
+          : await this.repository.commitLearnAttempt({
+              ...shared,
+              curriculum: curriculumRecord(
+                frozenSnapshot.curriculum,
+                occurredAt.utc,
+              ),
+              introductions: introductionsRecord(
+                frozenSnapshot.introductions,
+                occurredAt.utc,
+              ),
+            });
       this.record = result.session;
       this.qualifyingAttemptCount = nextQualifyingAttemptCount;
       if (evidence.exerciseType === "continuous-copy") {

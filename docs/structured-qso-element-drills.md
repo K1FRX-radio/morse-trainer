@@ -5,7 +5,8 @@ scoring used by issue #99.
 
 ## Drill sequence
 
-Review-mode operating-prep runs these templates before continuous copy:
+Operating-prep runs these templates in a separate session that ends after the
+third drill:
 
 1. `op3-callsign-rst` (Callsign + report)
 2. `op3-name-qth` (Name + QTH)
@@ -40,7 +41,12 @@ from strict full-string correctness.
 Attempt persistence stores:
 
 - `exactCopyMatched`
+- Source `operating-prep` and stage `OP-3`
 - `fieldCapture` metadata (template id, required counts, score, per-field results)
+
+Operating-prep writes no curriculum or introduction records and is excluded from
+Learn proficiency evidence. Field values must match completely; normalization
+ignores case and whitespace, including multiword QTH values.
 
 These records preserve compatibility with existing Learn advancement semantics:
 

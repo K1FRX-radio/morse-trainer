@@ -358,8 +358,9 @@ describe("LearnSession modes", () => {
     expect(new Set(second.gradingTarget)).toEqual(new Set(["K", "M"]));
   });
 
-  it("runs structured QSO drills when enabled before continuous copy", () => {
+  it("isolates structured QSO drills from curriculum and advancement", () => {
     const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    const before = structuredClone(state);
     const session = new LearnSession({
       state,
       mode: "review",
@@ -389,15 +390,9 @@ describe("LearnSession modes", () => {
     if (third?.type !== "copy-word") throw new Error("expected drill 3");
     session.submit(third.target);
 
-    const event = session.next();
-    expect(event?.type).toBe("continuous-copy");
-    if (event?.type !== "continuous-copy") {
-      throw new Error("expected continuous copy");
-    }
-    session.completeContinuousCopy(
-      event.plan.gradingTarget,
-      event.plan.scheduledDurationMs,
-    );
+    expect(session.next()).toBeUndefined();
+    expect(state).toEqual(before);
+    expect(session.summary().advancementAssessment).toBeUndefined();
 
     expect(session.summary()).toMatchObject({
       cards: 3,
