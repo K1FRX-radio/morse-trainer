@@ -985,9 +985,7 @@ export function useLearnSession() {
       const ex = exerciseRef.current;
       if (!session || !ex) return;
       const submission: StructuredCopySubmission | string =
-        fieldAnswers !== undefined
-          ? { response: input, fieldAnswers }
-          : input;
+        fieldAnswers !== undefined ? { response: input, fieldAnswers } : input;
       const outcome = session.submit(submission);
       if (
         outcome.exercise.type === "copy-character" ||
@@ -1167,7 +1165,9 @@ export function useLearnSession() {
           queued.kind === "isolated" ? queued.value : currentAnswerRef.current,
           claimedToken,
           queued.kind === "isolated" ? 0 : undefined,
-          queued.kind === "isolated" ? undefined : currentFieldAnswersRef.current,
+          queued.kind === "isolated"
+            ? undefined
+            : currentFieldAnswersRef.current,
         );
       }
     },

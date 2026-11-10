@@ -39,7 +39,7 @@ function normalizeCopyForExact(value: string): string {
 }
 
 function normalizeFieldValue(value: string): string {
-  return value.toUpperCase().replace(/\s+/g, " ").trim();
+  return value.toUpperCase().replace(/\s+/g, "").trim();
 }
 
 function pick<T>(options: readonly T[], rng: Rng): T {

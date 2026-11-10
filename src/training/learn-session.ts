@@ -635,7 +635,8 @@ export class LearnSession {
       this.practiced.add(exercise.target);
     } else if (exercise.type === "copy-character") {
       this.isolatedPrompts += 1;
-      const answer = parsedInput?.response ?? (typeof input === "string" ? input : "");
+      const answer =
+        parsedInput?.response ?? (typeof input === "string" ? input : "");
       correct = gradeCopy(exercise.target, answer).correct;
       if (!assisted) {
         this.eligibleIsolatedObservations += 1;
@@ -648,7 +649,8 @@ export class LearnSession {
     } else {
       // Groups and words: sequence-aligned grading credits target positions even
       // when characters are inserted or dropped, so per-character mastery is safe.
-      const answer = parsedInput?.response ?? (typeof input === "string" ? input : "");
+      const answer =
+        parsedInput?.response ?? (typeof input === "string" ? input : "");
       const grade = gradeCopyAligned(exercise.target, answer);
       const normalizedTarget = normalizeCopy(exercise.target);
       const normalizedAnswer = normalizeCopy(answer);

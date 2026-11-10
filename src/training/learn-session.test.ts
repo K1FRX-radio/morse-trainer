@@ -382,12 +382,14 @@ describe("LearnSession modes", () => {
       response: first.target,
       fieldAnswers: {
         callsign: String(
-          first.fieldCapture?.expectations.find((field) => field.field === "callsign")
-            ?.expected ?? "",
+          first.fieldCapture?.expectations.find(
+            (field) => field.field === "callsign",
+          )?.expected ?? "",
         ),
         rst: String(
-          first.fieldCapture?.expectations.find((field) => field.field === "rst")
-            ?.expected ?? "",
+          first.fieldCapture?.expectations.find(
+            (field) => field.field === "rst",
+          )?.expected ?? "",
         ),
       },
     });
@@ -409,20 +411,24 @@ describe("LearnSession modes", () => {
       response: third.target,
       fieldAnswers: {
         callsign: String(
-          third.fieldCapture?.expectations.find((field) => field.field === "callsign")
-            ?.expected ?? "",
+          third.fieldCapture?.expectations.find(
+            (field) => field.field === "callsign",
+          )?.expected ?? "",
         ),
         rst: String(
-          third.fieldCapture?.expectations.find((field) => field.field === "rst")
-            ?.expected ?? "",
+          third.fieldCapture?.expectations.find(
+            (field) => field.field === "rst",
+          )?.expected ?? "",
         ),
         name: String(
-          third.fieldCapture?.expectations.find((field) => field.field === "name")
-            ?.expected ?? "",
+          third.fieldCapture?.expectations.find(
+            (field) => field.field === "name",
+          )?.expected ?? "",
         ),
         qth: String(
-          third.fieldCapture?.expectations.find((field) => field.field === "qth")
-            ?.expected ?? "",
+          third.fieldCapture?.expectations.find(
+            (field) => field.field === "qth",
+          )?.expected ?? "",
         ),
         wx: String(
           third.fieldCapture?.expectations.find((field) => field.field === "wx")

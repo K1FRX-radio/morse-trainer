@@ -2582,6 +2582,9 @@ describe("LearnScreen audio sequencing", () => {
       expect(screen.queryByText(/characters/)).not.toBeInTheDocument();
       const input = screen.getByLabelText("Your copy") as HTMLInputElement;
       expect(input).toBeEnabled();
+      expect(
+        screen.queryByRole("button", { name: "Submit" }),
+      ).not.toBeInTheDocument();
       await driver.answerCurrentPrompt(target);
       completedWords += 1;
     }

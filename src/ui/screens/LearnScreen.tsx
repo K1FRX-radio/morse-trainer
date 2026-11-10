@@ -929,7 +929,10 @@ export function LearnScreen() {
             aria-label="Your copy"
           />
           {structuredExpectations.length > 0 && (
-            <div className="learn__structured-fields" aria-label="Structured field answers">
+            <div
+              className="learn__structured-fields"
+              aria-label="Structured field answers"
+            >
               {structuredExpectations.map((expectation) => {
                 const label = STRUCTURED_FIELD_LABELS[expectation.field];
                 return (
@@ -974,15 +977,16 @@ export function LearnScreen() {
             >
               Replay
             </button>
-            {exercise.type === "copy-word" && (
-              <button
-                type="button"
-                onClick={() => submitGroupWord(value, structuredAnswers)}
-                disabled={!answerReady || !!feedback}
-              >
-                Submit
-              </button>
-            )}
+            {exercise.type === "copy-word" &&
+              structuredExpectations.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => submitGroupWord(value, structuredAnswers)}
+                  disabled={!answerReady || !!feedback}
+                >
+                  Submit
+                </button>
+              )}
           </div>
 
           {feedback && (

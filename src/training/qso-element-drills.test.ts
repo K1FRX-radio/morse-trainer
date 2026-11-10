@@ -58,10 +58,14 @@ describe("gradeStructuredQsoDrill", () => {
     expect(fieldOnly.requiredScore).toBe(1);
     expect(fieldOnly.exactCopyMatched).toBe(false);
 
-    const exactOnly = gradeStructuredQsoDrill(callsignReport, callsignReport.prompt, {
-      callsign: "WRONG",
-      rst: "000",
-    });
+    const exactOnly = gradeStructuredQsoDrill(
+      callsignReport,
+      callsignReport.prompt,
+      {
+        callsign: "WRONG",
+        rst: "000",
+      },
+    );
     expect(exactOnly.exactCopyMatched).toBe(true);
     expect(exactOnly.requiredScore).toBe(0);
   });
@@ -140,8 +144,15 @@ describe("gradeStructuredQsoDrill", () => {
       qth: " new   york ",
     });
 
+    const compactQth = gradeStructuredQsoDrill(nameQth, "", {
+      name: "ALEX",
+      qth: "NEWYORK",
+    });
+
     expect(graded.requiredScore).toBe(1);
     expect(graded.results.every((result) => result.captured)).toBe(true);
+    expect(compactQth.requiredScore).toBe(1);
+    expect(compactQth.results.every((result) => result.captured)).toBe(true);
   });
 
   it("does not penalize missing optional fields", () => {

@@ -50,7 +50,7 @@ from free text. The grader compares each submitted field value directly against
 its expected value after normalizing:
 
 - case (uppercase)
-- intra-field whitespace (trim and collapse runs)
+- intra-field whitespace (remove all whitespace)
 
 As a result, callsign/report extensions are rejected, multiword QTH values are
 supported, and missing required fields are uncaptured.
