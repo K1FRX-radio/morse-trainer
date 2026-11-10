@@ -9,6 +9,8 @@ export type StructuredFieldExpectation = {
   required: boolean;
 };
 
+export type StructuredFieldAnswers = Partial<Record<QsoFieldId, string>>;
+
 export type StructuredFieldResult = StructuredFieldExpectation & {
   captured: boolean;
 };
@@ -32,196 +34,16 @@ export type StructuredQsoDrill = {
 const RST_CHOICES = ["559", "579", "599"] as const;
 const WX_CHOICES = ["SUNNY", "CLOUDY", "RAIN", "WINDY"] as const;
 
-const FIELD_LABELS: Record<QsoFieldId, string> = {
-  callsign: "DE",
-  rst: "RST",
-  name: "NAME",
-  qth: "QTH",
-  wx: "WX",
-};
-
-const OPTIONAL_CONNECTOR_TOKEN = "UR";
-
 function normalizeCopyForExact(value: string): string {
   return value.toUpperCase().replace(/\s+/g, "").trim();
 }
 
+function normalizeFieldValue(value: string): string {
+  return value.toUpperCase().replace(/\s+/g, " ").trim();
+}
+
 function pick<T>(options: readonly T[], rng: Rng): T {
   return options[Math.floor(rng() * options.length)];
-}
-
-type FieldToken = {
-  field: QsoFieldId;
-  value: string;
-  token: string;
-  labeled: boolean;
-};
-
-function buildFieldTokens(
-  expectations: readonly StructuredFieldExpectation[],
-): FieldToken[] {
-  const seen = new Set<string>();
-  const tokens: FieldToken[] = [];
-
-  for (const expectation of expectations) {
-    const value = normalizeCopyForExact(expectation.expected);
-    for (const candidate of [
-      { token: value, labeled: false },
-      { token: `${FIELD_LABELS[expectation.field]}${value}`, labeled: true },
-    ] as const) {
-      const key = `${expectation.field}:${candidate.token}`;
-      if (seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      tokens.push({
-        field: expectation.field,
-        value,
-        token: candidate.token,
-        labeled: candidate.labeled,
-      });
-    }
-  }
-
-  return tokens;
-}
-
-function isFieldContent(field: string, value: string): boolean {
-  return field === "rst"
-    ? /^\d+$/.test(value)
-    : field === "callsign"
-      ? /^[A-Z0-9/]+$/.test(value) && /\d/.test(value)
-      : /^[A-Z]+$/.test(value);
-}
-
-// Boundary checks must consume complete neighboring fields rather than matching
-// a label or expected-value substring inside an incorrect value.
-function buildBoundaryChecks(
-  response: string,
-  fieldTokens: readonly FieldToken[],
-) {
-  const prefixMemo = new Map<number, boolean>();
-  const suffixMemo = new Map<number, boolean>();
-  const labels = Object.entries(FIELD_LABELS);
-
-  function hasCompletePrefix(end: number): boolean {
-    if (end === 0) return true;
-    const cached = prefixMemo.get(end);
-    if (cached !== undefined) return cached;
-    let complete = [
-      ...fieldTokens.map(({ token }) => token),
-      OPTIONAL_CONNECTOR_TOKEN,
-    ].some(
-      (token) =>
-        end >= token.length &&
-        response.slice(end - token.length, end) === token &&
-        hasCompletePrefix(end - token.length),
-    );
-    // Incorrect labeled fields can precede a capture too. A new, different
-    // label must delimit their value; splitting at a repeated label would
-    // accept NAME XXNAMEALEX (or DE XXDELU2SL) as a correct capture.
-    if (!complete) {
-      complete = labels.some(([field, label]) => {
-        if (
-          !labels.some(
-            ([nextField, nextLabel]) =>
-              nextField !== field && response.startsWith(nextLabel, end),
-          )
-        )
-          return false;
-        for (let start = 0; start < end - label.length; start += 1) {
-          if (!response.startsWith(label, start)) continue;
-          const valueStart = start + label.length;
-          // Do not absorb an already complete field and the next label into
-          // one incorrect value to reach a later embedded label.
-          if (
-            fieldTokens.some(
-              (token) =>
-                token.labeled &&
-                token.field === field &&
-                response.startsWith(token.token, start) &&
-                start + token.token.length < end &&
-                labels.some(
-                  ([nextField, nextLabel]) =>
-                    response.startsWith(
-                      nextLabel,
-                      start + token.token.length,
-                    ) &&
-                    isFieldContent(
-                      nextField,
-                      response.slice(
-                        start + token.token.length + nextLabel.length,
-                        end,
-                      ),
-                    ),
-                ),
-            )
-          )
-            continue;
-          if (
-            !fieldTokens.some(
-              (token) =>
-                token.labeled && response.startsWith(token.token, start),
-            ) &&
-            [...Object.values(FIELD_LABELS), OPTIONAL_CONNECTOR_TOKEN].some(
-              (nextLabel) => response.startsWith(nextLabel, valueStart),
-            )
-          )
-            continue;
-          if (
-            isFieldContent(field, response.slice(valueStart, end)) &&
-            hasCompletePrefix(start)
-          )
-            return true;
-        }
-        return false;
-      });
-    }
-    prefixMemo.set(end, complete);
-    return complete;
-  }
-
-  function hasCompleteSuffix(start: number): boolean {
-    if (start === response.length) return true;
-    const cached = suffixMemo.get(start);
-    if (cached !== undefined) return cached;
-    let complete = fieldTokens.some(
-      ({ token }) =>
-        response.startsWith(token, start) &&
-        hasCompleteSuffix(start + token.length),
-    );
-    if (!complete && response.startsWith(OPTIONAL_CONNECTOR_TOKEN, start)) {
-      complete = hasCompleteSuffix(start + OPTIONAL_CONNECTOR_TOKEN.length);
-    }
-    // An incorrect labeled value can still delimit a correct preceding field
-    // (for example DE LU2SL RST 1599). Require actual field content, and consume
-    // all of it; RSTX and a bare label cannot delimit a callsign.
-    if (!complete) {
-      complete = labels.some(([field, label]) => {
-        if (!response.startsWith(label, start)) return false;
-        const valueStart = start + label.length;
-        if (
-          !fieldTokens.some(
-            (token) => token.labeled && response.startsWith(token.token, start),
-          ) &&
-          [...Object.values(FIELD_LABELS), OPTIONAL_CONNECTOR_TOKEN].some(
-            (nextLabel) => response.startsWith(nextLabel, valueStart),
-          )
-        )
-          return false;
-        for (let end = valueStart + 1; end <= response.length; end += 1) {
-          const value = response.slice(valueStart, end);
-          if (isFieldContent(field, value) && hasCompleteSuffix(end))
-            return true;
-        }
-        return false;
-      });
-    }
-    suffixMemo.set(start, complete);
-    return complete;
-  }
-
-  return { hasCompletePrefix, hasCompleteSuffix };
 }
 
 export function buildStructuredQsoDrills(options: {
@@ -281,35 +103,12 @@ export function buildStructuredQsoDrills(options: {
 export function gradeStructuredQsoDrill(
   drill: StructuredQsoDrill,
   response: string,
+  answers: StructuredFieldAnswers = {},
 ): StructuredFieldCapture {
-  const compactResponse = normalizeCopyForExact(response);
-  const fieldTokens = buildFieldTokens(drill.expectations);
-  const { hasCompletePrefix, hasCompleteSuffix } = buildBoundaryChecks(
-    compactResponse,
-    fieldTokens,
-  );
-
   const results = drill.expectations.map((expectation) => {
-    const value = normalizeCopyForExact(expectation.expected);
-    const candidates = fieldTokens.filter(
-      (token) => token.field === expectation.field && token.value === value,
-    );
-
-    const captured = candidates.some((candidate) => {
-      let start = compactResponse.indexOf(candidate.token);
-      while (start !== -1) {
-        const end = start + candidate.token.length;
-        const hasRightBoundary = hasCompleteSuffix(end);
-        const hasLeftBoundary = hasCompletePrefix(start);
-
-        if (hasLeftBoundary && hasRightBoundary) {
-          return true;
-        }
-
-        start = compactResponse.indexOf(candidate.token, start + 1);
-      }
-      return false;
-    });
+    const captured =
+      normalizeFieldValue(answers[expectation.field] ?? "") ===
+      normalizeFieldValue(expectation.expected);
 
     return { ...expectation, captured };
   });

@@ -735,7 +735,7 @@ describe("LearnScreen input gating", () => {
     expect(recordAttempt).toHaveBeenCalled();
     const evidence = recordAttempt.mock.calls[0]?.[0];
     expect(evidence?.exerciseType).toBe("copy-word");
-    expect(evidence?.response).toBe(prompt);
+    expect(evidence?.response).toBe(sanitizeCopyInput(prompt));
     expect(evidence?.fieldCapture).toMatchObject({
       templateId: "op3-callsign-rst",
       requiredFieldCount: 2,

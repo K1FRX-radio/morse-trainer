@@ -34,7 +34,7 @@ describe("buildStructuredQsoDrills", () => {
 });
 
 describe("gradeStructuredQsoDrill", () => {
-  it("scores required fields independently from exact full-copy matches", () => {
+  it("grades explicit field answers while preserving exact-copy from full transcription", () => {
     const [callsignReport] = buildStructuredQsoDrills({
       profile: {
         callsign: "K1FRX",
@@ -44,32 +44,43 @@ describe("gradeStructuredQsoDrill", () => {
       rng: createRng(1),
     });
 
-    const exact = gradeStructuredQsoDrill(
-      callsignReport,
-      callsignReport.prompt,
-    );
-    expect(exact.requiredScore).toBe(1);
-    expect(exact.exactCopyMatched).toBe(true);
+    const rstExpected =
+      callsignReport.expectations.find((item) => item.field === "rst")
+        ?.expected ?? "";
+    const callsignExpected =
+      callsignReport.expectations.find((item) => item.field === "callsign")
+        ?.expected ?? "";
 
-    const fieldOnly = gradeStructuredQsoDrill(
-      callsignReport,
-      `${callsignReport.expectations[1].expected} DE ${callsignReport.expectations[0].expected}`,
-    );
+    const fieldOnly = gradeStructuredQsoDrill(callsignReport, "noise", {
+      callsign: callsignExpected,
+      rst: rstExpected,
+    });
     expect(fieldOnly.requiredScore).toBe(1);
     expect(fieldOnly.exactCopyMatched).toBe(false);
+
+    const exactOnly = gradeStructuredQsoDrill(callsignReport, callsignReport.prompt, {
+      callsign: "WRONG",
+      rst: "000",
+    });
+    expect(exactOnly.exactCopyMatched).toBe(true);
+    expect(exactOnly.requiredScore).toBe(0);
   });
 
-  it("counts missing required fields as uncaptured", () => {
+  it("captures and misses individual fields correctly", () => {
     const [, nameQth] = buildStructuredQsoDrills({
       profile: {
         callsign: "K1FRX",
         name: "ALEX",
-        qth: "BOSTON",
+        qth: "NEW YORK",
       },
       rng: createRng(5),
     });
 
-    const graded = gradeStructuredQsoDrill(nameQth, "NAME ALEX");
+    const graded = gradeStructuredQsoDrill(nameQth, "", {
+      name: "ALEX",
+      qth: "DENVER",
+    });
+
     expect(graded.requiredFieldCount).toBe(2);
     expect(graded.capturedRequiredFieldCount).toBe(1);
     expect(graded.requiredScore).toBe(0.5);
@@ -82,289 +93,100 @@ describe("gradeStructuredQsoDrill", () => {
       },
       {
         field: "qth",
-        expected: "BOSTON",
+        expected: "NEW YORK",
         required: true,
         captured: false,
       },
     ]);
   });
-});
 
-describe("complete structured field values", () => {
-  const drill = {
-    templateId: "regression",
-    label: "Exchange",
-    prompt: "DE K1ABC RST 579 NAME ALEX QTH NEW YORK",
-    expectations: [
-      { field: "callsign", expected: "K1ABC", required: true },
-      { field: "rst", expected: "579", required: true },
-      { field: "name", expected: "ALEX", required: true },
-      { field: "qth", expected: "NEW YORK", required: true },
-    ],
-  } as const;
+  it("rejects callsign and report extensions", () => {
+    const [callsignReport] = buildStructuredQsoDrills({
+      profile: {
+        callsign: "K1ABC",
+        name: "ALEX",
+        qth: "BOSTON",
+      },
+      rng: createRng(3),
+    });
 
-  it.each(["K1ABCD 1579", "DEK1ABCDRST1579NAMEALEXQTHNEWYORK"])(
-    "rejects extended callsigns and incorrect reports: %s",
-    (response) => {
-      const result = gradeStructuredQsoDrill(
-        { ...drill, expectations: [...drill.expectations] },
-        response,
-      );
-      expect(
-        result.results.slice(0, 2).map(({ captured }) => captured),
-      ).toEqual([false, false]);
-    },
-  );
+    const rstExpected =
+      callsignReport.expectations.find((item) => item.field === "rst")
+        ?.expected ?? "";
 
-  it.each(["dek1abcrst579namealexqthnewyork", "K1ABC 579 ALEX NEWYORK"])(
-    "captures complete multiword values without spaces: %s",
-    (response) => {
-      expect(
-        gradeStructuredQsoDrill(
-          { ...drill, expectations: [...drill.expectations] },
-          response,
-        ).requiredScore,
-      ).toBe(1);
-    },
-  );
-});
+    const graded = gradeStructuredQsoDrill(callsignReport, "", {
+      callsign: "K1ABCX",
+      rst: `${rstExpected}9`,
+    });
 
-describe("compact exchanges with omitted fields", () => {
-  const drill = {
-    templateId: "regression-omitted-fields",
-    label: "Exchange",
-    prompt: "DE LU6KM RST 559 NAME ALEX QTH NEW YORK WX RAIN",
-    expectations: [
-      { field: "callsign", expected: "LU6KM", required: true },
-      { field: "rst", expected: "559", required: true },
-      { field: "name", expected: "ALEX", required: true },
-      { field: "qth", expected: "NEW YORK", required: true },
-      { field: "wx", expected: "RAIN", required: false },
-    ],
-  } as const;
-
-  it.each([
-    [
-      "DE LU6KM RST 559 NAME ALEX QTH NEW YORK",
-      [true, true, true, true, false],
-    ],
-    ["RST 559 NAME ALEX QTH NEW YORK WX RAIN", [false, true, true, true, true]],
-    [
-      "DE LU6KM NAME ALEX QTH NEW YORK WX RAIN",
-      [true, false, true, true, true],
-    ],
-    ["DE LU6KM RST 559 QTH NEW YORK WX RAIN", [true, true, false, true, true]],
-    ["DE LU6KM RST 559 NAME ALEX WX RAIN", [true, true, true, false, true]],
-    ["NAME ALEX", [false, false, true, false, false]],
-    ["DE LU6KMX RST 5599 QTH NEW YORKX", [false, false, false, false, false]],
-  ] as const)(
-    "grades remaining complete fields in %s",
-    (response, captured) => {
-      const spaced = gradeStructuredQsoDrill(
-        { ...drill, expectations: [...drill.expectations] },
-        response,
-      );
-      const compact = gradeStructuredQsoDrill(
-        { ...drill, expectations: [...drill.expectations] },
-        response.replace(/\s+/g, ""),
-      );
-
-      expect(compact.results.map((result) => result.captured)).toEqual(
-        captured,
-      );
-      expect(compact).toEqual(spaced);
-      expect(compact.requiredScore).toBe(
-        captured.slice(0, 4).filter(Boolean).length / 4,
-      );
-      expect(compact.exactCopyMatched).toBe(false);
-    },
-  );
-});
-
-describe("label text within structured field values", () => {
-  it.each([
-    ["LU6KM", "ADELE", "NEW YORK"],
-    ["DE1ABC", "ERNST", "DENVER"],
-    ["K1RST", "QTH NAME", "WXFORD"],
-  ])("preserves complete values for %s / %s / %s", (callsign, name, qth) => {
-    const drill = {
-      templateId: "regression-embedded-labels",
-      label: "Exchange",
-      prompt: `DE ${callsign} RST 559 NAME ${name} QTH ${qth} WX RAIN`,
-      expectations: [
-        { field: "callsign" as const, expected: callsign, required: true },
-        { field: "rst" as const, expected: "559", required: true },
-        { field: "name" as const, expected: name, required: true },
-        { field: "qth" as const, expected: qth, required: true },
-        { field: "wx" as const, expected: "RAIN", required: false },
-      ],
-    };
-
-    for (const [response, captured] of [
-      [drill.prompt, [true, true, true, true, true]],
-      [
-        `DE ${callsign} NAME ${name} QTH ${qth}`,
-        [true, false, true, true, false],
-      ],
-      [
-        `DE ${callsign}X RST 559 NAME ${name}X QTH ${qth}X`,
-        [false, true, false, false, false],
-      ],
-    ] as const) {
-      const spaced = gradeStructuredQsoDrill(drill, response);
-      const compact = gradeStructuredQsoDrill(
-        drill,
-        response.replace(/\s+/g, ""),
-      );
-      expect(compact).toEqual(spaced);
-      expect(compact.results.map(({ captured }) => captured)).toEqual(captured);
-    }
+    expect(graded.results.map(({ captured }) => captured)).toEqual([
+      false,
+      false,
+    ]);
   });
-});
 
-describe("whitespace-independent reordered and label-free responses", () => {
-  const drill = {
-    templateId: "regression-whitespace",
-    label: "Callsign + report",
-    prompt: "DE LU2SL UR RST 599",
-    expectations: [
-      { field: "callsign" as const, expected: "LU2SL", required: true },
-      { field: "rst" as const, expected: "599", required: true },
-    ],
-  };
+  it("normalizes case and whitespace within fields, including multiword QTH", () => {
+    const [, nameQth] = buildStructuredQsoDrills({
+      profile: {
+        callsign: "K1FRX",
+        name: "Alex",
+        qth: "New York",
+      },
+      rng: createRng(4),
+    });
 
-  it.each([
-    ["DE LU2SL RST 599", [true, true]],
-    ["599 DE LU2SL", [true, true]],
-    ["LU2SL 599", [true, true]],
-    ["599 LU2SL", [true, true]],
-    ["RST 599 DE LU2SL", [true, true]],
-    ["DE LU2SLX RST 599", [false, true]],
-    ["DE LU2SL RST 1599", [true, false]],
-    ["DE LU2SL RST 5999", [true, false]],
-    ["599 DE LU2SLX", [false, true]],
-    ["RST 1599 DE LU2SL", [true, false]],
-    ["RST 5999 DE LU2SL", [true, false]],
-  ] as const)(
-    "preserves complete field capture for %s",
-    (response, captured) => {
-      const spaced = gradeStructuredQsoDrill(drill, response);
-      const compact = gradeStructuredQsoDrill(
-        drill,
-        response.replace(/\s+/g, ""),
-      );
+    const graded = gradeStructuredQsoDrill(nameQth, "", {
+      name: "  alex  ",
+      qth: " new   york ",
+    });
 
-      expect(spaced.results.map(({ captured }) => captured)).toEqual(captured);
-      expect(compact).toEqual(spaced);
-      expect(compact.requiredScore).toBe(captured.filter(Boolean).length / 2);
-    },
-  );
-});
-
-describe("field labels embedded in values", () => {
-  const drill = {
-    templateId: "regression-label-boundaries",
-    label: "Callsign + report",
-    prompt: "DE LU2SL UR RST 599",
-    expectations: [
-      { field: "callsign" as const, expected: "LU2SL", required: true },
-      { field: "rst" as const, expected: "599", required: true },
-    ],
-  };
-
-  it.each([
-    ["DE LU2SL UR RST 599", [true, true]],
-    ["DE LU2SLDE RST 599", [false, true]],
-    ["DE XXDELU2SL RST 599", [false, true]],
-    ["DE LU2SLX RST 599", [false, true]],
-    ["DELU2SLRST599", [true, true]],
-    ["DE LU2SLRSTX RST 599", [false, true]],
-    ["DE LU2SL599X RST 599", [false, true]],
-    ["DE XX599LU2SL RST 599", [false, true]],
-    ["DE LU2SL5999X RST 599", [false, true]],
-    ["DE XX599599LU2SL RST 599", [false, true]],
-  ] as const)("grades %s", (response, expectedCaptured) => {
-    const spaced = gradeStructuredQsoDrill(drill, response);
-    const compact = gradeStructuredQsoDrill(
-      drill,
-      response.replace(/\s+/g, ""),
-    );
-
-    expect(spaced.results.map(({ captured }) => captured)).toEqual(
-      expectedCaptured,
-    );
-    expect(compact).toEqual(spaced);
+    expect(graded.requiredScore).toBe(1);
+    expect(graded.results.every((result) => result.captured)).toBe(true);
   });
-});
 
-describe("labels must introduce field content", () => {
-  it.each(["DE", "RST", "NAME", "QTH", "WX"])(
-    "rejects values extended by %s before another labeled field",
-    (extension) => {
-      const drill = {
-        templateId: "regression-structural-boundaries",
-        label: "Exchange",
-        prompt: "DE LU2SL RST 599 NAME ALEX QTH BOSTON WX RAIN",
-        expectations: [
-          { field: "callsign" as const, expected: "LU2SL", required: true },
-          { field: "rst" as const, expected: "599", required: true },
-          { field: "name" as const, expected: "ALEX", required: true },
-          { field: "qth" as const, expected: "BOSTON", required: true },
-          { field: "wx" as const, expected: "RAIN", required: false },
-        ],
-      };
-      for (const expectation of drill.expectations) {
-        const label = {
-          callsign: "DE",
-          rst: "RST",
-          name: "NAME",
-          qth: "QTH",
-          wx: "WX",
-        }[expectation.field];
-        const response = `${label} ${expectation.expected}${extension} RST 599`;
-        // Use another field after RST itself so its separate correct occurrence
-        // does not mask a false capture of the extended value.
-        const copy =
-          expectation.field === "rst"
-            ? `${label} ${expectation.expected}${extension} NAME ALEX`
-            : response;
-        for (const input of [copy, copy.replace(/\s+/g, "")]) {
-          const result = gradeStructuredQsoDrill(drill, input);
-          expect(
-            result.results.find(({ field }) => field === expectation.field)
-              ?.captured,
-          ).toBe(false);
-        }
-      }
-    },
-  );
-});
+  it("does not penalize missing optional fields", () => {
+    const [, , exchange] = buildStructuredQsoDrills({
+      profile: {
+        callsign: "K1FRX",
+        name: "ALEX",
+        qth: "BOSTON",
+      },
+      rng: createRng(9),
+    });
 
-describe("left boundaries for all labeled fields", () => {
-  const drill = {
-    templateId: "regression-left-boundaries",
-    label: "Exchange",
-    prompt: "NAME ALEX QTH BOSTON WX RAIN",
-    expectations: [
-      { field: "name" as const, expected: "ALEX", required: true },
-      { field: "qth" as const, expected: "BOSTON", required: true },
-      { field: "wx" as const, expected: "RAIN", required: false },
-    ],
-  };
+    const callsignExpected =
+      exchange.expectations.find((item) => item.field === "callsign")
+        ?.expected ?? "";
+    const rstExpected =
+      exchange.expectations.find((item) => item.field === "rst")?.expected ??
+      "";
 
-  it.each([
-    ["NAME XXNAMEALEX QTH BOSTON", [false, true, false]],
-    ["NAME ALEX QTH XXQTHBOSTON", [true, false, false]],
-    ["WX XXWXRAIN NAME ALEX QTH BOSTON", [true, true, false]],
-    ["QTH WRONG NAME ALEX WX RAIN", [true, false, true]],
-    ["WX WRONG QTH BOSTON NAME ALEX", [true, true, false]],
-  ] as const)("grades complete fields in %s", (response, captured) => {
-    const spaced = gradeStructuredQsoDrill(drill, response);
-    const compact = gradeStructuredQsoDrill(
-      drill,
-      response.replace(/\s+/g, ""),
-    );
-    expect(spaced.results.map((result) => result.captured)).toEqual(captured);
-    expect(compact).toEqual(spaced);
+    const graded = gradeStructuredQsoDrill(exchange, "", {
+      callsign: callsignExpected,
+      rst: rstExpected,
+      name: "ALEX",
+      qth: "BOSTON",
+    });
+
+    const optionalWx = graded.results.find((result) => result.field === "wx");
+    expect(optionalWx?.captured).toBe(false);
+    expect(graded.requiredScore).toBe(1);
+    expect(graded.capturedRequiredFieldCount).toBe(4);
+  });
+
+  it("counts missing required fields as uncaptured", () => {
+    const [, nameQth] = buildStructuredQsoDrills({
+      profile: {
+        callsign: "K1FRX",
+        name: "ALEX",
+        qth: "BOSTON",
+      },
+      rng: createRng(10),
+    });
+
+    const graded = gradeStructuredQsoDrill(nameQth, "", { name: "ALEX" });
+    expect(graded.requiredFieldCount).toBe(2);
+    expect(graded.capturedRequiredFieldCount).toBe(1);
+    expect(graded.requiredScore).toBe(0.5);
   });
 });
