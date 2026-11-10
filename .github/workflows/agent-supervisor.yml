@@ -125,7 +125,9 @@ jobs:
   review:
     needs: prepare-state
     if: needs.prepare-state.outputs.eligible == 'true'
-    runs-on: ubuntu-latest
+    # Ubuntu 26.04 triggers openai/codex-action#188 during drop-sudo.
+    # Keep the privilege-restricting safety strategy and pin the runner instead.
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       issues: read
@@ -455,7 +457,8 @@ jobs:
   repair:
     needs: [prepare-state, review, route]
     if: needs.route.outputs.verdict == 'changes_requested'
-    runs-on: ubuntu-latest
+    # Same Codex drop-sudo incompatibility as the review job.
+    runs-on: ubuntu-24.04
     permissions:
       actions: write
       contents: write
@@ -561,6 +564,9 @@ jobs:
       - name: Validate repaired workspace
         run: |
           set -euo pipefail
+          # Generated review context/policy are not source files; Prettier
+          # otherwise flags JSON gathered from GitHub as out of format.
+          rm -rf .agent-context .agent-policy
           npm run format:check
           npm run lint
           npm run typecheck
