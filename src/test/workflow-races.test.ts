@@ -248,7 +248,7 @@ describe("supervisor commit identity", () => {
     REVIEW_JSON: JSON.stringify({ verdict, summary: "Review", findings: [] }),
     HEAD_SHA: verifiedSha,
     EXPECTED_HEAD_SHA: verifiedSha,
-    MAX_REPAIR_ROUNDS: "5",
+    MAX_REPAIR_ROUNDS: "8",
   });
 
   it("ignores an outdated PR event before changing state", async () => {
@@ -405,8 +405,8 @@ describe("supervisor commit identity", () => {
     expect(harness.core.setOutput).not.toHaveBeenCalled();
   });
 
-  it.each([4, 5])(
-    "preserves the five-round repair limit after %i prior rounds",
+  it.each([7, 8])(
+    "preserves the eight-round repair limit after %i prior rounds",
     async (rounds) => {
       const harness = createHarness();
       for (let round = 0; round < rounds; round += 1) {
