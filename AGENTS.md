@@ -114,12 +114,47 @@ decision rather than inventing new behavior.
 
 ## Validation
 
-Before declaring implementation complete, run:
+Use staged validation to catch regressions without repeatedly testing identical
+source code. GitHub CI is the authoritative post-push check; never disable, skip,
+or bypass required CI checks to speed up an implementation.
 
-```bash
-npm test
-npm run typecheck
-npm run lint
-npm run format:check
-npm run build
-```
+1. **While editing:** run focused tests for the changed behavior and focused
+   lint/format checks when useful. Do not run the full suite after each small
+   edit. Add or update regression coverage for behavior changes.
+2. **Interactive/local agent (for code changes):** once the intended changes are
+   stable, run one full local validation pass before the first push or review
+   handoff:
+
+   ```bash
+   npm run format:check
+   npm run lint
+   npm test
+   npm run build
+   ```
+
+   `npm run build` already runs `tsc --noEmit`, so a separate
+   `npm run typecheck` is redundant when the complete build succeeds. If the
+   build cannot run, execute `npm run typecheck` separately and report the
+   build limitation. For docs-only changes, use appropriate focused checks and
+   rely on CI for the full suite.
+3. **GitHub Actions repair agent:** `.github/workflows/agent-supervisor.yml`
+   already runs the complete validation suite in its separate
+   `Validate repaired workspace` step, immediately after the agent finishes.
+   Inside that repair job, the coding agent should run only targeted checks
+   needed during implementation and leave full-suite validation to that step.
+   The workflow then commits/pushes, and CI independently validates the pushed
+   SHA.
+4. **No source change, no repeat:** staging, committing, pushing, fetching, or
+   pulling do not by themselves justify rerunning tests. If a pull, rebase,
+   merge, conflict resolution, or subsequent edit changes the files being
+   validated, run affected targeted checks; repeat the full local gate only
+   when the previously validated code has materially changed and no equivalent
+   automated full gate will run.
+5. **When CI fails:** use the failing job and logs to make a focused repair.
+   Run relevant targeted checks, push the fix, and let CI validate the new
+   commit. Do not rerun an unchanged full local suite merely because the
+   commit SHA changed.
+
+In the completion report, distinguish local checks from CI results. Never
+claim a check passed unless its result is actually available; disclose skipped
+checks and environment-specific failures.
