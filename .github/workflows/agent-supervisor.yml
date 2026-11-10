@@ -563,6 +563,9 @@ jobs:
       - name: Validate repaired workspace
         run: |
           set -euo pipefail
+          # Generated review context/policy are not source files; Prettier
+          # otherwise flags JSON gathered from GitHub as out of format.
+          rm -rf .agent-context .agent-policy
           npm run format:check
           npm run lint
           npm run typecheck
