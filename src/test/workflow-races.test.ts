@@ -71,6 +71,7 @@ const bash =
 function createHarness(initialHead = verifiedSha) {
   const pull = {
     head: { sha: initialHead, repo: { full_name: "owner/repo" } },
+    base: { sha: "c".repeat(40) },
     state: "open",
     draft: false,
   };
@@ -84,11 +85,14 @@ function createHarness(initialHead = verifiedSha) {
     addLabels: vi.fn(),
     removeLabel: vi.fn(),
   };
+  const repos = {
+    getContent: vi.fn(async () => ({ data: { content: "trusted policy" } })),
+  };
   const github = {
-    rest: { pulls: { get: vi.fn(async () => ({ data: pull })) }, issues },
+    rest: { pulls: { get: vi.fn(async () => ({ data: pull })) }, repos, issues },
     paginate: vi.fn(async () => [...comments]),
   };
-  const core = { setOutput: vi.fn() };
+  const core = { setOutput: vi.fn(), notice: vi.fn() };
 
   async function run(step: WorkflowStep, env: Record<string, string> = {}) {
     expect(step.with?.script).toBeTruthy();
@@ -248,6 +252,16 @@ describe("supervisor commit identity", () => {
     await harness.run(prepare, { EVENT_HEAD_SHA: verifiedSha });
     expect(harness.core.setOutput).toHaveBeenCalledWith("eligible", "false");
     expect(harness.issues.removeLabel).not.toHaveBeenCalled();
+    expect(harness.issues.addLabels).not.toHaveBeenCalled();
+  });
+
+  it("safely skips review when trusted base policy is not yet installed", async () => {
+    const harness = createHarness();
+    harness.github.rest.repos.getContent.mockRejectedValueOnce({ status: 404 });
+    await harness.run(prepare, { EVENT_HEAD_SHA: verifiedSha });
+    expect(harness.core.setOutput).toHaveBeenCalledWith("eligible", "false");
+    expect(harness.core.notice).toHaveBeenCalled();
+    expect(harness.issues.createLabel).not.toHaveBeenCalled();
     expect(harness.issues.addLabels).not.toHaveBeenCalled();
   });
 
