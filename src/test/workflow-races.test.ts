@@ -89,7 +89,11 @@ function createHarness(initialHead = verifiedSha) {
     getContent: vi.fn(async () => ({ data: { content: "trusted policy" } })),
   };
   const github = {
-    rest: { pulls: { get: vi.fn(async () => ({ data: pull })) }, repos, issues },
+    rest: {
+      pulls: { get: vi.fn(async () => ({ data: pull })) },
+      repos,
+      issues,
+    },
     paginate: vi.fn(async () => [...comments]),
   };
   const core = { setOutput: vi.fn(), notice: vi.fn() };
@@ -255,7 +259,7 @@ describe("supervisor commit identity", () => {
     expect(harness.issues.addLabels).not.toHaveBeenCalled();
   });
 
-  it("safely skips review when trusted base policy is not yet installed", async () => {
+  it("skips review when trusted base policy is missing", async () => {
     const harness = createHarness();
     harness.github.rest.repos.getContent.mockRejectedValueOnce({ status: 404 });
     await harness.run(prepare, { EVENT_HEAD_SHA: verifiedSha });
