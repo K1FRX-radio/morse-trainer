@@ -122,11 +122,11 @@ jobs:
               labels: ["review:pending"],
             });
 
-  # Disposable PR #108 harness: pin an older Ubuntu image until upstream
-  # codex-action drop-sudo regression on Ubuntu 26.04 is resolved.
   review:
     needs: prepare-state
     if: needs.prepare-state.outputs.eligible == 'true'
+    # Ubuntu 26.04 triggers openai/codex-action#188 during drop-sudo.
+    # Keep the privilege-restricting safety strategy and pin the runner instead.
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -457,6 +457,7 @@ jobs:
   repair:
     needs: [prepare-state, review, route]
     if: needs.route.outputs.verdict == 'changes_requested'
+    # Same Codex drop-sudo incompatibility as the review job.
     runs-on: ubuntu-24.04
     permissions:
       actions: write

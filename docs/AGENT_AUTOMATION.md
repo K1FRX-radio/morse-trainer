@@ -73,6 +73,12 @@ Fork PRs are intentionally excluded from this loop.
 
 The Codex Action is pinned to a reviewed commit rather than a floating tag.
 
+The reviewer and repair jobs temporarily pin `ubuntu-24.04` because GitHub's
+`ubuntu-latest` is now Ubuntu 26.04, which fails the pinned Codex Action's
+`drop-sudo` socket restriction during setup (openai/codex-action#188). This
+preserves the restrictive default safety strategy. Revisit the pin after a
+verified upstream fix, not by switching to the `unsafe` strategy.
+
 ## Workflow state
 
 The workflow maintains these labels:
