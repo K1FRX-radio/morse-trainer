@@ -1,8 +1,6 @@
 import { z } from "zod";
 import { DATABASE_VERSION } from "./indexeddb.ts";
-import {
-  normalizeLearnerStationProfile,
-} from "../content/station-profile.ts";
+import { normalizeLearnerStationProfile } from "../content/station-profile.ts";
 import {
   RECORD_SCHEMA_VERSION,
   type LearnerStationProfileRecord,

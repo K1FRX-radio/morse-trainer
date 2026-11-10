@@ -55,7 +55,9 @@ describe("DexieTrainingRepository", () => {
 
     try {
       await repository.open();
-      await expect(repository.getLearnerStationProfile()).resolves.toBeUndefined();
+      await expect(
+        repository.getLearnerStationProfile(),
+      ).resolves.toBeUndefined();
       await expect(
         repository.saveLearnerStationProfile({
           callsign: "k1frx",
@@ -79,9 +81,9 @@ describe("DexieTrainingRepository", () => {
       ).resolves.toMatchObject({
         value: { callsign: "W1AW", power: "5W" },
       });
-      await expect(repository.getLearnerStationProfile()).resolves.toMatchObject(
-        { value: { callsign: "W1AW", power: "5W" } },
-      );
+      await expect(
+        repository.getLearnerStationProfile(),
+      ).resolves.toMatchObject({ value: { callsign: "W1AW", power: "5W" } });
     } finally {
       repository.close();
       await database.delete();

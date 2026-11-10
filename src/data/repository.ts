@@ -609,7 +609,9 @@ export class DexieTrainingRepository implements TrainingDataRepository {
     });
   }
 
-  async getLearnerStationProfile(): Promise<LearnerStationProfileRecord | undefined> {
+  async getLearnerStationProfile(): Promise<
+    LearnerStationProfileRecord | undefined
+  > {
     const record = await this.database.settings.get("learner-station-profile");
     return record === undefined
       ? undefined
@@ -621,7 +623,9 @@ export class DexieTrainingRepository implements TrainingDataRepository {
   ): Promise<LearnerStationProfileRecord> {
     const normalizedProfile = normalizeLearnerStationProfile(profile);
     return this.database.transaction("rw", this.database.settings, async () => {
-      const existing = await this.database.settings.get("learner-station-profile");
+      const existing = await this.database.settings.get(
+        "learner-station-profile",
+      );
       const record = parseLearnerStationProfileRecord({
         id: "learner-station-profile",
         schemaVersion: RECORD_SCHEMA_VERSION,
