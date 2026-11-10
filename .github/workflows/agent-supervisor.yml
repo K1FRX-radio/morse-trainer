@@ -260,7 +260,7 @@ jobs:
           HEAD_SHA: ${{ needs.review.outputs.reviewed_sha }}
           EXPECTED_HEAD_SHA: ${{ needs.prepare-state.outputs.head_sha }}
           OWNER_LOGIN: frivolas
-          MAX_REPAIR_ROUNDS: "5"
+          MAX_REPAIR_ROUNDS: "8"
         with:
           github-token: ${{ github.token }}
           script: |
