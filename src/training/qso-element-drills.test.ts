@@ -243,6 +243,8 @@ describe("whitespace-independent reordered and label-free responses", () => {
     ["DE LU2SL RST 1599", [true, false]],
     ["DE LU2SL RST 5999", [true, false]],
     ["599 DE LU2SLX", [false, true]],
+    ["RST 1599 DE LU2SL", [true, false]],
+    ["RST 5999 DE LU2SL", [true, false]],
   ] as const)(
     "preserves complete field capture for %s",
     (response, captured) => {
@@ -336,4 +338,33 @@ describe("labels must introduce field content", () => {
       }
     },
   );
+});
+
+describe("left boundaries for all labeled fields", () => {
+  const drill = {
+    templateId: "regression-left-boundaries",
+    label: "Exchange",
+    prompt: "NAME ALEX QTH BOSTON WX RAIN",
+    expectations: [
+      { field: "name" as const, expected: "ALEX", required: true },
+      { field: "qth" as const, expected: "BOSTON", required: true },
+      { field: "wx" as const, expected: "RAIN", required: false },
+    ],
+  };
+
+  it.each([
+    ["NAME XXNAMEALEX QTH BOSTON", [false, true, false]],
+    ["NAME ALEX QTH XXQTHBOSTON", [true, false, false]],
+    ["WX XXWXRAIN NAME ALEX QTH BOSTON", [true, true, false]],
+    ["QTH WRONG NAME ALEX WX RAIN", [true, false, true]],
+    ["WX WRONG QTH BOSTON NAME ALEX", [true, true, false]],
+  ] as const)("grades complete fields in %s", (response, captured) => {
+    const spaced = gradeStructuredQsoDrill(drill, response);
+    const compact = gradeStructuredQsoDrill(
+      drill,
+      response.replace(/\s+/g, ""),
+    );
+    expect(spaced.results.map((result) => result.captured)).toEqual(captured);
+    expect(compact).toEqual(spaced);
+  });
 });

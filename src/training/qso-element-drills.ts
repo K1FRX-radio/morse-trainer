@@ -86,6 +86,14 @@ function buildFieldTokens(
   return tokens;
 }
 
+function isFieldContent(field: string, value: string): boolean {
+  return field === "rst"
+    ? /^\d+$/.test(value)
+    : field === "callsign"
+      ? /^[A-Z0-9/]+$/.test(value) && /\d/.test(value)
+      : /^[A-Z]+$/.test(value);
+}
+
 // Boundary checks must consume complete neighboring fields rather than matching
 // a label or expected-value substring inside an incorrect value.
 function buildBoundaryChecks(
@@ -100,7 +108,7 @@ function buildBoundaryChecks(
     if (end === 0) return true;
     const cached = prefixMemo.get(end);
     if (cached !== undefined) return cached;
-    const complete = [
+    let complete = [
       ...fieldTokens.map(({ token }) => token),
       OPTIONAL_CONNECTOR_TOKEN,
     ].some(
@@ -109,6 +117,66 @@ function buildBoundaryChecks(
         response.slice(end - token.length, end) === token &&
         hasCompletePrefix(end - token.length),
     );
+    // Incorrect labeled fields can precede a capture too. A new, different
+    // label must delimit their value; splitting at a repeated label would
+    // accept NAME XXNAMEALEX (or DE XXDELU2SL) as a correct capture.
+    if (!complete) {
+      complete = labels.some(([field, label]) => {
+        if (
+          !labels.some(
+            ([nextField, nextLabel]) =>
+              nextField !== field && response.startsWith(nextLabel, end),
+          )
+        )
+          return false;
+        for (let start = 0; start < end - label.length; start += 1) {
+          if (!response.startsWith(label, start)) continue;
+          const valueStart = start + label.length;
+          // Do not absorb an already complete field and the next label into
+          // one incorrect value to reach a later embedded label.
+          if (
+            fieldTokens.some(
+              (token) =>
+                token.labeled &&
+                token.field === field &&
+                response.startsWith(token.token, start) &&
+                start + token.token.length < end &&
+                labels.some(
+                  ([nextField, nextLabel]) =>
+                    response.startsWith(
+                      nextLabel,
+                      start + token.token.length,
+                    ) &&
+                    isFieldContent(
+                      nextField,
+                      response.slice(
+                        start + token.token.length + nextLabel.length,
+                        end,
+                      ),
+                    ),
+                ),
+            )
+          )
+            continue;
+          if (
+            !fieldTokens.some(
+              (token) =>
+                token.labeled && response.startsWith(token.token, start),
+            ) &&
+            [...Object.values(FIELD_LABELS), OPTIONAL_CONNECTOR_TOKEN].some(
+              (nextLabel) => response.startsWith(nextLabel, valueStart),
+            )
+          )
+            continue;
+          if (
+            isFieldContent(field, response.slice(valueStart, end)) &&
+            hasCompletePrefix(start)
+          )
+            return true;
+        }
+        return false;
+      });
+    }
     prefixMemo.set(end, complete);
     return complete;
   }
@@ -143,13 +211,8 @@ function buildBoundaryChecks(
           return false;
         for (let end = valueStart + 1; end <= response.length; end += 1) {
           const value = response.slice(valueStart, end);
-          const validContent =
-            field === "rst"
-              ? /^\d+$/.test(value)
-              : field === "callsign"
-                ? /^[A-Z0-9/]+$/.test(value) && /\d/.test(value)
-                : /^[A-Z]+$/.test(value);
-          if (validContent && hasCompleteSuffix(end)) return true;
+          if (isFieldContent(field, value) && hasCompleteSuffix(end))
+            return true;
         }
         return false;
       });
@@ -239,16 +302,7 @@ export function gradeStructuredQsoDrill(
         const hasRightBoundary = hasCompleteSuffix(end);
         const hasLeftBoundary = hasCompletePrefix(start);
 
-        // Callsign and label-free values require complete boundaries on both
-        // sides to reject substring captures. Other labeled fields can still
-        // be captured when earlier neighboring text is malformed.
-        const boundaryAccepted = candidate.labeled
-          ? expectation.field === "callsign"
-            ? hasLeftBoundary && hasRightBoundary
-            : hasRightBoundary
-          : hasLeftBoundary && hasRightBoundary;
-
-        if (boundaryAccepted) {
+        if (hasLeftBoundary && hasRightBoundary) {
           return true;
         }
 
