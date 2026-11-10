@@ -415,10 +415,10 @@ describe("supervisor commit identity", () => {
         );
       }
       await harness.run(route, reviewEnv("changes_requested"));
-      expect(route.env?.MAX_REPAIR_ROUNDS).toBe("5");
+      expect(route.env?.MAX_REPAIR_ROUNDS).toBe("8");
       expect(harness.core.setOutput).toHaveBeenCalledWith(
         "verdict",
-        rounds === 5 ? "owner_decision" : "changes_requested",
+        rounds === 8 ? "owner_decision" : "changes_requested",
       );
     },
   );
