@@ -276,6 +276,11 @@ describe("field labels embedded in values", () => {
     ["DE XXDELU2SL RST 599", [false, true]],
     ["DE LU2SLX RST 599", [false, true]],
     ["DELU2SLRST599", [true, true]],
+    ["DE LU2SLRSTX RST 599", [false, true]],
+    ["DE LU2SL599X RST 599", [false, true]],
+    ["DE XX599LU2SL RST 599", [false, true]],
+    ["DE LU2SL5999X RST 599", [false, true]],
+    ["DE XX599599LU2SL RST 599", [false, true]],
   ] as const)("grades %s", (response, expectedCaptured) => {
     const spaced = gradeStructuredQsoDrill(drill, response);
     const compact = gradeStructuredQsoDrill(

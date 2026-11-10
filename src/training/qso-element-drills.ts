@@ -86,55 +86,79 @@ function buildFieldTokens(
   return tokens;
 }
 
-function endsWithAnyTokenAt(
+// Boundary checks must consume complete neighboring fields rather than matching
+// a label or expected-value substring inside an incorrect value.
+function buildBoundaryChecks(
   response: string,
-  index: number,
-  tokens: readonly string[],
-): boolean {
-  return tokens.some(
-    (token) =>
-      token.length > 0 &&
-      index >= token.length &&
-      response.startsWith(token, index - token.length),
-  );
-}
-
-function startsWithAnyTokenAt(
-  response: string,
-  index: number,
-  tokens: readonly string[],
-): boolean {
-  return tokens.some(
-    (token) => token.length > 0 && response.startsWith(token, index),
-  );
-}
-
-// A label is a boundary only when it introduces a value. In compact copy,
-// adjacent labels (for example ALEXDEQTHBOSTON) cannot delimit a complete
-// value: the first label is an extension, not a field with content.
-function startsWithFieldAt(
-  response: string,
-  index: number,
   fieldTokens: readonly FieldToken[],
-): boolean {
-  const labels = Object.values(FIELD_LABELS);
-  return labels.some((label) => {
-    if (!response.startsWith(label, index)) {
-      return false;
+) {
+  const prefixMemo = new Map<number, boolean>();
+  const suffixMemo = new Map<number, boolean>();
+  const labels = Object.entries(FIELD_LABELS);
+
+  function hasCompletePrefix(end: number): boolean {
+    if (end === 0) return true;
+    const cached = prefixMemo.get(end);
+    if (cached !== undefined) return cached;
+    const complete = [
+      ...fieldTokens.map(({ token }) => token),
+      OPTIONAL_CONNECTOR_TOKEN,
+    ].some(
+      (token) =>
+        end >= token.length &&
+        response.slice(end - token.length, end) === token &&
+        hasCompletePrefix(end - token.length),
+    );
+    prefixMemo.set(end, complete);
+    return complete;
+  }
+
+  function hasCompleteSuffix(start: number): boolean {
+    if (start === response.length) return true;
+    const cached = suffixMemo.get(start);
+    if (cached !== undefined) return cached;
+    let complete = fieldTokens.some(
+      ({ token }) =>
+        response.startsWith(token, start) &&
+        hasCompleteSuffix(start + token.length),
+    );
+    if (!complete && response.startsWith(OPTIONAL_CONNECTOR_TOKEN, start)) {
+      complete = hasCompleteSuffix(start + OPTIONAL_CONNECTOR_TOKEN.length);
     }
-    const valueStart = index + label.length;
-    const expectedValue = fieldTokens.some(
-      (token) => token.labeled && response.startsWith(token.token, index),
-    );
-    return (
-      expectedValue ||
-      (valueStart < response.length &&
-        !startsWithAnyTokenAt(response, valueStart, [
-          ...labels,
-          OPTIONAL_CONNECTOR_TOKEN,
-        ]))
-    );
-  });
+    // An incorrect labeled value can still delimit a correct preceding field
+    // (for example DE LU2SL RST 1599). Require actual field content, and consume
+    // all of it; RSTX and a bare label cannot delimit a callsign.
+    if (!complete) {
+      complete = labels.some(([field, label]) => {
+        if (!response.startsWith(label, start)) return false;
+        const valueStart = start + label.length;
+        if (
+          !fieldTokens.some(
+            (token) => token.labeled && response.startsWith(token.token, start),
+          ) &&
+          [...Object.values(FIELD_LABELS), OPTIONAL_CONNECTOR_TOKEN].some(
+            (nextLabel) => response.startsWith(nextLabel, valueStart),
+          )
+        )
+          return false;
+        for (let end = valueStart + 1; end <= response.length; end += 1) {
+          const value = response.slice(valueStart, end);
+          const validContent =
+            field === "rst"
+              ? /^\d+$/.test(value)
+              : field === "callsign"
+                ? /^[A-Z0-9/]+$/.test(value) && /\d/.test(value)
+                : /^[A-Z]+$/.test(value);
+          if (validContent && hasCompleteSuffix(end)) return true;
+        }
+        return false;
+      });
+    }
+    suffixMemo.set(start, complete);
+    return complete;
+  }
+
+  return { hasCompletePrefix, hasCompleteSuffix };
 }
 
 export function buildStructuredQsoDrills(options: {
@@ -197,14 +221,10 @@ export function gradeStructuredQsoDrill(
 ): StructuredFieldCapture {
   const compactResponse = normalizeCopyForExact(response);
   const fieldTokens = buildFieldTokens(drill.expectations);
-  const expectedValues = Array.from(
-    new Set(
-      drill.expectations.map((expectation) =>
-        normalizeCopyForExact(expectation.expected),
-      ),
-    ),
+  const { hasCompletePrefix, hasCompleteSuffix } = buildBoundaryChecks(
+    compactResponse,
+    fieldTokens,
   );
-  const leftBoundaryTokens = [OPTIONAL_CONNECTOR_TOKEN, ...expectedValues];
 
   const results = drill.expectations.map((expectation) => {
     const value = normalizeCopyForExact(expectation.expected);
@@ -216,19 +236,8 @@ export function gradeStructuredQsoDrill(
       let start = compactResponse.indexOf(candidate.token);
       while (start !== -1) {
         const end = start + candidate.token.length;
-        const hasRightBoundary =
-          end === compactResponse.length ||
-          startsWithAnyTokenAt(compactResponse, end, expectedValues) ||
-          startsWithFieldAt(compactResponse, end, fieldTokens) ||
-          (compactResponse.startsWith(OPTIONAL_CONNECTOR_TOKEN, end) &&
-            startsWithFieldAt(
-              compactResponse,
-              end + OPTIONAL_CONNECTOR_TOKEN.length,
-              fieldTokens,
-            ));
-        const hasLeftBoundary =
-          start === 0 ||
-          endsWithAnyTokenAt(compactResponse, start, leftBoundaryTokens);
+        const hasRightBoundary = hasCompleteSuffix(end);
+        const hasLeftBoundary = hasCompletePrefix(start);
 
         // Callsign and label-free values require complete boundaries on both
         // sides to reject substring captures. Other labeled fields can still
