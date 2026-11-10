@@ -57,7 +57,10 @@ export type TrainerDatabaseOptions = {
 
 export class TrainerDatabase extends Dexie {
   metadata!: Table<MetadataRecord, string>;
-  settings!: Table<PortableSettingsRecord | LearnerStationProfileRecord, string>;
+  settings!: Table<
+    PortableSettingsRecord | LearnerStationProfileRecord,
+    string
+  >;
   curriculum!: Table<CurriculumStateRecord, string>;
   introductions!: Table<IntroductionsRecord, string>;
   sessions!: Table<TrainingSessionRecord, string>;

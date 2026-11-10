@@ -45,9 +45,7 @@ type TrainingDataProviderProps = {
   loadPersistedCurriculum: () => Promise<CurriculumState>;
   persistIntroductions?: (characters: string[]) => unknown;
   loadLearnerStationProfile?: () => Promise<LearnerStationProfile>;
-  persistLearnerStationProfile?: (
-    profile: LearnerStationProfile,
-  ) => unknown;
+  persistLearnerStationProfile?: (profile: LearnerStationProfile) => unknown;
   startLearnSessionPersistence: (
     options: LearnPersistenceStart,
   ) => Promise<LearnSessionPersistence>;
@@ -248,12 +246,12 @@ export function TrainingDataProvider({
       reconcileCurriculum,
       loadIntroductions,
       saveIntroductions,
-      ...(loadLearnerStationProfile
-        ? { loadLearnerStationProfile }
-        : {}),
+      ...(loadLearnerStationProfile ? { loadLearnerStationProfile } : {}),
       ...(persistLearnerStationProfile
         ? {
-            saveLearnerStationProfile: async (profile: LearnerStationProfile) => {
+            saveLearnerStationProfile: async (
+              profile: LearnerStationProfile,
+            ) => {
               await Promise.resolve(persistLearnerStationProfile(profile));
             },
           }

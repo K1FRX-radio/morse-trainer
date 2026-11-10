@@ -34,6 +34,30 @@ Update `STATUS.md` only when the completed work materially changes that state.
 
 Do not self-merge implementation PRs unless explicitly instructed.
 
+## Autonomous PR review loop
+
+GitHub is the coordination surface between implementation and review agents.
+
+For PRs covered by the event-driven supervisor workflow:
+
+1. After opening a PR or pushing a repair, do not wait for the repository owner
+   to relay review feedback.
+2. Treat the latest automated supervisor review comment and workflow state as the
+   next instruction.
+3. If the state is `review:changes-requested`, address the blocking findings,
+   validate, and return the same PR for another review.
+4. If the state is `review:approved`, stop. Do not merge unless explicitly
+   authorized.
+5. If the state is `owner:decision`, stop and wait for owner direction. Do not
+   guess at product, roadmap, acceptance-criteria, or major architecture choices.
+6. Never ask the owner to tell another agent to "check the comments" or to
+   manually schedule a routine re-review.
+7. Keep repair changes scoped to review findings. Do not opportunistically pick
+   up another roadmap item while a PR is in review.
+
+The automated loop is described in `docs/AGENT_AUTOMATION.md`. Supervisor
+judgment is governed by `docs/REVIEW_POLICY.md`.
+
 ## PR hygiene
 
 When creating or editing a PR, verify the rendered PR description formatting

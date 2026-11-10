@@ -49,7 +49,9 @@ function pick<T>(items: readonly T[], rng: Rng): T {
   return items[Math.floor(rng() * items.length)];
 }
 
-export function validateCallsign(value: string | undefined): string | undefined {
+export function validateCallsign(
+  value: string | undefined,
+): string | undefined {
   if (value === undefined || value.length === 0) {
     return undefined;
   }

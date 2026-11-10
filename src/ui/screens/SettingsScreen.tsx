@@ -201,14 +201,19 @@ export function SettingsScreen() {
     };
   }, [loadLearnerStationProfile, profileUnavailable]);
 
-  function updateProfileField(field: keyof LearnerStationProfile, value: string) {
+  function updateProfileField(
+    field: keyof LearnerStationProfile,
+    value: string,
+  ) {
     setLearnerProfile((current) => ({ ...current, [field]: value }));
     setLearnerProfileStatus(undefined);
     setLearnerProfileError(undefined);
     if (field === "callsign") {
       const trimmed = value.trim();
       setCallsignError(
-        validateCallsign(trimmed.length > 0 ? trimmed.toUpperCase() : undefined),
+        validateCallsign(
+          trimmed.length > 0 ? trimmed.toUpperCase() : undefined,
+        ),
       );
     }
   }
@@ -224,7 +229,9 @@ export function SettingsScreen() {
       ...(learnerProfile.callsign !== undefined
         ? { callsign: learnerProfile.callsign }
         : {}),
-      ...(learnerProfile.name !== undefined ? { name: learnerProfile.name } : {}),
+      ...(learnerProfile.name !== undefined
+        ? { name: learnerProfile.name }
+        : {}),
       ...(learnerProfile.qth !== undefined ? { qth: learnerProfile.qth } : {}),
       ...(learnerProfile.rig !== undefined ? { rig: learnerProfile.rig } : {}),
       ...(learnerProfile.power !== undefined
@@ -558,7 +565,9 @@ export function SettingsScreen() {
               aria-label="Learner name"
               type="text"
               value={learnerProfile.name ?? ""}
-              onChange={(event) => updateProfileField("name", event.target.value)}
+              onChange={(event) =>
+                updateProfileField("name", event.target.value)
+              }
             />
           </label>
           <label className="field">
@@ -567,7 +576,9 @@ export function SettingsScreen() {
               aria-label="Learner QTH"
               type="text"
               value={learnerProfile.qth ?? ""}
-              onChange={(event) => updateProfileField("qth", event.target.value)}
+              onChange={(event) =>
+                updateProfileField("qth", event.target.value)
+              }
             />
           </label>
           <label className="field">
@@ -576,7 +587,9 @@ export function SettingsScreen() {
               aria-label="Learner rig"
               type="text"
               value={learnerProfile.rig ?? ""}
-              onChange={(event) => updateProfileField("rig", event.target.value)}
+              onChange={(event) =>
+                updateProfileField("rig", event.target.value)
+              }
             />
           </label>
           <label className="field">
@@ -585,7 +598,9 @@ export function SettingsScreen() {
               aria-label="Learner power"
               type="text"
               value={learnerProfile.power ?? ""}
-              onChange={(event) => updateProfileField("power", event.target.value)}
+              onChange={(event) =>
+                updateProfileField("power", event.target.value)
+              }
             />
           </label>
           <p className="settings__note">

@@ -44,9 +44,7 @@ export type TrainingDataContextValue = {
   loadIntroductions: () => string[];
   saveIntroductions: (characters: string[]) => void;
   loadLearnerStationProfile?: () => Promise<LearnerStationProfile>;
-  saveLearnerStationProfile?: (
-    profile: LearnerStationProfile,
-  ) => Promise<void>;
+  saveLearnerStationProfile?: (profile: LearnerStationProfile) => Promise<void>;
   startLearnSessionPersistence: (
     options: LearnPersistenceStart,
   ) => Promise<LearnSessionPersistence>;
