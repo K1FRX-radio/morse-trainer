@@ -353,6 +353,26 @@ const encodedKeyingTimingSchema = z
   })
   .strict();
 
+const fieldCaptureResultSchema = z
+  .object({
+    field: z.enum(["callsign", "rst", "name", "qth", "wx"]),
+    expected: z.string().min(1),
+    required: z.boolean(),
+    captured: z.boolean(),
+  })
+  .strict();
+
+const structuredFieldCaptureSchema = z
+  .object({
+    templateId: z.string().min(1),
+    requiredFieldCount: z.number().int().nonnegative(),
+    capturedRequiredFieldCount: z.number().int().nonnegative(),
+    requiredScore: z.number().finite().min(0).max(1),
+    exactCopyMatched: z.boolean(),
+    results: z.array(fieldCaptureResultSchema),
+  })
+  .strict();
+
 export const trainingAttemptRecordSchema = persistedRecordSchema
   .extend({
     sessionId: z.string().min(1),
@@ -373,6 +393,7 @@ export const trainingAttemptRecordSchema = persistedRecordSchema
     normalizedTarget: z.string(),
     normalizedResponse: z.string(),
     correct: z.boolean(),
+    exactCopyMatched: z.boolean().optional(),
     assisted: z.boolean(),
     replayed: z.boolean(),
     abandoned: z.boolean(),
@@ -391,6 +412,7 @@ export const trainingAttemptRecordSchema = persistedRecordSchema
       .optional(),
     scoringAlgorithmVersion: z.literal(SCORING_ALGORITHM_VERSION),
     observations: z.array(alignmentObservationSchema),
+    fieldCapture: structuredFieldCaptureSchema.optional(),
     schedulerReason: z
       .enum([
         "NEW_CHARACTER",
@@ -429,6 +451,54 @@ export const trainingAttemptRecordSchema = persistedRecordSchema
         ["exerciseType"],
         `${attempt.direction} attempts use ${attempt.direction === "tx" ? "send" : "copy"} exercises`,
       );
+    }
+    const exactCopyMatched = attempt.exactCopyMatched ?? attempt.correct;
+    if (!attempt.abandoned && attempt.correct !== exactCopyMatched) {
+      addIssue(
+        ["exactCopyMatched"],
+        "exactCopyMatched must match correct for non-abandoned attempts",
+      );
+    }
+    if (attempt.abandoned && attempt.fieldCapture !== undefined) {
+      addIssue(
+        ["fieldCapture"],
+        "abandoned attempts cannot include field-capture scoring",
+      );
+    }
+    if (attempt.fieldCapture) {
+      const required = attempt.fieldCapture.results.filter(
+        (result) => result.required,
+      );
+      const capturedRequired = required.filter((result) => result.captured);
+      if (attempt.fieldCapture.requiredFieldCount !== required.length) {
+        addIssue(
+          ["fieldCapture", "requiredFieldCount"],
+          "requiredFieldCount must match required results length",
+        );
+      }
+      if (
+        attempt.fieldCapture.capturedRequiredFieldCount !==
+        capturedRequired.length
+      ) {
+        addIssue(
+          ["fieldCapture", "capturedRequiredFieldCount"],
+          "capturedRequiredFieldCount must match captured required results",
+        );
+      }
+      const expectedScore =
+        required.length === 0 ? 1 : capturedRequired.length / required.length;
+      if (Math.abs(attempt.fieldCapture.requiredScore - expectedScore) > 1e-6) {
+        addIssue(
+          ["fieldCapture", "requiredScore"],
+          "requiredScore must match captured required ratio",
+        );
+      }
+      if (attempt.fieldCapture.exactCopyMatched !== exactCopyMatched) {
+        addIssue(
+          ["fieldCapture", "exactCopyMatched"],
+          "fieldCapture exactCopyMatched must match attempt exactCopyMatched",
+        );
+      }
     }
     if (attempt.effectiveWpm > attempt.charWpm) {
       addIssue(["effectiveWpm"], "effective WPM cannot exceed character WPM");

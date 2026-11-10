@@ -96,6 +96,7 @@ type AdvancementWork = {
 
 type StartIntent = {
   mode: LearnSessionMode;
+  structuredQsoDrills?: boolean;
   timing: {
     charWpm: number;
     effectiveWpm: number;
@@ -168,6 +169,7 @@ export function useLearnSession() {
     saveCurriculum,
     reconcileCurriculum,
     loadIntroductions,
+    loadLearnerStationProfile,
     saveIntroductions,
     startLearnSessionPersistence,
     getRetryClassification,
@@ -715,10 +717,16 @@ export function useLearnSession() {
   advanceRef.current = advance;
 
   const startSession = useCallback(
-    async (mode: LearnSessionMode, sessionTiming = timing, isRetry = false) => {
+    async (
+      mode: LearnSessionMode,
+      sessionTiming = timing,
+      isRetry = false,
+      structuredQsoDrills = false,
+    ) => {
       beginPersistenceOperation("session-start", isRetry);
       pendingStartIntentRef.current = {
         mode,
+        structuredQsoDrills,
         timing: {
           charWpm: sessionTiming.charWpm,
           effectiveWpm: sessionTiming.effectiveWpm,
@@ -770,6 +778,10 @@ export function useLearnSession() {
         schedulerPerformance = [];
       }
       if (startToken !== flowToken.current) return;
+      const learnerProfile = loadLearnerStationProfile
+        ? await loadLearnerStationProfile()
+        : {};
+      if (startToken !== flowToken.current) return;
 
       const session = new LearnSession({
         state: stateRef.current,
@@ -779,6 +791,8 @@ export function useLearnSession() {
         continuousCopyDurationMs: settings.continuousCopyDurationMs,
         continuousCopyTiming: sessionTiming,
         schedulerPerformance,
+        learnerProfile,
+        structuredQsoDrills,
       });
       let persistence: LearnSessionPersistence;
       try {
@@ -830,6 +844,7 @@ export function useLearnSession() {
       settings.toneHz,
       timing,
       loadIntroductions,
+      loadLearnerStationProfile,
       holdReloadSafety,
       listCharacterSpeedProficiency,
       releaseReloadSafety,
@@ -847,6 +862,10 @@ export function useLearnSession() {
     if (phase === "summary" && persistenceStatus !== "ready") return;
     return startSession("review");
   }, [persistenceStatus, phase, startSession]);
+  const practiceStructuredQso = useCallback(() => {
+    if (phase === "summary" && persistenceStatus !== "ready") return;
+    return startSession("review", timing, false, true);
+  }, [persistenceStatus, phase, startSession, timing]);
   const begin = restartFullLesson;
 
   const previewCharacter = useCallback(
@@ -968,6 +987,9 @@ export function useLearnSession() {
                 assisted: outcome.assisted,
                 replayed: outcome.replayed,
                 abandoned: false,
+                ...(outcome.fieldCapture
+                  ? { fieldCapture: outcome.fieldCapture }
+                  : {}),
                 ...(measuredResponseMs === undefined
                   ? {}
                   : { responseMs: measuredResponseMs }),
@@ -1275,7 +1297,12 @@ export function useLearnSession() {
       const startIntent = pendingStartIntentRef.current;
       setPersistenceRetrying(true);
       if (startIntent) {
-        void startSession(startIntent.mode, startIntent.timing, true);
+        void startSession(
+          startIntent.mode,
+          startIntent.timing,
+          true,
+          startIntent.structuredQsoDrills ?? false,
+        );
       } else {
         void startSession("learn", timing, true);
       }
@@ -1468,6 +1495,7 @@ export function useLearnSession() {
       begin,
       restartFullLesson,
       practiceLongCopy,
+      practiceStructuredQso,
       previewCharacter,
       acceptSpacingSuggestion,
       retryPersistence,

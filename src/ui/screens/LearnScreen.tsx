@@ -48,6 +48,7 @@ export function LearnScreen() {
     begin,
     restartFullLesson,
     practiceLongCopy,
+    practiceStructuredQso,
     acceptSpacingSuggestion,
     retryPersistence,
     recoverFromFinalizationFailure,
@@ -276,6 +277,11 @@ export function LearnScreen() {
               Start long copy
             </button>
           )}
+          {canStartLongCopy && (
+            <button type="button" onClick={() => void practiceStructuredQso()}>
+              Start structured QSO drills
+            </button>
+          )}
         </div>
 
         <div
@@ -374,6 +380,14 @@ export function LearnScreen() {
                             Practice long copy
                           </button>
                         )}
+                        {canStartLongCopy && (
+                          <button
+                            type="button"
+                            onClick={() => void practiceStructuredQso()}
+                          >
+                            Practice structured QSO drills
+                          </button>
+                        )}
                       </div>
                     </div>
                   </section>
@@ -412,6 +426,16 @@ export function LearnScreen() {
         {spacing
           ? `Practice again at ${spacing.charWpm} / ${spacing.currentEffectiveWpm} WPM`
           : "Practice long copy"}
+      </button>
+    );
+    const structuredQsoButton = (
+      <button
+        type="button"
+        className="tab"
+        onClick={() => void practiceStructuredQso()}
+        disabled={!persistenceReady}
+      >
+        Practice structured QSO drills
       </button>
     );
     const fullLessonButton = (
@@ -456,6 +480,14 @@ export function LearnScreen() {
             correct · {s.charactersTyped} typed (
             {Math.round(s.alignedCharacterAccuracy * 100)}%)
           </li>
+          {s.structuredRequiredFieldCount > 0 && (
+            <li>
+              Structured fields: {s.structuredRequiredCaptured}/
+              {s.structuredRequiredFieldCount} required captured (
+              {Math.round(s.structuredRequiredCaptureAccuracy * 100)}%) · exact
+              matches: {s.structuredExactMatches}
+            </li>
+          )}
           {s.excludedFromMastery > 0 && (
             <li>Excluded assisted/replayed cards: {s.excludedFromMastery}</li>
           )}
@@ -585,6 +617,7 @@ export function LearnScreen() {
           ) : (
             <>
               {longCopyButton}
+              {structuredQsoButton}
               {fullLessonButton}
             </>
           )}

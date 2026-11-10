@@ -43,6 +43,91 @@ async function setup() {
 }
 
 describe("DurableLearnSession", () => {
+  it("persists structured field-capture outcomes separately from exact-copy matches", async () => {
+    const { database, repository } = await setup();
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    const ids = ["owner-field", "session-field", "attempt-field"];
+
+    try {
+      const session = await DurableLearnSession.create(
+        repository,
+        {
+          mode: "review",
+          activeCharacters: ["K", "M"],
+          settings: {
+            charWpm: 20,
+            effectiveWpm: 12,
+            toneHz: 600,
+            noiseLevel: 0,
+          },
+        },
+        {
+          now: clock(
+            "2026-09-25T17:00:00.000Z",
+            "2026-09-25T17:00:01.000Z",
+            "2026-09-25T17:00:02.000Z",
+          ),
+          createId: () => ids.shift()!,
+          scheduleLeaseRenewal: () => () => undefined,
+        },
+      );
+
+      await session.recordAttempt(
+        {
+          exerciseType: "copy-word",
+          target: "DE K1ABC UR RST 579",
+          response: "RST 579 DE K1ABC",
+          assisted: false,
+          replayed: false,
+          abandoned: false,
+          fieldCapture: {
+            templateId: "op3-callsign-rst",
+            requiredFieldCount: 2,
+            capturedRequiredFieldCount: 2,
+            requiredScore: 1,
+            exactCopyMatched: false,
+            results: [
+              {
+                field: "callsign",
+                expected: "K1ABC",
+                required: true,
+                captured: true,
+              },
+              {
+                field: "rst",
+                expected: "579",
+                required: true,
+                captured: true,
+              },
+            ],
+          },
+        },
+        {
+          activeMs: 1000,
+          activeDateBuckets: activeDateBuckets(1000),
+          completedCards: 1,
+          curriculum: state,
+          introductions: ["K", "M"],
+        },
+      );
+
+      const attempt = await database.attempts.get("attempt-field");
+      expect(attempt).toMatchObject({
+        correct: false,
+        exactCopyMatched: false,
+        fieldCapture: {
+          templateId: "op3-callsign-rst",
+          requiredFieldCount: 2,
+          capturedRequiredFieldCount: 2,
+          requiredScore: 1,
+        },
+      });
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
   it("persists and finalizes a valid review stream for retry history", async () => {
     const { database, repository } = await setup();
     const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);

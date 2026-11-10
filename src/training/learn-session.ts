@@ -41,6 +41,12 @@ import {
   type LessonConfig,
   type PlannedExercise,
 } from "./lesson-plan.ts";
+import type { LearnerStationProfile } from "../content/station-profile.ts";
+import {
+  buildStructuredQsoDrills,
+  gradeStructuredQsoDrill,
+  type StructuredFieldCapture,
+} from "./qso-element-drills.ts";
 import {
   ActiveTimeTracker,
   captureActiveTime,
@@ -68,6 +74,7 @@ export type AttemptOutcome = {
   correct: boolean;
   assisted: boolean;
   replayed: boolean;
+  fieldCapture?: StructuredFieldCapture;
 };
 
 export type LessonTransition = {
@@ -165,6 +172,10 @@ export type SessionSummary = {
   continuousInsertions: number;
   continuousDeletions: number;
   continuousSubstitutions: number;
+  structuredExactMatches: number;
+  structuredRequiredFieldCount: number;
+  structuredRequiredCaptured: number;
+  structuredRequiredCaptureAccuracy: number;
   /** Group, word, and completed-stream target characters. */
   charactersTransmitted: number;
   /** Normalized characters typed for group, word, and completed-stream work. */
@@ -254,6 +265,8 @@ type SessionOptions = {
   continuousCopyDurationMs?: number;
   continuousCopyTiming?: TimingOptions;
   schedulerPerformance?: readonly CharacterSchedulerPerformance[];
+  learnerProfile?: LearnerStationProfile;
+  structuredQsoDrills?: boolean;
 };
 
 export class LearnSession {
@@ -282,7 +295,9 @@ export class LearnSession {
   private completedContinuousCopy = false;
   private lastContinuousCopyResult: ContinuousCopyResult | undefined;
   private readonly wordExercises: PlannedExercise[];
+  private readonly structuredQsoExercises: PlannedExercise[];
   private wordCursor = 0;
+  private structuredQsoCursor = 0;
   private showedWordTransition = false;
   private cards = 0;
   private finalizedOrdinaryAttempts = 0;
@@ -298,6 +313,9 @@ export class LearnSession {
   private alignedTargetCharacters = 0;
   private alignedTypedCharacters = 0;
   private alignedCorrectCharacters = 0;
+  private structuredExactMatches = 0;
+  private structuredRequiredFieldCount = 0;
+  private structuredRequiredCaptured = 0;
   private excludedFromMastery = 0;
   private replayedThisCard = false;
   private readonly practiced = new Set<string>();
@@ -359,6 +377,26 @@ export class LearnSession {
       config: lessonConfig,
       eligibility: this.wordEligibility,
     });
+    const structuredDrills =
+      this.mode === "review" && options.structuredQsoDrills === true
+        ? buildStructuredQsoDrills({
+            profile: options.learnerProfile ?? {},
+            rng: options.rng,
+          })
+        : [];
+    this.structuredQsoExercises = structuredDrills.map((drill) => ({
+      type: "copy-word",
+      target: drill.prompt,
+      direction: "rx",
+      phase: "words",
+      focus: newest,
+      newestCharacter: true,
+      assisted: false,
+      fieldCapture: {
+        templateId: drill.templateId,
+        expectations: drill.expectations,
+      },
+    }));
   }
 
   start(time = this.now()): void {
@@ -376,6 +414,11 @@ export class LearnSession {
       return this.current;
     }
     if (this.mode === "review") {
+      const structured = this.structuredQsoExercises[this.structuredQsoCursor++];
+      if (structured) {
+        this.current = structured;
+        return this.current;
+      }
       if (this.startedContinuousCopy || this.completedContinuousCopy) {
         return undefined;
       }
@@ -566,6 +609,7 @@ export class LearnSession {
     if (assisted) this.excludedFromMastery += 1;
 
     let correct: boolean;
+    let fieldCapture: StructuredFieldCapture | undefined;
     if (exercise.type === "send-character") {
       correct = input === true;
       if (!assisted) {
@@ -594,6 +638,23 @@ export class LearnSession {
       const normalizedAnswer = normalizeCopy(answer);
       if (exercise.type === "copy-group") this.groups += 1;
       else this.words += 1;
+      if (exercise.fieldCapture) {
+        const graded = gradeStructuredQsoDrill(
+          {
+            templateId: exercise.fieldCapture.templateId,
+            label: exercise.fieldCapture.templateId,
+            prompt: exercise.target,
+            expectations: [...exercise.fieldCapture.expectations],
+          },
+          answer,
+        );
+        fieldCapture = graded;
+        this.structuredRequiredFieldCount += graded.requiredFieldCount;
+        this.structuredRequiredCaptured += graded.capturedRequiredFieldCount;
+        if (graded.exactCopyMatched) {
+          this.structuredExactMatches += 1;
+        }
+      }
       this.alignedTargetCharacters += normalizedTarget.length;
       this.alignedTypedCharacters += normalizedAnswer.length;
       this.alignedCorrectCharacters += grade.perChar.filter(Boolean).length;
@@ -633,6 +694,7 @@ export class LearnSession {
       correct,
       assisted: exercise.assisted,
       replayed: this.replayedThisCard,
+      ...(fieldCapture ? { fieldCapture } : {}),
     };
   }
 
@@ -738,6 +800,13 @@ export class LearnSession {
       continuousDeletions: this.lastContinuousCopyResult?.deletions ?? 0,
       continuousSubstitutions:
         this.lastContinuousCopyResult?.substitutions ?? 0,
+      structuredExactMatches: this.structuredExactMatches,
+      structuredRequiredFieldCount: this.structuredRequiredFieldCount,
+      structuredRequiredCaptured: this.structuredRequiredCaptured,
+      structuredRequiredCaptureAccuracy:
+        this.structuredRequiredFieldCount === 0
+          ? 0
+          : this.structuredRequiredCaptured / this.structuredRequiredFieldCount,
       charactersTransmitted: this.alignedTargetCharacters,
       charactersTyped: this.alignedTypedCharacters,
       alignedCorrectCharacters: this.alignedCorrectCharacters,

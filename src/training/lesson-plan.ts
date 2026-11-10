@@ -194,6 +194,14 @@ export type PlannedExercise = {
   /** True when this card is an assisted reinforcement after a miss (shows the
    * character + Morse). Assisted cards do not contribute advancement evidence. */
   assisted: boolean;
+  fieldCapture?: {
+    templateId: string;
+    expectations: readonly {
+      field: "callsign" | "rst" | "name" | "qth" | "wx";
+      expected: string;
+      required: boolean;
+    }[];
+  };
 };
 
 export type LessonConfig = {

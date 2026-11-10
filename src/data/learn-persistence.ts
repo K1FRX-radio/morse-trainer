@@ -63,6 +63,19 @@ export type LearnAttemptEvidence = {
   responseMs?: number;
   durationMs?: number;
   readinessReason?: ContinuousCopyReadinessReason;
+  fieldCapture?: {
+    templateId: string;
+    requiredFieldCount: number;
+    capturedRequiredFieldCount: number;
+    requiredScore: number;
+    exactCopyMatched: boolean;
+    results: {
+      field: "callsign" | "rst" | "name" | "qth" | "wx";
+      expected: string;
+      required: boolean;
+      captured: boolean;
+    }[];
+  };
 };
 
 export type LearnPersistenceDependencies = {
@@ -269,6 +282,7 @@ export class DurableLearnSession implements LearnSessionPersistence {
     const id = this.createId();
     const target = normalizeCopy(evidence.target);
     const response = normalizeCopy(evidence.response);
+    const exactCopyMatched = !evidence.abandoned && target === response;
     const observations = evidence.abandoned
       ? []
       : gradeCopyDetailed(target, response).alignment;
@@ -285,7 +299,8 @@ export class DurableLearnSession implements LearnSessionPersistence {
       rawResponse: evidence.response,
       normalizedTarget: target,
       normalizedResponse: response,
-      correct: !evidence.abandoned && target === response,
+      correct: exactCopyMatched,
+      exactCopyMatched,
       assisted: evidence.assisted,
       replayed: evidence.replayed,
       abandoned: evidence.abandoned,
@@ -300,6 +315,9 @@ export class DurableLearnSession implements LearnSessionPersistence {
       ...(evidence.durationMs === undefined
         ? {}
         : { durationMs: evidence.durationMs }),
+      ...(evidence.fieldCapture === undefined
+        ? {}
+        : { fieldCapture: evidence.fieldCapture }),
       ...this.settings,
       charWpmBand: this.charWpmBand,
       effectiveWpmBand: this.effectiveWpmBand,

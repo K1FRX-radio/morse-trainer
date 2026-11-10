@@ -116,6 +116,22 @@ export type ContinuousCopyReadinessReason =
   | "NEEDS_REVIEW"
   | "COMPLETE";
 
+export type FieldCaptureResult = {
+  field: "callsign" | "rst" | "name" | "qth" | "wx";
+  expected: string;
+  required: boolean;
+  captured: boolean;
+};
+
+export type StructuredFieldCaptureRecord = {
+  templateId: string;
+  requiredFieldCount: number;
+  capturedRequiredFieldCount: number;
+  requiredScore: number;
+  exactCopyMatched: boolean;
+  results: FieldCaptureResult[];
+};
+
 export type TrainingAttemptRecord = PersistedRecord & {
   sessionId: string;
   occurredAt: CapturedDateTime;
@@ -127,6 +143,7 @@ export type TrainingAttemptRecord = PersistedRecord & {
   normalizedTarget: string;
   normalizedResponse: string;
   correct: boolean;
+  exactCopyMatched?: boolean;
   assisted: boolean;
   replayed: boolean;
   abandoned: boolean;
@@ -134,6 +151,7 @@ export type TrainingAttemptRecord = PersistedRecord & {
   scoringAlgorithmVersion: string;
   observations: AlignmentObservation[];
   schedulerReason?: SchedulerReason;
+  fieldCapture?: StructuredFieldCaptureRecord;
   responseMs?: number;
   durationMs?: number;
   keying?: EncodedKeyingTiming;
