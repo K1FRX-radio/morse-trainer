@@ -45,6 +45,7 @@ import type { LearnerStationProfile } from "../content/station-profile.ts";
 import {
   buildStructuredQsoDrills,
   gradeStructuredQsoDrill,
+  type StructuredFieldAnswers,
   type StructuredFieldCapture,
 } from "./qso-element-drills.ts";
 import {
@@ -75,6 +76,11 @@ export type AttemptOutcome = {
   assisted: boolean;
   replayed: boolean;
   fieldCapture?: StructuredFieldCapture;
+};
+
+export type StructuredCopySubmission = {
+  response: string;
+  fieldAnswers?: StructuredFieldAnswers;
 };
 
 export type LessonTransition = {
@@ -579,7 +585,7 @@ export class LearnSession {
    * cards, or a boolean for sending drills. Introductions take any input and
    * record no attempt. Practice never unlocks characters.
    */
-  submit(input: string | boolean): AttemptOutcome {
+  submit(input: string | boolean | StructuredCopySubmission): AttemptOutcome {
     const exercise = this.current;
     if (!exercise) {
       throw new Error("submit called before next");
@@ -610,6 +616,14 @@ export class LearnSession {
     const assisted = exercise.assisted || this.replayedThisCard;
     if (assisted) this.excludedFromMastery += 1;
 
+    const parsedInput =
+      typeof input === "object" && input !== null
+        ? {
+            response: input.response,
+            fieldAnswers: input.fieldAnswers,
+          }
+        : undefined;
+
     let correct: boolean;
     let fieldCapture: StructuredFieldCapture | undefined;
     if (exercise.type === "send-character") {
@@ -621,7 +635,7 @@ export class LearnSession {
       this.practiced.add(exercise.target);
     } else if (exercise.type === "copy-character") {
       this.isolatedPrompts += 1;
-      const answer = typeof input === "string" ? input : "";
+      const answer = parsedInput?.response ?? (typeof input === "string" ? input : "");
       correct = gradeCopy(exercise.target, answer).correct;
       if (!assisted) {
         this.eligibleIsolatedObservations += 1;
@@ -634,7 +648,7 @@ export class LearnSession {
     } else {
       // Groups and words: sequence-aligned grading credits target positions even
       // when characters are inserted or dropped, so per-character mastery is safe.
-      const answer = typeof input === "string" ? input : "";
+      const answer = parsedInput?.response ?? (typeof input === "string" ? input : "");
       const grade = gradeCopyAligned(exercise.target, answer);
       const normalizedTarget = normalizeCopy(exercise.target);
       const normalizedAnswer = normalizeCopy(answer);
@@ -649,6 +663,7 @@ export class LearnSession {
             expectations: [...exercise.fieldCapture.expectations],
           },
           answer,
+          parsedInput?.fieldAnswers,
         );
         fieldCapture = graded;
         this.structuredRequiredFieldCount += graded.requiredFieldCount;

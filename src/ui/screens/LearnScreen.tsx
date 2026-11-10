@@ -9,6 +9,10 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { encodeCharacter } from "../../core/morse.ts";
+import type {
+  QsoFieldId,
+  StructuredFieldAnswers,
+} from "../../training/qso-element-drills.ts";
 import { sanitizeCopyInput } from "../copy-input.ts";
 import { useLearnSession } from "../hooks/useLearnSession.ts";
 
@@ -24,6 +28,14 @@ const FAMILIARITY_LABELS = {
   familiar: "Familiar",
   solid: "Solid",
 } as const;
+
+const STRUCTURED_FIELD_LABELS: Record<QsoFieldId, string> = {
+  callsign: "Callsign",
+  rst: "RST",
+  name: "Name",
+  qth: "QTH",
+  wx: "WX",
+};
 
 export function LearnScreen() {
   const learn = useLearnSession();
@@ -64,6 +76,8 @@ export function LearnScreen() {
   } = learn.actions;
 
   const [value, setValue] = useState("");
+  const [structuredAnswers, setStructuredAnswers] =
+    useState<StructuredFieldAnswers>({});
   const [selectedCharacter, setSelectedCharacter] = useState<
     string | undefined
   >(undefined);
@@ -128,6 +142,7 @@ export function LearnScreen() {
   // Clear the field for each new practice prompt.
   useEffect(() => {
     setValue("");
+    setStructuredAnswers({});
   }, [exercise]);
 
   // Keep the active copy field focused as each prompt begins.
@@ -224,13 +239,17 @@ export function LearnScreen() {
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     if (!exercise) return;
     if (exercise.type === "copy-word" || exercise.type === "copy-group") {
-      submitGroupWord(value);
+      submitGroupWord(value, structuredAnswers);
     }
+  }
+
+  function onStructuredFieldChange(field: QsoFieldId, raw: string) {
+    setStructuredAnswers((current) => ({ ...current, [field]: raw }));
   }
 
   // Keep focus in the answer field, but never let a focus change unlock input.
   function retainFocus() {
-    if (answerReady && isCopy) {
+    if (answerReady && isCopy && !exercise?.fieldCapture) {
       window.setTimeout(() => inputRef.current?.focus(), 0);
     }
   }
@@ -811,6 +830,7 @@ export function LearnScreen() {
     (learn.progress.unlocked / learn.progress.total) * 100,
   );
   const assisted = exercise.assisted && exercise.type === "copy-character";
+  const structuredExpectations = exercise.fieldCapture?.expectations ?? [];
 
   return (
     <section data-learn-phase={learn.phaseId}>
@@ -908,6 +928,43 @@ export function LearnScreen() {
             disabled={!answerReady || (!isolatedCopy && !!feedback)}
             aria-label="Your copy"
           />
+          {structuredExpectations.length > 0 && (
+            <div className="learn__structured-fields" aria-label="Structured field answers">
+              {structuredExpectations.map((expectation) => {
+                const label = STRUCTURED_FIELD_LABELS[expectation.field];
+                return (
+                  <label
+                    key={`${exercise.fieldCapture?.templateId}-${expectation.field}`}
+                    className="field"
+                  >
+                    <span className="field__label">
+                      {label}
+                      {expectation.required ? "" : " (optional)"}
+                    </span>
+                    <input
+                      className="learn__answer"
+                      type="text"
+                      inputMode="text"
+                      autoComplete="off"
+                      autoCapitalize="characters"
+                      spellCheck={false}
+                      placeholder={`enter ${label}`}
+                      value={structuredAnswers[expectation.field] ?? ""}
+                      onChange={(event) =>
+                        onStructuredFieldChange(
+                          expectation.field,
+                          event.target.value,
+                        )
+                      }
+                      onKeyDown={onInputKeyDown}
+                      disabled={!answerReady || !!feedback}
+                      aria-label={`${label} answer`}
+                    />
+                  </label>
+                );
+              })}
+            </div>
+          )}
           <div className="practice__controls">
             <button
               type="button"
@@ -917,6 +974,15 @@ export function LearnScreen() {
             >
               Replay
             </button>
+            {exercise.type === "copy-word" && (
+              <button
+                type="button"
+                onClick={() => submitGroupWord(value, structuredAnswers)}
+                disabled={!answerReady || !!feedback}
+              >
+                Submit
+              </button>
+            )}
           </div>
 
           {feedback && (

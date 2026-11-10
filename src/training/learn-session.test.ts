@@ -378,17 +378,58 @@ describe("LearnSession modes", () => {
     const first = session.next();
     expect(first?.type).toBe("copy-word");
     if (first?.type !== "copy-word") throw new Error("expected drill 1");
-    session.submit(first.target);
+    session.submit({
+      response: first.target,
+      fieldAnswers: {
+        callsign: String(
+          first.fieldCapture?.expectations.find((field) => field.field === "callsign")
+            ?.expected ?? "",
+        ),
+        rst: String(
+          first.fieldCapture?.expectations.find((field) => field.field === "rst")
+            ?.expected ?? "",
+        ),
+      },
+    });
 
     const second = session.next();
     expect(second?.type).toBe("copy-word");
     if (second?.type !== "copy-word") throw new Error("expected drill 2");
-    session.submit("NAME ALEX");
+    session.submit({
+      response: "NAME ALEX",
+      fieldAnswers: {
+        name: "ALEX",
+      },
+    });
 
     const third = session.next();
     expect(third?.type).toBe("copy-word");
     if (third?.type !== "copy-word") throw new Error("expected drill 3");
-    session.submit(third.target);
+    session.submit({
+      response: third.target,
+      fieldAnswers: {
+        callsign: String(
+          third.fieldCapture?.expectations.find((field) => field.field === "callsign")
+            ?.expected ?? "",
+        ),
+        rst: String(
+          third.fieldCapture?.expectations.find((field) => field.field === "rst")
+            ?.expected ?? "",
+        ),
+        name: String(
+          third.fieldCapture?.expectations.find((field) => field.field === "name")
+            ?.expected ?? "",
+        ),
+        qth: String(
+          third.fieldCapture?.expectations.find((field) => field.field === "qth")
+            ?.expected ?? "",
+        ),
+        wx: String(
+          third.fieldCapture?.expectations.find((field) => field.field === "wx")
+            ?.expected ?? "",
+        ),
+      },
+    });
 
     expect(session.next()).toBeUndefined();
     expect(state).toEqual(before);

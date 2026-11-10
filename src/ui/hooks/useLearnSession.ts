@@ -32,11 +32,13 @@ import {
   type LessonTransition,
   type LearnSessionMode,
   type SessionSummary,
+  type StructuredCopySubmission,
 } from "../../training/learn-session.ts";
 import type {
   LearnPhaseId,
   PlannedExercise,
 } from "../../training/lesson-plan.ts";
+import type { StructuredFieldAnswers } from "../../training/qso-element-drills.ts";
 import {
   recommendRetry,
   type RetryRecommendation,
@@ -208,6 +210,7 @@ export function useLearnSession() {
   const queuedSubmissionRef = useRef<QueuedSubmission | null>(null);
   const isolatedPromptReadyAtMsRef = useRef<number | undefined>(undefined);
   const currentAnswerRef = useRef("");
+  const currentFieldAnswersRef = useRef<StructuredFieldAnswers>({});
   const flushQueuedSubmissionRef = useRef<
     (token: number, playbackGeneration: number) => void
   >(() => {});
@@ -599,6 +602,7 @@ export function useLearnSession() {
     nextFlowToken();
     queuedSubmissionRef.current = null;
     currentAnswerRef.current = "";
+    currentFieldAnswersRef.current = {};
     playbackGeneration.current += 1;
     clearHeldKeys();
     playingRef.current = false;
@@ -651,6 +655,7 @@ export function useLearnSession() {
       acceptedTokenRef.current = null;
       queuedSubmissionRef.current = null;
       currentAnswerRef.current = "";
+      currentFieldAnswersRef.current = {};
       lockedRef.current = true;
       setInputReady(false);
       setTypingReady(false);
@@ -970,11 +975,20 @@ export function useLearnSession() {
   // Records the answer, replays on a miss, and advances only after any
   // corrective playback finishes and while this prompt is still current.
   const afterAnswer = useCallback(
-    async (input: string, token: number, isolatedResponseMs?: number) => {
+    async (
+      input: string,
+      token: number,
+      isolatedResponseMs?: number,
+      fieldAnswers?: StructuredFieldAnswers,
+    ) => {
       const session = sessionRef.current;
       const ex = exerciseRef.current;
       if (!session || !ex) return;
-      const outcome = session.submit(input);
+      const submission: StructuredCopySubmission | string =
+        fieldAnswers !== undefined
+          ? { response: input, fieldAnswers }
+          : input;
+      const outcome = session.submit(submission);
       if (
         outcome.exercise.type === "copy-character" ||
         outcome.exercise.type === "copy-group" ||
@@ -1112,19 +1126,25 @@ export function useLearnSession() {
   );
 
   const submitGroupWord = useCallback(
-    (value: string) => {
+    (value: string, fieldAnswers?: StructuredFieldAnswers) => {
       const ex = exerciseRef.current;
       if (!ex || (ex.type !== "copy-group" && ex.type !== "copy-word")) return;
       const token = flowToken.current;
       if (acceptedTokenRef.current === token) return;
       currentAnswerRef.current = value;
+      currentFieldAnswersRef.current = fieldAnswers ?? {};
       if (lockedRef.current) {
         queuedSubmissionRef.current = { token, kind: "explicit" };
         return;
       }
       const claimedToken = claimPrompt();
       if (claimedToken !== null) {
-        void afterAnswer(currentAnswerRef.current, claimedToken);
+        void afterAnswer(
+          currentAnswerRef.current,
+          claimedToken,
+          undefined,
+          currentFieldAnswersRef.current,
+        );
       }
     },
     [claimPrompt, afterAnswer],
@@ -1147,6 +1167,7 @@ export function useLearnSession() {
           queued.kind === "isolated" ? queued.value : currentAnswerRef.current,
           claimedToken,
           queued.kind === "isolated" ? 0 : undefined,
+          queued.kind === "isolated" ? undefined : currentFieldAnswersRef.current,
         );
       }
     },
@@ -1434,6 +1455,7 @@ export function useLearnSession() {
       flowToken.current += 1;
       queuedSubmissionRef.current = null;
       currentAnswerRef.current = "";
+      currentFieldAnswersRef.current = {};
       playbackGeneration.current += 1;
       heldKeysRef.current.clear();
       previewTokenRef.current += 1;

@@ -31,10 +31,29 @@ Current field requirements by template:
 Each drill produces two independent outcomes:
 
 - Exact copy match: normalized prompt equals normalized response.
-- Required-field capture: captured required fields / required field count.
+- Required-field capture: explicitly entered required field values that exactly
+  match expected values / required field count.
 
 This separation allows analytics to distinguish near-complete field extraction
 from strict full-string correctness.
+
+## Input model
+
+OP-3 drills now collect two answer channels for every card:
+
+- Full-copy transcription (`Your copy`), graded only for exact-copy outcome.
+- Dedicated structured inputs per expected field (`callsign`, `rst`, `name`,
+  `qth`, optional `wx`), graded only for field-capture outcome.
+
+Field-capture grading is deterministic and does not parse or infer boundaries
+from free text. The grader compares each submitted field value directly against
+its expected value after normalizing:
+
+- case (uppercase)
+- intra-field whitespace (trim and collapse runs)
+
+As a result, callsign/report extensions are rejected, multiword QTH values are
+supported, and missing required fields are uncaptured.
 
 ## Data contract
 
