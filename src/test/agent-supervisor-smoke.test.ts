@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 // The helper is deliberately incomplete; the test states the correct behavior.
 // This PR will be closed without merging after the workflow is validated.
 function normalizeCwSmokeText(text: string): string {
-  return text.trim();
+  return text.trim().toUpperCase();
 }
 
 describe("autonomous supervisor smoke test", () => {
