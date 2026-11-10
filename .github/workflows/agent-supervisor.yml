@@ -122,6 +122,8 @@ jobs:
               labels: ["review:pending"],
             });
 
+  # Disposable PR #108 harness: pin an older Ubuntu image until upstream
+  # codex-action drop-sudo regression on Ubuntu 26.04 is resolved.
   review:
     needs: prepare-state
     if: needs.prepare-state.outputs.eligible == 'true'
