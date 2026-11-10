@@ -289,3 +289,46 @@ describe("field labels embedded in values", () => {
     expect(compact).toEqual(spaced);
   });
 });
+
+describe("labels must introduce field content", () => {
+  it.each(["DE", "RST", "NAME", "QTH", "WX"])(
+    "rejects values extended by %s before another labeled field",
+    (extension) => {
+      const drill = {
+        templateId: "regression-structural-boundaries",
+        label: "Exchange",
+        prompt: "DE LU2SL RST 599 NAME ALEX QTH BOSTON WX RAIN",
+        expectations: [
+          { field: "callsign" as const, expected: "LU2SL", required: true },
+          { field: "rst" as const, expected: "599", required: true },
+          { field: "name" as const, expected: "ALEX", required: true },
+          { field: "qth" as const, expected: "BOSTON", required: true },
+          { field: "wx" as const, expected: "RAIN", required: false },
+        ],
+      };
+      for (const expectation of drill.expectations) {
+        const label = {
+          callsign: "DE",
+          rst: "RST",
+          name: "NAME",
+          qth: "QTH",
+          wx: "WX",
+        }[expectation.field];
+        const response = `${label} ${expectation.expected}${extension} RST 599`;
+        // Use another field after RST itself so its separate correct occurrence
+        // does not mask a false capture of the extended value.
+        const copy =
+          expectation.field === "rst"
+            ? `${label} ${expectation.expected}${extension} NAME ALEX`
+            : response;
+        for (const input of [copy, copy.replace(/\s+/g, "")]) {
+          const result = gradeStructuredQsoDrill(drill, input);
+          expect(
+            result.results.find(({ field }) => field === expectation.field)
+              ?.captured,
+          ).toBe(false);
+        }
+      }
+    },
+  );
+});

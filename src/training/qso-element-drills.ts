@@ -109,6 +109,34 @@ function startsWithAnyTokenAt(
   );
 }
 
+// A label is a boundary only when it introduces a value. In compact copy,
+// adjacent labels (for example ALEXDEQTHBOSTON) cannot delimit a complete
+// value: the first label is an extension, not a field with content.
+function startsWithFieldAt(
+  response: string,
+  index: number,
+  fieldTokens: readonly FieldToken[],
+): boolean {
+  const labels = Object.values(FIELD_LABELS);
+  return labels.some((label) => {
+    if (!response.startsWith(label, index)) {
+      return false;
+    }
+    const valueStart = index + label.length;
+    const expectedValue = fieldTokens.some(
+      (token) => token.labeled && response.startsWith(token.token, index),
+    );
+    return (
+      expectedValue ||
+      (valueStart < response.length &&
+        !startsWithAnyTokenAt(response, valueStart, [
+          ...labels,
+          OPTIONAL_CONNECTOR_TOKEN,
+        ]))
+    );
+  });
+}
+
 export function buildStructuredQsoDrills(options: {
   profile: {
     callsign?: string;
@@ -176,7 +204,6 @@ export function gradeStructuredQsoDrill(
       ),
     ),
   );
-  const allLabels = Array.from(new Set(Object.values(FIELD_LABELS)));
   const leftBoundaryTokens = [OPTIONAL_CONNECTOR_TOKEN, ...expectedValues];
 
   const results = drill.expectations.map((expectation) => {
@@ -189,16 +216,16 @@ export function gradeStructuredQsoDrill(
       let start = compactResponse.indexOf(candidate.token);
       while (start !== -1) {
         const end = start + candidate.token.length;
-        const allowedRightLabels = allLabels.filter(
-          (label) => !(expectation.field === "callsign" && label === "DE"),
-        );
         const hasRightBoundary =
           end === compactResponse.length ||
-          startsWithAnyTokenAt(compactResponse, end, [
-            OPTIONAL_CONNECTOR_TOKEN,
-            ...expectedValues,
-            ...allowedRightLabels,
-          ]);
+          startsWithAnyTokenAt(compactResponse, end, expectedValues) ||
+          startsWithFieldAt(compactResponse, end, fieldTokens) ||
+          (compactResponse.startsWith(OPTIONAL_CONNECTOR_TOKEN, end) &&
+            startsWithFieldAt(
+              compactResponse,
+              end + OPTIONAL_CONNECTOR_TOKEN.length,
+              fieldTokens,
+            ));
         const hasLeftBoundary =
           start === 0 ||
           endsWithAnyTokenAt(compactResponse, start, leftBoundaryTokens);
