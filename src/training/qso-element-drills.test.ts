@@ -258,3 +258,34 @@ describe("whitespace-independent reordered and label-free responses", () => {
     },
   );
 });
+
+describe("field labels embedded in values", () => {
+  const drill = {
+    templateId: "regression-label-boundaries",
+    label: "Callsign + report",
+    prompt: "DE LU2SL UR RST 599",
+    expectations: [
+      { field: "callsign" as const, expected: "LU2SL", required: true },
+      { field: "rst" as const, expected: "599", required: true },
+    ],
+  };
+
+  it.each([
+    ["DE LU2SL UR RST 599", [true, true]],
+    ["DE LU2SLDE RST 599", [false, true]],
+    ["DE XXDELU2SL RST 599", [false, true]],
+    ["DE LU2SLX RST 599", [false, true]],
+    ["DELU2SLRST599", [true, true]],
+  ] as const)("grades %s", (response, expectedCaptured) => {
+    const spaced = gradeStructuredQsoDrill(drill, response);
+    const compact = gradeStructuredQsoDrill(
+      drill,
+      response.replace(/\s+/g, ""),
+    );
+
+    expect(spaced.results.map(({ captured }) => captured)).toEqual(
+      expectedCaptured,
+    );
+    expect(compact).toEqual(spaced);
+  });
+});

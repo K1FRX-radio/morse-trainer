@@ -32,12 +32,81 @@ export type StructuredQsoDrill = {
 const RST_CHOICES = ["559", "579", "599"] as const;
 const WX_CHOICES = ["SUNNY", "CLOUDY", "RAIN", "WINDY"] as const;
 
+const FIELD_LABELS: Record<QsoFieldId, string> = {
+  callsign: "DE",
+  rst: "RST",
+  name: "NAME",
+  qth: "QTH",
+  wx: "WX",
+};
+
+const OPTIONAL_CONNECTOR_TOKEN = "UR";
+
 function normalizeCopyForExact(value: string): string {
   return value.toUpperCase().replace(/\s+/g, "").trim();
 }
 
 function pick<T>(options: readonly T[], rng: Rng): T {
   return options[Math.floor(rng() * options.length)];
+}
+
+type FieldToken = {
+  field: QsoFieldId;
+  value: string;
+  token: string;
+  labeled: boolean;
+};
+
+function buildFieldTokens(
+  expectations: readonly StructuredFieldExpectation[],
+): FieldToken[] {
+  const seen = new Set<string>();
+  const tokens: FieldToken[] = [];
+
+  for (const expectation of expectations) {
+    const value = normalizeCopyForExact(expectation.expected);
+    for (const candidate of [
+      { token: value, labeled: false },
+      { token: `${FIELD_LABELS[expectation.field]}${value}`, labeled: true },
+    ] as const) {
+      const key = `${expectation.field}:${candidate.token}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      tokens.push({
+        field: expectation.field,
+        value,
+        token: candidate.token,
+        labeled: candidate.labeled,
+      });
+    }
+  }
+
+  return tokens;
+}
+
+function endsWithAnyTokenAt(
+  response: string,
+  index: number,
+  tokens: readonly string[],
+): boolean {
+  return tokens.some(
+    (token) =>
+      token.length > 0 &&
+      index >= token.length &&
+      response.startsWith(token, index - token.length),
+  );
+}
+
+function startsWithAnyTokenAt(
+  response: string,
+  index: number,
+  tokens: readonly string[],
+): boolean {
+  return tokens.some(
+    (token) => token.length > 0 && response.startsWith(token, index),
+  );
 }
 
 export function buildStructuredQsoDrills(options: {
@@ -98,21 +167,60 @@ export function gradeStructuredQsoDrill(
   drill: StructuredQsoDrill,
   response: string,
 ): StructuredFieldCapture {
-  const escapePattern = (value: string) =>
-    value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const values = drill.expectations.map((expectation) =>
-    escapePattern(normalizeCopyForExact(expectation.expected)),
-  );
-  const labels = "DE|UR|RST|NAME|QTH|WX";
-  const adjacentValues = `(?:${values.join("|")})*`;
   const compactResponse = normalizeCopyForExact(response);
-  const results = drill.expectations.map((expectation, index) => {
-    // A value can follow a label or other complete values, including in a
-    // reordered, label-free response. Require the rest of its value sequence
-    // to end at a label or the response end to reject extended values.
-    const captured = new RegExp(
-      `(?:^|${labels})${adjacentValues}${values[index]}(?=${adjacentValues}(?:${labels}|$))`,
-    ).test(compactResponse);
+  const fieldTokens = buildFieldTokens(drill.expectations);
+  const expectedValues = Array.from(
+    new Set(
+      drill.expectations.map((expectation) =>
+        normalizeCopyForExact(expectation.expected),
+      ),
+    ),
+  );
+  const allLabels = Array.from(new Set(Object.values(FIELD_LABELS)));
+  const leftBoundaryTokens = [OPTIONAL_CONNECTOR_TOKEN, ...expectedValues];
+
+  const results = drill.expectations.map((expectation) => {
+    const value = normalizeCopyForExact(expectation.expected);
+    const candidates = fieldTokens.filter(
+      (token) => token.field === expectation.field && token.value === value,
+    );
+
+    const captured = candidates.some((candidate) => {
+      let start = compactResponse.indexOf(candidate.token);
+      while (start !== -1) {
+        const end = start + candidate.token.length;
+        const allowedRightLabels = allLabels.filter(
+          (label) => !(expectation.field === "callsign" && label === "DE"),
+        );
+        const hasRightBoundary =
+          end === compactResponse.length ||
+          startsWithAnyTokenAt(compactResponse, end, [
+            OPTIONAL_CONNECTOR_TOKEN,
+            ...expectedValues,
+            ...allowedRightLabels,
+          ]);
+        const hasLeftBoundary =
+          start === 0 ||
+          endsWithAnyTokenAt(compactResponse, start, leftBoundaryTokens);
+
+        // Callsign and label-free values require complete boundaries on both
+        // sides to reject substring captures. Other labeled fields can still
+        // be captured when earlier neighboring text is malformed.
+        const boundaryAccepted = candidate.labeled
+          ? expectation.field === "callsign"
+            ? hasLeftBoundary && hasRightBoundary
+            : hasRightBoundary
+          : hasLeftBoundary && hasRightBoundary;
+
+        if (boundaryAccepted) {
+          return true;
+        }
+
+        start = compactResponse.indexOf(candidate.token, start + 1);
+      }
+      return false;
+    });
+
     return { ...expectation, captured };
   });
 
