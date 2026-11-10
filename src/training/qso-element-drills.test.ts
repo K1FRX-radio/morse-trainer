@@ -128,3 +128,55 @@ describe("complete structured field values", () => {
     },
   );
 });
+
+describe("compact exchanges with omitted fields", () => {
+  const drill = {
+    templateId: "regression-omitted-fields",
+    label: "Exchange",
+    prompt: "DE LU6KM RST 559 NAME ALEX QTH NEW YORK WX RAIN",
+    expectations: [
+      { field: "callsign", expected: "LU6KM", required: true },
+      { field: "rst", expected: "559", required: true },
+      { field: "name", expected: "ALEX", required: true },
+      { field: "qth", expected: "NEW YORK", required: true },
+      { field: "wx", expected: "RAIN", required: false },
+    ],
+  } as const;
+
+  it.each([
+    [
+      "DE LU6KM RST 559 NAME ALEX QTH NEW YORK",
+      [true, true, true, true, false],
+    ],
+    ["RST 559 NAME ALEX QTH NEW YORK WX RAIN", [false, true, true, true, true]],
+    [
+      "DE LU6KM NAME ALEX QTH NEW YORK WX RAIN",
+      [true, false, true, true, true],
+    ],
+    ["DE LU6KM RST 559 QTH NEW YORK WX RAIN", [true, true, false, true, true]],
+    ["DE LU6KM RST 559 NAME ALEX WX RAIN", [true, true, true, false, true]],
+    ["NAME ALEX", [false, false, true, false, false]],
+    ["DE LU6KMX RST 5599 QTH NEW YORKX", [false, false, false, false, false]],
+  ] as const)(
+    "grades remaining complete fields in %s",
+    (response, captured) => {
+      const spaced = gradeStructuredQsoDrill(
+        { ...drill, expectations: [...drill.expectations] },
+        response,
+      );
+      const compact = gradeStructuredQsoDrill(
+        { ...drill, expectations: [...drill.expectations] },
+        response.replace(/\s+/g, ""),
+      );
+
+      expect(compact.results.map((result) => result.captured)).toEqual(
+        captured,
+      );
+      expect(compact).toEqual(spaced);
+      expect(compact.requiredScore).toBe(
+        captured.slice(0, 4).filter(Boolean).length / 4,
+      );
+      expect(compact.exactCopyMatched).toBe(false);
+    },
+  );
+});
