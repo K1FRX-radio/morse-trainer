@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       issues: write
-      pull-requests: read
+      pull-requests: write
     outputs:
       eligible: ${{ steps.state.outputs.eligible }}
       head_sha: ${{ steps.state.outputs.head_sha }}
@@ -437,7 +437,7 @@ jobs:
       actions: write
       contents: write
       issues: write
-      pull-requests: read
+      pull-requests: write
 
     steps:
       - name: Check out trusted base
