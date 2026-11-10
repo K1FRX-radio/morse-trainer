@@ -125,7 +125,7 @@ jobs:
   review:
     needs: prepare-state
     if: needs.prepare-state.outputs.eligible == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       issues: read
@@ -455,7 +455,7 @@ jobs:
   repair:
     needs: [prepare-state, review, route]
     if: needs.route.outputs.verdict == 'changes_requested'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       actions: write
       contents: write
