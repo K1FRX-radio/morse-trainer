@@ -221,3 +221,40 @@ describe("label text within structured field values", () => {
     }
   });
 });
+
+describe("whitespace-independent reordered and label-free responses", () => {
+  const drill = {
+    templateId: "regression-whitespace",
+    label: "Callsign + report",
+    prompt: "DE LU2SL UR RST 599",
+    expectations: [
+      { field: "callsign" as const, expected: "LU2SL", required: true },
+      { field: "rst" as const, expected: "599", required: true },
+    ],
+  };
+
+  it.each([
+    ["DE LU2SL RST 599", [true, true]],
+    ["599 DE LU2SL", [true, true]],
+    ["LU2SL 599", [true, true]],
+    ["599 LU2SL", [true, true]],
+    ["RST 599 DE LU2SL", [true, true]],
+    ["DE LU2SLX RST 599", [false, true]],
+    ["DE LU2SL RST 1599", [true, false]],
+    ["DE LU2SL RST 5999", [true, false]],
+    ["599 DE LU2SLX", [false, true]],
+  ] as const)(
+    "preserves complete field capture for %s",
+    (response, captured) => {
+      const spaced = gradeStructuredQsoDrill(drill, response);
+      const compact = gradeStructuredQsoDrill(
+        drill,
+        response.replace(/\s+/g, ""),
+      );
+
+      expect(spaced.results.map(({ captured }) => captured)).toEqual(captured);
+      expect(compact).toEqual(spaced);
+      expect(compact.requiredScore).toBe(captured.filter(Boolean).length / 2);
+    },
+  );
+});

@@ -32,10 +32,6 @@ export type StructuredQsoDrill = {
 const RST_CHOICES = ["559", "579", "599"] as const;
 const WX_CHOICES = ["SUNNY", "CLOUDY", "RAIN", "WINDY"] as const;
 
-function normalizeText(value: string): string {
-  return value.trim().replace(/\s+/g, " ").toUpperCase();
-}
-
 function normalizeCopyForExact(value: string): string {
   return value.toUpperCase().replace(/\s+/g, "").trim();
 }
@@ -102,36 +98,21 @@ export function gradeStructuredQsoDrill(
   drill: StructuredQsoDrill,
   response: string,
 ): StructuredFieldCapture {
-  // Match complete expected values before checking the next label, so label
-  // text inside a value is preserved and omitted fields remain independent.
-  let remaining = normalizeCopyForExact(drill.prompt);
   const escapePattern = (value: string) =>
     value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const labels = drill.expectations.map((expectation) => {
-    const expected = normalizeCopyForExact(expectation.expected);
-    const index = remaining.indexOf(expected);
-    const label = remaining.slice(0, index);
-    remaining = remaining.slice(index + expected.length);
-    return escapePattern(label);
-  });
+  const values = drill.expectations.map((expectation) =>
+    escapePattern(normalizeCopyForExact(expectation.expected)),
+  );
+  const labels = "DE|UR|RST|NAME|QTH|WX";
+  const adjacentValues = `(?:${values.join("|")})*`;
   const compactResponse = normalizeCopyForExact(response);
-  const tokens = normalizeText(response).split(" ");
   const results = drill.expectations.map((expectation, index) => {
-    const expected = normalizeCopyForExact(expectation.expected);
-    // Also accept complete field values supplied without the exchange labels.
-    const labeledValueCaptured = new RegExp(
-      `${labels[index]}${escapePattern(expected)}(?=${labels.join("|")}|$)`,
+    // A value can follow a label or other complete values, including in a
+    // reordered, label-free response. Require the rest of its value sequence
+    // to end at a label or the response end to reject extended values.
+    const captured = new RegExp(
+      `(?:^|${labels})${adjacentValues}${values[index]}(?=${adjacentValues}(?:${labels}|$))`,
     ).test(compactResponse);
-    const captured =
-      tokens.some((_, start) => {
-        let candidate = "";
-        for (let end = start; end < tokens.length; end += 1) {
-          candidate += tokens[end];
-          if (candidate === expected) return true;
-          if (candidate.length >= expected.length) break;
-        }
-        return false;
-      }) || labeledValueCaptured;
     return { ...expectation, captured };
   });
 
