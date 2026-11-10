@@ -358,6 +358,99 @@ describe("LearnSession modes", () => {
     expect(new Set(second.gradingTarget)).toEqual(new Set(["K", "M"]));
   });
 
+  it("isolates structured QSO drills from curriculum and advancement", () => {
+    const state = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    const before = structuredClone(state);
+    const session = new LearnSession({
+      state,
+      mode: "review",
+      rng: createRng(17),
+      learnerProfile: {
+        callsign: "K1FRX",
+        name: "ALEX",
+        qth: "BOSTON",
+      },
+      structuredQsoDrills: true,
+      continuousCopyDurationMs: 60000,
+    });
+    session.start(0);
+
+    const first = session.next();
+    expect(first?.type).toBe("copy-word");
+    if (first?.type !== "copy-word") throw new Error("expected drill 1");
+    session.submit({
+      response: first.target,
+      fieldAnswers: {
+        callsign: String(
+          first.fieldCapture?.expectations.find(
+            (field) => field.field === "callsign",
+          )?.expected ?? "",
+        ),
+        rst: String(
+          first.fieldCapture?.expectations.find(
+            (field) => field.field === "rst",
+          )?.expected ?? "",
+        ),
+      },
+    });
+
+    const second = session.next();
+    expect(second?.type).toBe("copy-word");
+    if (second?.type !== "copy-word") throw new Error("expected drill 2");
+    session.submit({
+      response: "NAME ALEX",
+      fieldAnswers: {
+        name: "ALEX",
+      },
+    });
+
+    const third = session.next();
+    expect(third?.type).toBe("copy-word");
+    if (third?.type !== "copy-word") throw new Error("expected drill 3");
+    session.submit({
+      response: third.target,
+      fieldAnswers: {
+        callsign: String(
+          third.fieldCapture?.expectations.find(
+            (field) => field.field === "callsign",
+          )?.expected ?? "",
+        ),
+        rst: String(
+          third.fieldCapture?.expectations.find(
+            (field) => field.field === "rst",
+          )?.expected ?? "",
+        ),
+        name: String(
+          third.fieldCapture?.expectations.find(
+            (field) => field.field === "name",
+          )?.expected ?? "",
+        ),
+        qth: String(
+          third.fieldCapture?.expectations.find(
+            (field) => field.field === "qth",
+          )?.expected ?? "",
+        ),
+        wx: String(
+          third.fieldCapture?.expectations.find((field) => field.field === "wx")
+            ?.expected ?? "",
+        ),
+      },
+    });
+
+    expect(session.next()).toBeUndefined();
+    expect(state).toEqual(before);
+    expect(session.summary().advancementAssessment).toBeUndefined();
+
+    expect(session.summary()).toMatchObject({
+      cards: 3,
+      attempts: 3,
+      words: 3,
+      structuredRequiredFieldCount: 8,
+      structuredRequiredCaptured: 7,
+      structuredExactMatches: 2,
+    });
+  });
+
   it("keeps a full lesson as the default mode", () => {
     const session = new LearnSession({
       state: createInitialState(DEFAULT_CURRICULUM_CONFIG),

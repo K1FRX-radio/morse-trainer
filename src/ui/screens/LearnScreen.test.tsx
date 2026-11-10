@@ -471,6 +471,14 @@ async function toContinuousCopyTransition(
   await learnDriver(fake).completePhaseCorrectly("groups-3");
 }
 
+function parseCallsignAndRst(prompt: string) {
+  const matched = prompt.match(/^DE\s+(\S+)\s+UR\s+RST\s+(\d+)$/);
+  if (!matched) {
+    throw new Error(`unexpected structured prompt: ${prompt}`);
+  }
+  return { callsign: matched[1], rst: matched[2] };
+}
+
 beforeEach(() => {
   localStorage.clear();
   vi.useFakeTimers();
@@ -676,6 +684,68 @@ describe("LearnScreen input gating", () => {
     for (const character of stream.replaceAll(" ", "")) {
       expect(unlocked).toContain(character);
     }
+  });
+
+  it("submits explicit structured fields and persists field-capture evidence", async () => {
+    seedUnlockedCharacters(2);
+    const fake = makeFakeAudio();
+    const recordAttempt = vi.fn<LearnSessionPersistence["recordAttempt"]>(() =>
+      Promise.resolve(),
+    );
+    const persistence: LearnSessionPersistence = {
+      recordAttempt,
+      finish: () => Promise.resolve(),
+      interrupt: () => Promise.resolve(),
+      acceptAdvancement: () => Promise.resolve(testCurriculum()),
+      retry: () => Promise.resolve(),
+    };
+    renderLearn(
+      fake.audio,
+      {},
+      {
+        startLearnSessionPersistence: () => Promise.resolve(persistence),
+      },
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Start structured QSO drills" }),
+    );
+    await flush();
+
+    const prompt = fake.pending[0]?.text ?? "";
+    const { callsign, rst } = parseCallsignAndRst(prompt);
+    await resolvePlay(fake);
+
+    const copyInput = screen.getByLabelText("Your copy");
+    const callsignInput = screen.getByLabelText("Callsign answer");
+    const rstInput = screen.getByLabelText("RST answer");
+
+    fireEvent.blur(copyInput);
+    callsignInput.focus();
+    await flush();
+    await tick(0);
+    expect(callsignInput).toHaveFocus();
+
+    fireEvent.change(copyInput, { target: { value: prompt } });
+    fireEvent.change(callsignInput, { target: { value: callsign } });
+    fireEvent.change(rstInput, { target: { value: rst } });
+    fireEvent.keyDown(rstInput, { key: "Enter" });
+    await flush();
+
+    expect(recordAttempt).toHaveBeenCalled();
+    const evidence = recordAttempt.mock.calls[0]?.[0];
+    expect(evidence?.exerciseType).toBe("copy-word");
+    expect(evidence?.response).toBe(sanitizeCopyInput(prompt));
+    expect(evidence?.fieldCapture).toMatchObject({
+      templateId: "op3-callsign-rst",
+      requiredFieldCount: 2,
+      capturedRequiredFieldCount: 2,
+      requiredScore: 1,
+      exactCopyMatched: true,
+    });
+    expect(
+      evidence?.fieldCapture?.results.map((result) => result.captured),
+    ).toEqual([true, true]);
   });
 
   it("can assess advancement from onboarding long-copy shortcut without auto-unlock", async () => {
@@ -2512,6 +2582,9 @@ describe("LearnScreen audio sequencing", () => {
       expect(screen.queryByText(/characters/)).not.toBeInTheDocument();
       const input = screen.getByLabelText("Your copy") as HTMLInputElement;
       expect(input).toBeEnabled();
+      expect(
+        screen.queryByRole("button", { name: "Submit" }),
+      ).not.toBeInTheDocument();
       await driver.answerCurrentPrompt(target);
       completedWords += 1;
     }

@@ -109,6 +109,89 @@ function buildReloadSafetyContextValue(store: ReloadSafetyStore) {
 }
 
 describe("useLearnSession speed-aware query races", () => {
+  it("retries rejected profile reads only for structured operating prep", async () => {
+    const curriculum = createInitialState(DEFAULT_CURRICULUM_CONFIG);
+    const startLearnSessionPersistence = vi.fn(async () => persistence());
+    const loadLearnerStationProfile = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("profile unavailable"))
+      .mockResolvedValue({});
+    const reloadSafetyContextValue = buildReloadSafetyContextValue(
+      createReloadSafetyStore(),
+    );
+    function Wrapper({ children }: { children: ReactNode }) {
+      return (
+        <SettingsContext.Provider
+          value={{
+            settings: DEFAULT_SETTINGS,
+            update: vi.fn(),
+            outputDeviceId: "",
+            setOutputDeviceId: vi.fn(),
+          }}
+        >
+          <ReloadSafetyContext.Provider value={reloadSafetyContextValue}>
+            <LearnAudioContext.Provider value={audio()}>
+              <TrainingDataContext.Provider
+                value={{
+                  loadCurriculum: () => structuredClone(curriculum),
+                  saveCurriculum: vi.fn(),
+                  reconcileCurriculum: vi.fn(async () =>
+                    structuredClone(curriculum),
+                  ),
+                  loadIntroductions: vi.fn(() => []),
+                  saveIntroductions: vi.fn(),
+                  startLearnSessionPersistence,
+                  startPracticeSessionPersistence: vi.fn(async () => {
+                    throw new Error("practice persistence is not used here");
+                  }),
+                  getRetryClassification: vi.fn(async () => ({
+                    consecutiveAccuracyMisses: 0,
+                    shouldSuggestSpacing: false,
+                  })),
+                  listDailyProjections: vi.fn(async () => []),
+                  listCharacterProjections: vi.fn(async () => []),
+                  listCharacterSpeedProficiency: vi.fn(async () => []),
+                  loadLearnerStationProfile,
+                  listConfusionProjections: vi.fn(async () => []),
+                }}
+              >
+                {children}
+              </TrainingDataContext.Provider>
+            </LearnAudioContext.Provider>
+          </ReloadSafetyContext.Provider>
+        </SettingsContext.Provider>
+      );
+    }
+
+    const hook = renderHook(() => useLearnSession(), { wrapper: Wrapper });
+    await act(async () => {
+      await hook.result.current.actions.begin();
+    });
+    expect(loadLearnerStationProfile).not.toHaveBeenCalled();
+    await act(async () => {
+      await hook.result.current.actions.practiceLongCopy();
+    });
+    expect(loadLearnerStationProfile).not.toHaveBeenCalled();
+    await act(async () => {
+      await hook.result.current.actions.practiceStructuredQso();
+    });
+    expect(hook.result.current.persistenceStatus).toBe("error");
+    expect(startLearnSessionPersistence).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      hook.result.current.actions.retryPersistence();
+    });
+    await waitFor(() =>
+      expect(hook.result.current.persistenceStatus).toBe("ready"),
+    );
+    expect(loadLearnerStationProfile).toHaveBeenCalledTimes(2);
+    expect(startLearnSessionPersistence).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        operatingPrepStage: "OP-3",
+        mode: "review",
+      }),
+    );
+  });
+
   it("ignores stale start work when an older proficiency query rejects", async () => {
     const curriculum = createInitialState(DEFAULT_CURRICULUM_CONFIG);
     const firstQuery = deferred<CharacterSpeedProficiencyRecord[]>();

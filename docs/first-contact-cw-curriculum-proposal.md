@@ -12,7 +12,9 @@ Status update:
   content/training stack
 - issue #97 completed staged callsign progression selectors and deterministic
   generation in the existing content/training stack
-- implementation issues #98-#101 remain pending explicit prioritization
+- issue #98 completed learner station profile persistence and fallback handling
+- issue #99 completed structured QSO element drills with field-based grading
+- implementation issues #100-#101 remain pending explicit prioritization
   approval
 
 ## Goals

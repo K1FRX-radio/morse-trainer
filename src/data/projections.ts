@@ -71,7 +71,12 @@ function emptyDaily(
 }
 
 function accuracyEligible(attempt: TrainingAttemptRecord): boolean {
-  return !attempt.assisted && !attempt.replayed && !attempt.abandoned;
+  return (
+    attempt.source !== "operating-prep" &&
+    !attempt.assisted &&
+    !attempt.replayed &&
+    !attempt.abandoned
+  );
 }
 
 function compareAttempts(

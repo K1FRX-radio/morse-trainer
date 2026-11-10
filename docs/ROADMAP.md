@@ -14,11 +14,10 @@ visual identity decisions as part of functional PRs.
 
 ## Next
 
-- Approval checkpoint: prioritize and explicitly authorize pending first-contact slices (#99-#101, #106)
+- Approval checkpoint: prioritize and explicitly authorize pending first-contact slices (#100-#101, #106)
 
 ## Proposed queue (pending approval)
 
-- #99 — Implement structured QSO element drills with field-based grading
 - #106 — Improve callsign generation with allocation-aware formats and real-world datasets (follows #97; before #100)
 - #100 — Implement complete simulated CW QSO practice sessions
 - #101 — Add layered realism modifiers for operating-prep copy
@@ -31,9 +30,9 @@ implementation slices (#95-#101) documented in
 `docs/first-contact-cw-curriculum-proposal.md`. #95 now defines the operating-
 prep contract in `docs/operating-prep-progression-contract.md`, #96 adds
 staged on-air vocabulary selectors, and #97 adds staged callsign progression
-selectors and generators in the existing domain stack. The remaining #99-#101 and #106
+selectors and generators in the existing domain stack. The remaining #100-#101 and #106
 sequence is still proposed, not pre-approved for automatic execution.
-Before starting any of #99-#101 or #106, explicitly approve prioritization/order and
+Before starting any of #100-#101 or #106, explicitly approve prioritization/order and
 confirm whether reprioritization is required against #61. #106 refines the
 #97 callsign generator and should precede full QSO simulations (#100).
 
@@ -77,6 +76,7 @@ Do not silently promote paused work into the active queue.
 
 ## Recently completed
 
+- #99 — Implement structured QSO element drills with field-based grading
 - #98 — Add learner station profile for self-relevant CW practice
 - #97 — Add realistic callsign curriculum progression
 - #96 — Add staged on-air vocabulary tracks for RX training

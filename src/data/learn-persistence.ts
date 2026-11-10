@@ -38,6 +38,7 @@ export type LearnPersistenceSettings = {
 
 export type LearnPersistenceStart = {
   mode: LearnSessionMode;
+  operatingPrepStage?: "OP-3";
   activeCharacters: string[];
   settings: LearnPersistenceSettings;
 };
@@ -63,6 +64,19 @@ export type LearnAttemptEvidence = {
   responseMs?: number;
   durationMs?: number;
   readinessReason?: ContinuousCopyReadinessReason;
+  fieldCapture?: {
+    templateId: string;
+    requiredFieldCount: number;
+    capturedRequiredFieldCount: number;
+    requiredScore: number;
+    exactCopyMatched: boolean;
+    results: {
+      field: "callsign" | "rst" | "name" | "qth" | "wx";
+      expected: string;
+      required: boolean;
+      captured: boolean;
+    }[];
+  };
 };
 
 export type LearnPersistenceDependencies = {
@@ -212,7 +226,10 @@ export class DurableLearnSession implements LearnSessionPersistence {
       id: createId(),
       schemaVersion: RECORD_SCHEMA_VERSION,
       updatedAt: startedAt.utc,
-      source: "learn",
+      source: options.operatingPrepStage ? "operating-prep" : "learn",
+      ...(options.operatingPrepStage
+        ? { operatingPrepStage: options.operatingPrepStage }
+        : {}),
       mode: options.mode,
       status: "active",
       startedAt,
@@ -269,6 +286,7 @@ export class DurableLearnSession implements LearnSessionPersistence {
     const id = this.createId();
     const target = normalizeCopy(evidence.target);
     const response = normalizeCopy(evidence.response);
+    const exactCopyMatched = !evidence.abandoned && target === response;
     const observations = evidence.abandoned
       ? []
       : gradeCopyDetailed(target, response).alignment;
@@ -278,14 +296,18 @@ export class DurableLearnSession implements LearnSessionPersistence {
       updatedAt: occurredAt.utc,
       sessionId: this.record.id,
       occurredAt,
-      source: "learn",
+      source: this.record.source,
+      ...(this.record.operatingPrepStage
+        ? { operatingPrepStage: this.record.operatingPrepStage }
+        : {}),
       direction: "rx",
       exerciseType: evidence.exerciseType,
       rawTarget: evidence.target,
       rawResponse: evidence.response,
       normalizedTarget: target,
       normalizedResponse: response,
-      correct: !evidence.abandoned && target === response,
+      correct: exactCopyMatched,
+      exactCopyMatched,
       assisted: evidence.assisted,
       replayed: evidence.replayed,
       abandoned: evidence.abandoned,
@@ -300,6 +322,9 @@ export class DurableLearnSession implements LearnSessionPersistence {
       ...(evidence.durationMs === undefined
         ? {}
         : { durationMs: evidence.durationMs }),
+      ...(evidence.fieldCapture === undefined
+        ? {}
+        : { fieldCapture: evidence.fieldCapture }),
       ...this.settings,
       charWpmBand: this.charWpmBand,
       effectiveWpmBand: this.effectiveWpmBand,
@@ -314,16 +339,25 @@ export class DurableLearnSession implements LearnSessionPersistence {
         this.record.attemptCount + 1,
         nextQualifyingAttemptCount,
       );
-      const result = await this.repository.commitLearnAttempt({
+      const shared = {
         expectedSessionRevision: this.record.revision,
         session: nextSession,
         attempt,
-        curriculum: curriculumRecord(frozenSnapshot.curriculum, occurredAt.utc),
-        introductions: introductionsRecord(
-          frozenSnapshot.introductions,
-          occurredAt.utc,
-        ),
-      });
+      };
+      const result =
+        this.record.source === "operating-prep"
+          ? await this.repository.commitPracticeAttempt(shared)
+          : await this.repository.commitLearnAttempt({
+              ...shared,
+              curriculum: curriculumRecord(
+                frozenSnapshot.curriculum,
+                occurredAt.utc,
+              ),
+              introductions: introductionsRecord(
+                frozenSnapshot.introductions,
+                occurredAt.utc,
+              ),
+            });
       this.record = result.session;
       this.qualifyingAttemptCount = nextQualifyingAttemptCount;
       if (evidence.exerciseType === "continuous-copy") {
