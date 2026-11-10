@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { createRng } from "../core/rng.ts";
+import { isPlausibleCallsignForStage } from "./callsigns.ts";
 import {
   CW_WORDS,
   GROUP_SIZE,
   eligibleCopyWords,
   generateCallsign,
   generateCopyPrompt,
+  generateStagedCallsignPrompt,
   generateScopedCopyPrompt,
 } from "./practice-content.ts";
 
@@ -42,6 +44,11 @@ describe("generateCopyPrompt", () => {
   it("generates callsign-style prompts with a digit", () => {
     const call = generateCallsign(createRng(9));
     expect(call).toMatch(/^[A-Z]{1,2}[0-9][A-Z]{1,3}$/);
+  });
+
+  it("can generate stage-specific portable callsigns", () => {
+    const call = generateCallsign(createRng(10), "portable-identifiers");
+    expect(call).toContain("/");
   });
 
   it("defaults letters scope to unlocked characters only", () => {
@@ -124,6 +131,17 @@ describe("generateCopyPrompt", () => {
       ["K", "M", "2"],
     );
     expect(prompt).toBeDefined();
-    expect(prompt).toMatch(/^[KM]{1,2}2[KM]{1,3}$/);
+    expect(isPlausibleCallsignForStage(prompt!, "basic-domestic")).toBe(true);
+  });
+
+  it("supports staged unlocked callsign selection hooks", () => {
+    const prompt = generateStagedCallsignPrompt(
+      "portable-identifiers",
+      createRng(25),
+      "unlocked",
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/".split(""),
+    );
+    expect(prompt).toBeDefined();
+    expect(prompt).toMatch(/\//);
   });
 });

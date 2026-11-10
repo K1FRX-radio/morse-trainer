@@ -1,5 +1,9 @@
 import { DEFAULT_CURRICULUM_CONFIG } from "../content/curriculum-data.ts";
 import {
+  normalizeLearnerStationProfile,
+  type LearnerStationProfile,
+} from "../content/station-profile.ts";
+import {
   createInitialState,
   type CurriculumState,
 } from "../core/curriculum.ts";
@@ -17,6 +21,7 @@ import {
 import type {
   CurriculumStateRecord,
   IntroductionsRecord,
+  LearnerStationProfileRecord,
   PortableSettingsRecord,
 } from "./models.ts";
 import {
@@ -30,6 +35,10 @@ type BootstrapRepository = LegacyMigrationRepository & {
   savePortableSettings(
     settings: PracticeSettings,
   ): Promise<PortableSettingsRecord>;
+  getLearnerStationProfile(): Promise<LearnerStationProfileRecord | undefined>;
+  saveLearnerStationProfile(
+    profile: LearnerStationProfile,
+  ): Promise<LearnerStationProfileRecord>;
   getCurriculumState(): Promise<CurriculumStateRecord | undefined>;
   saveCurriculumState(state: CurriculumState): Promise<CurriculumStateRecord>;
   getIntroductions(): Promise<IntroductionsRecord | undefined>;
@@ -40,6 +49,7 @@ type BootstrapRepository = LegacyMigrationRepository & {
 export type TrainingDataBootstrap = {
   repository: TrainingDataRepository;
   settings: PracticeSettings;
+  learnerProfile: LearnerStationProfile;
   curriculum: CurriculumState;
   introductions: string[];
   recoveredSessionCount: number;
@@ -96,6 +106,11 @@ export async function bootstrapTrainingData(
   const settingsRecord = settingsEqual(storedSettings.value, canonicalSettings)
     ? storedSettings
     : await repository.savePortableSettings(canonicalSettings);
+  const learnerProfileRecord =
+    (await repository.getLearnerStationProfile()) ??
+    (await repository.saveLearnerStationProfile(
+      normalizeLearnerStationProfile({}),
+    ));
   const curriculumRecord =
     (await repository.getCurriculumState()) ??
     (await repository.saveCurriculumState(
@@ -106,6 +121,7 @@ export async function bootstrapTrainingData(
     (await repository.saveIntroductions([]));
   return {
     settings: settingsRecord.value,
+    learnerProfile: learnerProfileRecord.value,
     curriculum: curriculumState(curriculumRecord),
     introductions: introductionsRecord.characters,
     recoveredSessionCount: recovered.length,

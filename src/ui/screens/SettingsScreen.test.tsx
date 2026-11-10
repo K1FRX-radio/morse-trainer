@@ -41,6 +41,8 @@ function renderSettings(
     previewPortableBackup: vi.fn(),
     replacePortableBackup: vi.fn(),
     resetPortableData: vi.fn(),
+    loadLearnerStationProfile: vi.fn().mockResolvedValue({}),
+    saveLearnerStationProfile: vi.fn().mockResolvedValue(undefined),
   };
 
   return render(
@@ -90,6 +92,18 @@ function mockStoragePersistenceApi(options: {
 }
 
 describe("SettingsScreen continuous copy", () => {
+  it("shows concise install guidance for Android/Chrome and iPhone/Safari", () => {
+    renderSettings();
+
+    expect(screen.getByText("Install app")).toBeInTheDocument();
+    expect(screen.getByText(/Android\/Chrome:/)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /iPhone\/Safari: use Share, then choose Add to Home Screen\./,
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("applies the one-minute default to migrated partial settings", () => {
     renderSettings(normalizeSettings({ charWpm: 18 }));
 
@@ -409,5 +423,116 @@ describe("SettingsScreen continuous copy", () => {
     expect(
       screen.getByRole("button", { name: "Request persistent storage" }),
     ).toBeDisabled();
+  });
+
+  it("loads and saves learner profile with normalized callsign", async () => {
+    const loadLearnerStationProfile = vi.fn().mockResolvedValue({
+      callsign: "k1frx",
+      name: "alex",
+      qth: "boston",
+    });
+    const saveLearnerStationProfile = vi.fn().mockResolvedValue(undefined);
+
+    renderSettings(DEFAULT_SETTINGS, vi.fn(), {
+      loadLearnerStationProfile,
+      saveLearnerStationProfile,
+    });
+
+    await waitFor(() => expect(loadLearnerStationProfile).toHaveBeenCalled());
+    fireEvent.change(screen.getByLabelText("Learner callsign"), {
+      target: { value: "w1aw" },
+    });
+    fireEvent.change(screen.getByLabelText("Learner name"), {
+      target: { value: "sam" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Save learner station profile" }),
+    );
+
+    await waitFor(() =>
+      expect(saveLearnerStationProfile).toHaveBeenCalledWith(
+        expect.objectContaining({
+          callsign: "W1AW",
+          name: "SAM",
+          qth: "BOSTON",
+        }),
+      ),
+    );
+  });
+
+  it("blocks learner profile save when callsign format is invalid", async () => {
+    const saveLearnerStationProfile = vi.fn().mockResolvedValue(undefined);
+
+    renderSettings(DEFAULT_SETTINGS, vi.fn(), {
+      saveLearnerStationProfile,
+    });
+
+    fireEvent.change(screen.getByLabelText("Learner callsign"), {
+      target: { value: "??" },
+    });
+
+    expect(
+      screen.getByRole("button", { name: "Save learner station profile" }),
+    ).toBeDisabled();
+    expect(saveLearnerStationProfile).not.toHaveBeenCalled();
+  });
+
+  it("shows success only after learner profile persistence resolves", async () => {
+    let resolveSave: (() => void) | undefined;
+    const saveLearnerStationProfile = vi.fn().mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+
+    renderSettings(DEFAULT_SETTINGS, vi.fn(), {
+      saveLearnerStationProfile,
+    });
+
+    fireEvent.change(screen.getByLabelText("Learner callsign"), {
+      target: { value: "W1AW" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Save learner station profile" }),
+    );
+
+    expect(
+      screen.queryByText("Learner station profile saved."),
+    ).not.toBeInTheDocument();
+
+    resolveSave?.();
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("Learner station profile saved."),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it("shows an error when learner profile persistence rejects", async () => {
+    const saveLearnerStationProfile = vi
+      .fn()
+      .mockRejectedValue(new Error("profile write failed"));
+
+    renderSettings(DEFAULT_SETTINGS, vi.fn(), {
+      saveLearnerStationProfile,
+    });
+
+    fireEvent.change(screen.getByLabelText("Learner callsign"), {
+      target: { value: "W1AW" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Save learner station profile" }),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "profile write failed",
+      ),
+    );
+    expect(
+      screen.queryByText("Learner station profile saved."),
+    ).not.toBeInTheDocument();
   });
 });

@@ -1,5 +1,9 @@
 import { DATABASE_VERSION, TrainerDatabase } from "./indexeddb.ts";
 import { DEFAULT_CURRICULUM_CONFIG } from "../content/curriculum-data.ts";
+import {
+  normalizeLearnerStationProfile,
+  type LearnerStationProfile,
+} from "../content/station-profile.ts";
 import type {
   CharacterWpmBand,
   PracticeSettings,
@@ -34,6 +38,7 @@ import {
   type CurriculumStateRecord,
   type DailyProjectionRecord,
   type IntroductionsRecord,
+  type LearnerStationProfileRecord,
   type LegacyMigrationBundle,
   type MigrationLedgerRecord,
   type MilestoneRecord,
@@ -66,6 +71,7 @@ import {
   parseConfusionProjectionRecord,
   parseDailyProjectionRecord,
   parseIntroductionsRecord,
+  parseLearnerStationProfileRecord,
   parseLegacyMigrationBundle,
   parseMigrationLedger,
   parseMilestoneRecord,
@@ -201,6 +207,10 @@ export interface TrainingDataRepository extends LegacyMigrationRepository {
   savePortableSettings(
     settings: PracticeSettings,
   ): Promise<PortableSettingsRecord>;
+  getLearnerStationProfile(): Promise<LearnerStationProfileRecord | undefined>;
+  saveLearnerStationProfile(
+    profile: LearnerStationProfile,
+  ): Promise<LearnerStationProfileRecord>;
   getCurriculumState(): Promise<CurriculumStateRecord | undefined>;
   saveCurriculumState(state: CurriculumState): Promise<CurriculumStateRecord>;
   getIntroductions(): Promise<IntroductionsRecord | undefined>;
@@ -593,6 +603,36 @@ export class DexieTrainingRepository implements TrainingDataRepository {
                 this.now().toISOString(),
               ),
         value: canonicalSettings,
+      });
+      await this.database.settings.put(record);
+      return record;
+    });
+  }
+
+  async getLearnerStationProfile(): Promise<LearnerStationProfileRecord | undefined> {
+    const record = await this.database.settings.get("learner-station-profile");
+    return record === undefined
+      ? undefined
+      : parseLearnerStationProfileRecord(record);
+  }
+
+  async saveLearnerStationProfile(
+    profile: LearnerStationProfile,
+  ): Promise<LearnerStationProfileRecord> {
+    const normalizedProfile = normalizeLearnerStationProfile(profile);
+    return this.database.transaction("rw", this.database.settings, async () => {
+      const existing = await this.database.settings.get("learner-station-profile");
+      const record = parseLearnerStationProfileRecord({
+        id: "learner-station-profile",
+        schemaVersion: RECORD_SCHEMA_VERSION,
+        updatedAt:
+          existing === undefined
+            ? this.now().toISOString()
+            : laterTimestamp(
+                parseLearnerStationProfileRecord(existing).updatedAt,
+                this.now().toISOString(),
+              ),
+        value: normalizedProfile,
       });
       await this.database.settings.put(record);
       return record;
@@ -1494,6 +1534,9 @@ export class DexieTrainingRepository implements TrainingDataRepository {
       ],
       async () => ({
         settings: await this.database.settings.get("portable-settings"),
+        learnerProfile: await this.database.settings.get(
+          "learner-station-profile",
+        ),
         curriculum: await this.database.curriculum.get("curriculum-state"),
         introductions: await this.database.introductions.get(
           "completed-introductions",
@@ -1507,6 +1550,7 @@ export class DexieTrainingRepository implements TrainingDataRepository {
     );
     const {
       settings,
+      learnerProfile,
       curriculum,
       introductions,
       sessions,
@@ -1517,7 +1561,7 @@ export class DexieTrainingRepository implements TrainingDataRepository {
     } = snapshot;
     const dataset = parseTrainingDataset(sessions, attempts);
 
-    if (!settings || !curriculum || !introductions) {
+    if (!settings || !learnerProfile || !curriculum || !introductions) {
       throw new Error("portable data is incomplete and cannot be exported");
     }
 
@@ -1541,6 +1585,9 @@ export class DexieTrainingRepository implements TrainingDataRepository {
       exportedAt,
       payload: {
         settings: parsePortableSettingsRecord(structuredClone(settings)),
+        learnerProfile: parseLearnerStationProfileRecord(
+          structuredClone(learnerProfile),
+        ),
         curriculum: parseCurriculumStateRecord(structuredClone(curriculum)),
         introductions: parseIntroductionsRecord(structuredClone(introductions)),
         sessions: dataset.sessions.map((session) => toBackupSessionV1(session)),
@@ -1657,6 +1704,7 @@ export class DexieTrainingRepository implements TrainingDataRepository {
         await this.database.metadata.clear();
 
         await this.database.settings.put(backup.payload.settings);
+        await this.database.settings.put(backup.payload.learnerProfile);
         await this.database.curriculum.put(backup.payload.curriculum);
         await this.database.introductions.put(backup.payload.introductions);
         if (backup.payload.sessions.length > 0) {
@@ -1710,6 +1758,12 @@ export class DexieTrainingRepository implements TrainingDataRepository {
       updatedAt: now,
       value: DEFAULT_SETTINGS,
     });
+    const learnerProfile = parseLearnerStationProfileRecord({
+      id: "learner-station-profile",
+      schemaVersion: RECORD_SCHEMA_VERSION,
+      updatedAt: now,
+      value: normalizeLearnerStationProfile({}),
+    });
     const curriculum = curriculumRecord(freshCurriculum, now);
     const introductions = parseIntroductionsRecord({
       id: "completed-introductions",
@@ -1759,6 +1813,7 @@ export class DexieTrainingRepository implements TrainingDataRepository {
           await this.database.metadata.bulkPut(migrationLedgers);
         }
         await this.database.settings.put(settings);
+        await this.database.settings.put(learnerProfile);
         await this.database.curriculum.put(curriculum);
         await this.database.introductions.put(introductions);
       },

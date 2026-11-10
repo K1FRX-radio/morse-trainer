@@ -6,6 +6,7 @@ import type {
   LegacyMigrationBundle,
   CurriculumStateRecord,
   IntroductionsRecord,
+  LearnerStationProfileRecord,
   PortableSettingsRecord,
 } from "./models.ts";
 import { bootstrapTrainingData } from "./bootstrap.ts";
@@ -23,6 +24,7 @@ describe("bootstrapTrainingData", () => {
   it("opens, migrates, recovers, and loads portable settings in order", async () => {
     const calls: string[] = [];
     let settings: PortableSettingsRecord | undefined;
+    let learnerProfile: LearnerStationProfileRecord | undefined;
     let curriculum: CurriculumStateRecord | undefined;
     let introductions: IntroductionsRecord | undefined;
     const repository = {
@@ -53,6 +55,17 @@ describe("bootstrapTrainingData", () => {
         throw new Error("migrated settings should already exist");
       },
       getCurriculumState: async () => curriculum,
+      getLearnerStationProfile: async () => learnerProfile,
+      saveLearnerStationProfile: async () => {
+        calls.push("profile-save");
+        learnerProfile = {
+          id: "learner-station-profile" as const,
+          schemaVersion: 1 as const,
+          updatedAt: "2026-09-24T18:00:00.000Z",
+          value: {},
+        };
+        return learnerProfile;
+      },
       saveCurriculumState: async () => {
         throw new Error("migrated curriculum should already exist");
       },
@@ -67,6 +80,7 @@ describe("bootstrapTrainingData", () => {
 
     await expect(bootstrapTrainingData(storage, repository)).resolves.toEqual({
       settings: { ...DEFAULT_SETTINGS, charWpm: 20 },
+      learnerProfile: {},
       curriculum: {
         config: DEFAULT_CURRICULUM_CONFIG,
         characters: expect.any(Array),
@@ -80,6 +94,7 @@ describe("bootstrapTrainingData", () => {
       "migration-commit",
       "recover",
       "settings-get",
+      "profile-save",
     ]);
     expect(storage.getItem(LEGACY_SETTINGS_KEY)).toBeNull();
   });
@@ -120,6 +135,16 @@ describe("bootstrapTrainingData", () => {
         return defaultRecord;
       },
       getCurriculumState: async () => undefined,
+      getLearnerStationProfile: async () => undefined,
+      saveLearnerStationProfile: async () => {
+        calls.push("profile-save");
+        return {
+          id: "learner-station-profile" as const,
+          schemaVersion: 1 as const,
+          updatedAt: "2026-09-24T18:00:00.000Z",
+          value: {},
+        };
+      },
       saveCurriculumState: async () => {
         calls.push("curriculum-save");
         return curriculumRecord;
@@ -136,12 +161,14 @@ describe("bootstrapTrainingData", () => {
 
     await expect(bootstrapTrainingData(storage, repository)).resolves.toEqual({
       settings: DEFAULT_SETTINGS,
+      learnerProfile: {},
       curriculum: defaultCurriculum,
       introductions: [],
       recoveredSessionCount: 0,
     });
     expect(calls).toEqual([
       "settings-save",
+      "profile-save",
       "curriculum-save",
       "introductions-save",
     ]);
@@ -197,6 +224,15 @@ describe("bootstrapTrainingData", () => {
         };
       },
       getCurriculumState: async () => curriculumRecord,
+      getLearnerStationProfile: async () => ({
+        id: "learner-station-profile" as const,
+        schemaVersion: 1 as const,
+        updatedAt: "2026-09-24T18:00:00.000Z",
+        value: {},
+      }),
+      saveLearnerStationProfile: async () => {
+        throw new Error("existing learner profile should be reused");
+      },
       saveCurriculumState: async () => {
         throw new Error("existing curriculum should be reused");
       },
@@ -210,6 +246,7 @@ describe("bootstrapTrainingData", () => {
       bootstrapTrainingData(memoryStorage(), repository),
     ).resolves.toEqual({
       settings: { ...DEFAULT_SETTINGS, charWpm: 20, effectiveWpm: 10 },
+      learnerProfile: {},
       curriculum: defaultCurriculum,
       introductions: [],
       recoveredSessionCount: 0,

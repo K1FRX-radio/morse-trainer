@@ -100,6 +100,7 @@ function attemptRecord() {
 
 async function seedPortableState(repository: DexieTrainingRepository) {
   await repository.savePortableSettings(DEFAULT_SETTINGS);
+  await repository.saveLearnerStationProfile({});
   await repository.saveCurriculumState(
     createInitialState(DEFAULT_CURRICULUM_CONFIG),
   );
@@ -228,6 +229,11 @@ describe("portable backup and reset", () => {
     try {
       await repository.open();
       await seedPortableState(repository);
+      await repository.saveLearnerStationProfile({
+        callsign: "K1FRX",
+        name: "ALEX",
+        qth: "BOSTON",
+      });
       await database.sessions.put(sessionRecord());
       await database.attempts.put(attemptRecord());
       await repository.rebuildProjections();
@@ -243,6 +249,9 @@ describe("portable backup and reset", () => {
       await repository.resetPortableData();
       expect(await database.sessions.count()).toBe(0);
       expect(await database.attempts.count()).toBe(0);
+      expect(await repository.getLearnerStationProfile()).toMatchObject({
+        value: {},
+      });
 
       await repository.replacePortableBackup(
         raw,
@@ -252,6 +261,13 @@ describe("portable backup and reset", () => {
       expect(await database.attempts.count()).toBe(1);
       expect(await repository.getPortableSettings()).toMatchObject({
         value: DEFAULT_SETTINGS,
+      });
+      expect(await repository.getLearnerStationProfile()).toMatchObject({
+        value: {
+          callsign: "K1FRX",
+          name: "ALEX",
+          qth: "BOSTON",
+        },
       });
 
       const after = await repository.listDailyProjections({
@@ -498,6 +514,56 @@ describe("portable backup and reset", () => {
         effectiveWpm: 11,
         charWpmBand: 20,
         effectiveWpmBand: 10,
+      });
+    } finally {
+      repository.close();
+      await database.delete();
+    }
+  });
+
+  it("imports legacy backups that omit learner profile by defaulting to an empty profile", async () => {
+    const database = new TrainerDatabase({
+      name: crypto.randomUUID(),
+      indexedDB,
+      IDBKeyRange,
+    });
+    const repository = new DexieTrainingRepository(database, {
+      now: () => new Date("2026-10-03T10:00:00.000Z"),
+      createId: () => "dataset-legacy-profile",
+    });
+
+    try {
+      await repository.open();
+      await seedPortableState(repository);
+      await repository.saveLearnerStationProfile({
+        callsign: "W1AW",
+        name: "HIRAM",
+      });
+
+      const baseline = await repository.exportPortableBackup("1.2.3");
+      const legacyPayload = structuredClone(baseline.payload) as Record<
+        string,
+        unknown
+      >;
+      delete legacyPayload.learnerProfile;
+      const legacyBackup = await createPortableBackupDocument({
+        appVersion: baseline.appVersion,
+        databaseVersion: baseline.databaseVersion,
+        exportedAt: baseline.exportedAt,
+        payload: legacyPayload as never,
+      });
+      const raw = JSON.stringify(legacyBackup);
+
+      const preview = await repository.previewPortableBackup(raw);
+      expect(preview.learnerProfilePresent).toBe(false);
+
+      await repository.resetPortableData();
+      await expect(
+        repository.replacePortableBackup(raw, preview.replaceConfirmation),
+      ).resolves.toBe("applied");
+
+      expect(await repository.getLearnerStationProfile()).toMatchObject({
+        value: {},
       });
     } finally {
       repository.close();

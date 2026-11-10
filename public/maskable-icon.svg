@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="K1FRX Morse Trainer maskable icon">
+  <rect width="512" height="512" fill="#0e1116" />
+  <circle cx="256" cy="256" r="188" fill="#10253d" />
+  <circle cx="256" cy="256" r="148" fill="#173a58" />
+  <g fill="#f5f7fa">
+    <rect x="178" y="154" width="28" height="204" rx="12" />
+    <path d="M228 154h30v82l76-82h30l-78 84 80 120h-34l-66-98-8 9v89h-30V154z" />
+  </g>
+  <g fill="#4dd0ff">
+    <circle cx="188" cy="394" r="10" />
+    <circle cx="216" cy="394" r="10" />
+    <circle cx="244" cy="394" r="10" />
+    <rect x="270" y="386" width="50" height="16" rx="8" />
+    <circle cx="344" cy="394" r="10" />
+  </g>
+</svg>

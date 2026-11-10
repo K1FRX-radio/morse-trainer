@@ -43,6 +43,7 @@ import {
 } from "../../training/retry-recommendation.ts";
 import { deriveLearnDashboard } from "../../training/character-familiarity.ts";
 import { useLearnAudio } from "../learn-audio-context.ts";
+import { useReloadSafety } from "../reload-safety-context.ts";
 import { useSettings } from "../settings-context.ts";
 import { useTrainingData } from "../training-data-context.ts";
 import {
@@ -173,6 +174,11 @@ export function useLearnSession() {
     listCharacterSpeedProficiency,
   } = useTrainingData();
   const audio = useLearnAudio();
+  const {
+    acquireBlock,
+    releaseBlock,
+    setBlocked: setReloadSafetyBlocked,
+  } = useReloadSafety();
   const auto = settings.pacing === "auto";
 
   const stateRef = useRef<CurriculumState>(
@@ -251,6 +257,8 @@ export function useLearnSession() {
   const failedOperationRef = useRef<PersistenceOperationCategory | undefined>(
     undefined,
   );
+  const reloadSafetyTokenRef = useRef<number | undefined>(undefined);
+  const reloadSafetySource = "learn:session";
   const pendingStartIntentRef = useRef<StartIntent | undefined>(undefined);
   const retryCountsRef = useRef<Record<PersistenceOperationCategory, number>>({
     attempt: 0,
@@ -308,6 +316,37 @@ export function useLearnSession() {
     setPersistenceDiagnostic(undefined);
   }, []);
 
+  const holdReloadSafety = useCallback(() => {
+    if (reloadSafetyTokenRef.current !== undefined) {
+      return reloadSafetyTokenRef.current;
+    }
+    if (acquireBlock) {
+      const token = acquireBlock(reloadSafetySource);
+      reloadSafetyTokenRef.current = token;
+      return token;
+    }
+    setReloadSafetyBlocked(true);
+    reloadSafetyTokenRef.current = 0;
+    return 0;
+  }, [acquireBlock, reloadSafetySource, setReloadSafetyBlocked]);
+
+  const releaseReloadSafety = useCallback(
+    (token = reloadSafetyTokenRef.current): void => {
+      if (token === undefined) {
+        return;
+      }
+      if (releaseBlock) {
+        releaseBlock(reloadSafetySource, token);
+      } else {
+        setReloadSafetyBlocked(false);
+      }
+      if (reloadSafetyTokenRef.current === token) {
+        reloadSafetyTokenRef.current = undefined;
+      }
+    },
+    [releaseBlock, reloadSafetySource, setReloadSafetyBlocked],
+  );
+
   const trackPersistence = useCallback(
     (
       persistence: LearnSessionPersistence,
@@ -341,6 +380,18 @@ export function useLearnSession() {
       setPersistenceFailed,
     ],
   );
+
+  useEffect(() => {
+    const shouldHoldReloadSafety =
+      phase === "exercise" ||
+      (phase !== "onboarding" && persistenceStatus !== "ready");
+
+    if (shouldHoldReloadSafety) {
+      holdReloadSafety();
+      return;
+    }
+    releaseReloadSafety();
+  }, [holdReloadSafety, persistenceStatus, phase, releaseReloadSafety]);
 
   const finalizePersistence = useCallback(
     async (work: FinalizationWork, isRetry = false) => {
@@ -436,6 +487,7 @@ export function useLearnSession() {
     audio,
     toneHz: settings.toneHz,
     onComplete: recordContinuousCopy,
+    onPlaybackStart: () => sessionRef.current?.resume(),
   });
 
   const timing = useMemo(
@@ -622,10 +674,14 @@ export function useLearnSession() {
         setExercise(undefined);
         setTransition(undefined);
         setNotification(undefined);
-        continuousCopy.start({
-          schedule: event.plan.schedule,
-          durationMs: event.plan.scheduledDurationMs,
-        });
+        sessionRef.current?.pause();
+        continuousCopy.start(
+          {
+            schedule: event.plan.schedule,
+            durationMs: event.plan.scheduledDurationMs,
+          },
+          true,
+        );
         return;
       }
       setTransition(undefined);
@@ -673,10 +729,12 @@ export function useLearnSession() {
       const previousSession = sessionRef.current;
       if (previousPersistence && previousSession) {
         previousSession.end();
+        const reloadToken = holdReloadSafety();
         try {
           await previousPersistence.interrupt(
             persistenceSnapshot(previousSession),
           );
+          releaseReloadSafety(reloadToken);
         } catch (cause) {
           setPersistenceFailed("session-start", cause);
           return;
@@ -740,7 +798,9 @@ export function useLearnSession() {
       }
       if (startToken !== flowToken.current) {
         session.end();
+        const reloadToken = holdReloadSafety();
         await persistence.interrupt(persistenceSnapshot(session));
+        releaseReloadSafety(reloadToken);
         return;
       }
       session.start();
@@ -770,7 +830,9 @@ export function useLearnSession() {
       settings.toneHz,
       timing,
       loadIntroductions,
+      holdReloadSafety,
       listCharacterSpeedProficiency,
+      releaseReloadSafety,
       startLearnSessionPersistence,
       persistenceSnapshot,
       setPersistenceFailed,
@@ -1122,7 +1184,7 @@ export function useLearnSession() {
 
   const resumeContinuousCopy = useCallback(() => {
     if (!continuousCopy.resume()) return;
-    sessionRef.current?.resume();
+    if (continuousCopy.countdown === undefined) sessionRef.current?.resume();
   }, [continuousCopy]);
 
   const persistAdvancement = useCallback(
@@ -1303,14 +1365,20 @@ export function useLearnSession() {
       const session = sessionRef.current;
       if (!session) return;
       if (document.visibilityState === "hidden") {
-        if (continuousCopy.stage === "playing") {
+        if (
+          continuousCopy.stage === "playing" ||
+          continuousCopy.stage === "countdown"
+        ) {
           pauseContinuousCopy();
           return;
         }
         session.pause();
         return;
       }
-      if (continuousCopy.stage !== "paused") {
+      if (
+        continuousCopy.stage !== "paused" &&
+        continuousCopy.stage !== "countdown"
+      ) {
         session.resume();
       }
     };
@@ -1335,10 +1403,16 @@ export function useLearnSession() {
       finalizationRef.current = undefined;
       if (persistence && session) {
         session.end();
-        void persistence.interrupt(persistenceSnapshot(session));
+        const reloadToken = holdReloadSafety();
+        void persistence
+          .interrupt(persistenceSnapshot(session))
+          .then(() => {
+            releaseReloadSafety(reloadToken);
+          })
+          .catch(() => undefined);
       }
     },
-    [audio, persistenceSnapshot],
+    [audio, holdReloadSafety, persistenceSnapshot, releaseReloadSafety],
   );
 
   const current: CharacterProgress | undefined = newestCharacter(
@@ -1354,6 +1428,7 @@ export function useLearnSession() {
     notification,
     continuousCopy: {
       stage: continuousCopy.stage,
+      countdown: continuousCopy.countdown,
       text: continuousCopy.text,
       remainingMs: continuousCopy.remainingMs,
       totalMs: continuousCopy.totalMs,

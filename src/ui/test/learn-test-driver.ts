@@ -48,6 +48,9 @@ export function createLearnTestDriver(options: LearnDriverOptions) {
   async function continueInterstitial(): Promise<void> {
     fireEvent.click(screen.getByRole("button", { name: "Go" }));
     await options.flush();
+    if (screen.queryByRole("status")?.textContent === "Starting in 3") {
+      await options.advanceTime(3000);
+    }
   }
 
   async function answerCurrentPrompt(answer = target()): Promise<void> {
@@ -106,12 +109,16 @@ export function createLearnTestDriver(options: LearnDriverOptions) {
     if (screen.queryByRole("button", { name: "Go" })) {
       await continueInterstitial();
     }
+    if (screen.queryByRole("status")?.textContent === "Starting in 3") {
+      await options.advanceTime(3000);
+    }
     const currentTarget = target();
     fireEvent.change(screen.getByLabelText("Continuous copy"), {
       target: { value: answer(currentTarget) },
     });
     await options.audio.resolveNext();
-    await options.advanceTime(2000);
+    fireEvent.click(screen.getByRole("button", { name: "Evaluate Copy" }));
+    await options.flush();
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     await options.flush();
     return currentTarget;

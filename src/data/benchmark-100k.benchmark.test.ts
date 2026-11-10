@@ -41,6 +41,7 @@ async function runBenchmark(): Promise<BenchmarkSample> {
   try {
     await repository.open();
     await repository.savePortableSettings(DEFAULT_SETTINGS);
+    await repository.saveLearnerStationProfile({});
     await repository.saveCurriculumState(
       createInitialState(DEFAULT_CURRICULUM_CONFIG),
     );

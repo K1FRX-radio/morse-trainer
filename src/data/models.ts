@@ -5,6 +5,7 @@ import type {
   EffectiveWpmBand,
   PracticeSettings,
 } from "../core/settings.ts";
+import type { LearnerStationProfile } from "../content/station-profile.ts";
 
 export const RECORD_SCHEMA_VERSION = 1;
 export const PROJECTION_VERSION = 2;
@@ -149,6 +150,11 @@ export type TrainingAttemptRecord = PersistedRecord & {
 export type PortableSettingsRecord = PersistedRecord & {
   id: "portable-settings";
   value: PracticeSettings;
+};
+
+export type LearnerStationProfileRecord = PersistedRecord & {
+  id: "learner-station-profile";
+  value: LearnerStationProfile;
 };
 
 export type CurriculumStateRecord = PersistedRecord & {

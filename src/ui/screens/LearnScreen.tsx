@@ -137,8 +137,13 @@ export function LearnScreen() {
   }, [answerReady, exercise, isCopy]);
 
   useEffect(() => {
-    if (learn.continuousCopy.active) continuousInputRef.current?.focus();
-  }, [learn.continuousCopy.active]);
+    if (
+      learn.continuousCopy.stage === "playing" ||
+      learn.continuousCopy.stage === "awaiting-submission"
+    ) {
+      continuousInputRef.current?.focus();
+    }
+  }, [learn.continuousCopy.stage]);
 
   useEffect(() => {
     if (!selectedFamiliarity) return;
@@ -685,6 +690,8 @@ export function LearnScreen() {
     const remainingSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
     const minutes = Math.floor(remainingSeconds / 60);
     const seconds = String(remainingSeconds % 60).padStart(2, "0");
+    const showsRemainingTime =
+      stage === "countdown" || stage === "playing" || stage === "paused";
     const progress = totalMs
       ? Math.round(((totalMs - remainingMs) / totalMs) * 100)
       : 0;
@@ -698,17 +705,25 @@ export function LearnScreen() {
           <div className="learn__bar" aria-hidden>
             <span style={{ width: `${progress}%` }} />
           </div>
-          <span className="field__label" aria-label="Time remaining">
-            {minutes}:{seconds}
-          </span>
+          {showsRemainingTime ? (
+            <span className="field__label" aria-label="Time remaining">
+              {minutes}:{seconds}
+            </span>
+          ) : (
+            <span className="field__label" aria-label="Transmission status">
+              Complete
+            </span>
+          )}
         </div>
         <div className="practice">
           <p className="field__label" role="status">
-            {stage === "playing"
-              ? "Listening…"
-              : stage === "paused"
-                ? "Paused"
-                : "Finishing…"}
+            {stage === "countdown"
+              ? `Starting in ${learn.continuousCopy.countdown}`
+              : stage === "playing"
+                ? "Listening…"
+                : stage === "paused"
+                  ? "Paused"
+                  : "Transmission complete. Finish typing, then evaluate your copy."}
           </p>
           {stage === "paused" && (
             <p className="field__label">
@@ -722,6 +737,7 @@ export function LearnScreen() {
             autoComplete="off"
             autoCapitalize="characters"
             spellCheck={false}
+            disabled={learn.continuousCopy.countdown !== undefined}
             value={learn.continuousCopy.text}
             onChange={(event) => updateContinuousCopy(event.target.value)}
             onBlur={retainContinuousFocus}
@@ -738,9 +754,9 @@ export function LearnScreen() {
                 Resume
               </button>
             )}
-            {stage === "finishing" && (
+            {stage === "awaiting-submission" && (
               <button type="button" onClick={() => finishContinuousCopy()}>
-                Finish
+                Evaluate Copy
               </button>
             )}
           </div>

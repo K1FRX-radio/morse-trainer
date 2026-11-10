@@ -1,7 +1,11 @@
 import { z } from "zod";
 import { DATABASE_VERSION } from "./indexeddb.ts";
 import {
+  normalizeLearnerStationProfile,
+} from "../content/station-profile.ts";
+import {
   RECORD_SCHEMA_VERSION,
+  type LearnerStationProfileRecord,
   type CurriculumStateRecord,
   type IntroductionsRecord,
   type MigrationLedgerRecord,
@@ -15,6 +19,7 @@ import {
 import {
   parseCurriculumStateRecord,
   parseIntroductionsRecord,
+  parseLearnerStationProfileRecord,
   parseMigrationLedger,
   parseMilestoneRecord,
   parsePortableSettingsRecord,
@@ -31,6 +36,7 @@ export const BACKUP_CANONICALIZATION = "json-stable-v1";
 
 export type PortableBackupPayload = {
   settings: PortableSettingsRecord;
+  learnerProfile: LearnerStationProfileRecord;
   curriculum: CurriculumStateRecord;
   introductions: IntroductionsRecord;
   sessions: TrainingSessionRecord[];
@@ -71,6 +77,7 @@ export type PortableBackupPreview = {
   counts: PortableBackupRecordCounts;
   unlockedCharacters: number;
   masteredCharacters: number;
+  learnerProfilePresent: boolean;
   replaceConfirmation: PortableBackupReplaceConfirmation;
   sessionRange:
     | {
@@ -117,6 +124,7 @@ const documentHeaderSchema = z
 const rawPayloadSchema = z
   .object({
     settings: z.unknown(),
+    learnerProfile: z.unknown().optional(),
     curriculum: z.unknown(),
     introductions: z.unknown(),
     sessions: z.array(z.unknown()),
@@ -155,8 +163,19 @@ async function sha256Hex(value: string): Promise<string> {
 
 function parsePayload(value: unknown): PortableBackupPayload {
   const payload = value as Record<string, unknown>;
+  const settings = parsePortableSettingsRecord(payload.settings);
+  const defaultLearnerProfile = parseLearnerStationProfileRecord({
+    id: "learner-station-profile",
+    schemaVersion: RECORD_SCHEMA_VERSION,
+    updatedAt: settings.updatedAt,
+    value: normalizeLearnerStationProfile({}),
+  });
   const parsed: PortableBackupPayload = {
-    settings: parsePortableSettingsRecord(payload.settings),
+    settings,
+    learnerProfile:
+      payload.learnerProfile === undefined
+        ? defaultLearnerProfile
+        : parseLearnerStationProfileRecord(payload.learnerProfile),
     curriculum: parseCurriculumStateRecord(payload.curriculum),
     introductions: parseIntroductionsRecord(payload.introductions),
     sessions: parseTrainingSessions(payload.sessions),
@@ -363,6 +382,8 @@ export function summarizePortableBackup(
     counts: backup.counts,
     unlockedCharacters: backup.payload.curriculum.characters.length,
     masteredCharacters: mastered,
+    learnerProfilePresent:
+      Object.keys(backup.payload.learnerProfile.value).length > 0,
     replaceConfirmation,
     sessionRange:
       startedAtValues.length === 0

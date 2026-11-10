@@ -3,11 +3,15 @@ import type { Schedule } from "../../core/timing.ts";
 import type { ContinuousCopyResult } from "../../training/continuous-copy.ts";
 import type { RxAudio } from "../learn-audio-context.ts";
 
-export const CONTINUOUS_COPY_GRACE_MS = 2000;
 const TIMER_INTERVAL_MS = 100;
 
 export type ContinuousCopyStage =
-  "idle" | "playing" | "paused" | "finishing" | "result";
+  | "idle"
+  | "countdown"
+  | "playing"
+  | "paused"
+  | "awaiting-submission"
+  | "result";
 
 type CompleteContinuousCopy = (
   typed: string,
@@ -19,6 +23,7 @@ type Options = {
   audio: RxAudio;
   toneHz: number;
   onComplete: CompleteContinuousCopy;
+  onPlaybackStart?: () => void;
 };
 
 export type ContinuousCopyPlayback = {
@@ -120,7 +125,12 @@ function progressWithinOriginalTimeline(
   return Math.min(totalMs, Math.max(floorMs, candidate));
 }
 
-export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
+export function useContinuousCopy({
+  audio,
+  toneHz,
+  onComplete,
+  onPlaybackStart,
+}: Options) {
   const generationRef = useRef(0);
   const playbackRef = useRef<ContinuousCopyPlayback | undefined>(undefined);
   const resumeRef = useRef<ResumePlan | undefined>(undefined);
@@ -132,14 +142,18 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
   const totalMsRef = useRef(0);
   const completedRef = useRef(false);
   const intervalRef = useRef<number | undefined>(undefined);
-  const graceRef = useRef<number | undefined>(undefined);
+  const countdownTimerRef = useRef<number | undefined>(undefined);
+  const pendingCountdownRef = useRef<ContinuousCopyPlayback | undefined>(
+    undefined,
+  );
+  const awaitingSubmissionRef = useRef(false);
   const onCompleteRef = useRef(onComplete);
-  const completeCurrentRef = useRef<
-    (abandoned: boolean) => ContinuousCopyResult | undefined
-  >(() => undefined);
   onCompleteRef.current = onComplete;
+  const onPlaybackStartRef = useRef(onPlaybackStart);
+  onPlaybackStartRef.current = onPlaybackStart;
 
   const [stage, setStage] = useState<ContinuousCopyStage>("idle");
+  const [countdown, setCountdown] = useState<number | undefined>(undefined);
   const [text, setTextState] = useState("");
   const [remainingMs, setRemainingMs] = useState(0);
   const [totalMs, setTotalMs] = useState(0);
@@ -148,13 +162,13 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
   );
 
   const clearTimers = useCallback(() => {
+    if (countdownTimerRef.current !== undefined) {
+      window.clearTimeout(countdownTimerRef.current);
+      countdownTimerRef.current = undefined;
+    }
     if (intervalRef.current !== undefined) {
       window.clearInterval(intervalRef.current);
       intervalRef.current = undefined;
-    }
-    if (graceRef.current !== undefined) {
-      window.clearTimeout(graceRef.current);
-      graceRef.current = undefined;
     }
   }, []);
 
@@ -181,12 +195,17 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
       const canComplete =
         playback !== undefined ||
         resumeRef.current !== undefined ||
-        graceRef.current !== undefined;
-      if (!canComplete || completedRef.current) {
+        awaitingSubmissionRef.current;
+      if (
+        !canComplete ||
+        completedRef.current ||
+        (!abandoned && !awaitingSubmissionRef.current)
+      ) {
         return undefined;
       }
 
       completedRef.current = true;
+      awaitingSubmissionRef.current = false;
       generationRef.current += 1;
       clearTimers();
 
@@ -227,15 +246,17 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
     },
     [clearTimers],
   );
-  completeCurrentRef.current = completeCurrent;
 
   const startPlayback = useCallback(
     (playback: ContinuousCopyPlayback) => {
       clearTimers();
+      pendingCountdownRef.current = undefined;
       const generation = ++generationRef.current;
       playbackRef.current = playback;
       runStartedAtRef.current = performance.now();
+      setCountdown(undefined);
       setStage("playing");
+      onPlaybackStartRef.current?.();
       updateRemaining();
 
       intervalRef.current = window.setInterval(() => {
@@ -259,20 +280,21 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
         playbackRef.current = undefined;
         resumeRef.current = undefined;
         setRemainingMs(0);
-        setStage("finishing");
-        graceRef.current = window.setTimeout(
-          () => completeCurrentRef.current(false),
-          CONTINUOUS_COPY_GRACE_MS,
-        );
+        awaitingSubmissionRef.current = true;
+        setStage("awaiting-submission");
       });
     },
     [audio, toneHz, clearTimers, updateRemaining],
   );
 
   const start = useCallback(
-    (playback: ContinuousCopyPlayback) => {
+    (playback: ContinuousCopyPlayback, withCountdown = false) => {
       clearTimers();
+      const generation = ++generationRef.current;
+      playbackRef.current = undefined;
+      pendingCountdownRef.current = undefined;
       completedRef.current = false;
+      awaitingSubmissionRef.current = false;
       textRef.current = "";
       progressMsRef.current = 0;
       runOffsetMsRef.current = 0;
@@ -283,12 +305,36 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
       totalMsRef.current = playback.durationMs;
       setTotalMs(playback.durationMs);
       setRemainingMs(playback.durationMs);
-      startPlayback(playback);
+      if (!withCountdown) {
+        startPlayback(playback);
+        return;
+      }
+      pendingCountdownRef.current = playback;
+      setStage("countdown");
+      let remaining = 3;
+      setCountdown(remaining);
+      const advanceCountdown = () => {
+        if (generation !== generationRef.current) return;
+        remaining -= 1;
+        if (remaining === 0) {
+          startPlayback(playback);
+          return;
+        }
+        setCountdown(remaining);
+        countdownTimerRef.current = window.setTimeout(advanceCountdown, 1000);
+      };
+      countdownTimerRef.current = window.setTimeout(advanceCountdown, 1000);
     },
     [clearTimers, startPlayback],
   );
 
   const pause = useCallback(() => {
+    if (pendingCountdownRef.current && stage === "countdown") {
+      generationRef.current += 1;
+      clearTimers();
+      setStage("paused");
+      return true;
+    }
     const playback = playbackRef.current;
     if (!playback || stage !== "playing") return false;
 
@@ -319,9 +365,18 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
 
   const resume = useCallback(() => {
     if (stage !== "paused") return false;
+    if (pendingCountdownRef.current) {
+      start(pendingCountdownRef.current, true);
+      return true;
+    }
     const resumePlan = resumeRef.current;
-    if (!resumePlan || resumePlan.playback.durationMs <= 0) {
-      completeCurrent(false);
+    if (!resumePlan) return false;
+    if (resumePlan.playback.durationMs <= 0) {
+      resumeRef.current = undefined;
+      progressMsRef.current = totalMsRef.current;
+      awaitingSubmissionRef.current = true;
+      setRemainingMs(0);
+      setStage("awaiting-submission");
       return true;
     }
 
@@ -335,7 +390,7 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
     runFloorMsRef.current = progressMsRef.current;
     startPlayback(resumePlan.playback);
     return true;
-  }, [completeCurrent, stage, startPlayback]);
+  }, [stage, start, startPlayback]);
 
   const setText = useCallback((value: string) => {
     textRef.current = value;
@@ -344,14 +399,14 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
 
   const finish = useCallback(() => completeCurrent(false), [completeCurrent]);
 
-  const abandon = useCallback(() => completeCurrent(true), [completeCurrent]);
-
   const reset = useCallback(() => {
     generationRef.current += 1;
     clearTimers();
+    pendingCountdownRef.current = undefined;
     playbackRef.current = undefined;
     resumeRef.current = undefined;
     completedRef.current = false;
+    awaitingSubmissionRef.current = false;
     progressMsRef.current = 0;
     runOffsetMsRef.current = 0;
     runFloorMsRef.current = 0;
@@ -361,25 +416,40 @@ export function useContinuousCopy({ audio, toneHz, onComplete }: Options) {
     setRemainingMs(0);
     setTotalMs(0);
     setResult(undefined);
+    setCountdown(undefined);
     setStage("idle");
   }, [clearTimers]);
+
+  const abandon = useCallback(() => {
+    if (pendingCountdownRef.current) {
+      reset();
+      return undefined;
+    }
+    return completeCurrent(true);
+  }, [completeCurrent, reset]);
 
   useEffect(
     () => () => {
       generationRef.current += 1;
       clearTimers();
+      pendingCountdownRef.current = undefined;
       playbackRef.current = undefined;
+      awaitingSubmissionRef.current = false;
     },
     [clearTimers],
   );
 
   return {
     stage,
+    countdown,
     text,
     remainingMs,
     totalMs,
     result,
-    active: stage === "playing" || stage === "finishing",
+    active:
+      stage === "countdown" ||
+      stage === "playing" ||
+      stage === "awaiting-submission",
     start,
     pause,
     resume,
